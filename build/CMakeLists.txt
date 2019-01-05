@@ -1,11 +1,14 @@
-﻿# CMakeList.txt : Top-level CMake project file, do global configuration
-# and include sub-projects here.
-#
+﻿# This CMake config was made for the Windows build using msvc only. 
+# Nothing will work otherwise
+# written by a newbie in CMake :) BorisU
+
 cmake_minimum_required (VERSION 2.8)
+
+message(WARNING "This CMake config was made for the Windows build using msvc only.")
 
 set (PROJECT ezQuake.262)
 
-project (${PROJECT}) 
+project (${PROJECT} C) 
 
 set ( APP_NAME ${PROJECT})
 
@@ -146,7 +149,7 @@ set ( HEADERS
 	${SRC_DIR}/zone.h
 )
 
-set (SOURCES 
+set ( SOURCES 
 	${SRC_DIR}/cl_cam.c
 	${SRC_DIR}/cl_cmd.c
 	${SRC_DIR}/cl_demo.c
@@ -327,11 +330,14 @@ set (SOURCES
 )
 
 include_directories ( 
-	${SRC_DIR}/mingw32-libs/include
-	${SRC_DIR}/mingw32-libs/include/curl
-	${SRC_DIR}/mingw32-libs/include/libpng16
-	${SRC_DIR}/mingw32-libs/include/SDL2
-	${SRC_DIR}/mingw32-libs/include/speex
+	${SRC_DIR}/msvc32-libs/include
+	${SRC_DIR}/msvc32-libs/include/curl
+	${SRC_DIR}/msvc32-libs/include/expat
+	${SRC_DIR}/msvc32-libs/include/jansson
+	${SRC_DIR}/msvc32-libs/include/libpng
+	${SRC_DIR}/msvc32-libs/include/PCRE
+	${SRC_DIR}/msvc32-libs/include/SDL2
+	${SRC_DIR}/msvc32-libs/include/zlib
 )
 
 find_package(Git)
@@ -339,8 +345,10 @@ if(GIT_FOUND)
   message("git found: ${GIT_EXECUTABLE}")
 endif()
 
-#how to find it properly on windows?
+#how to find it properly on windows?  replace git with bash?
 set ( BASH_EXECUTABLE "C:/Program Files/Git/bin/bash.exe" )
+
+#TODO make them custom targets
 
 execute_process ( COMMAND ${BASH_EXECUTABLE} version.sh -r
 	WORKING_DIRECTORY ${SRC_DIR} 
@@ -354,16 +362,61 @@ execute_process ( COMMAND ${BASH_EXECUTABLE} version.sh -v
 	OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-message ( "ver <${ver}> <${rev}>" )
-
 add_definitions ( -DVERSION="${ver}" -DREVISION="${rev}" )
+
+execute_process ( COMMAND ${BASH_EXECUTABLE} json2c.sh help_commands.json help_commands.c
+	WORKING_DIRECTORY ${SRC_DIR} 
+)
+
+execute_process ( COMMAND ${BASH_EXECUTABLE} json2c.sh help_variables.json help_variables.c
+	WORKING_DIRECTORY ${SRC_DIR} 
+)
+
+list (APPEND SOURCES
+	${SRC_DIR}/help_commands.c
+	${SRC_DIR}/help_variables.c
+)
+
 
 find_package(OpenGL REQUIRED)
 if( NOT ${OPENGL_FOUND})
     message(FATAL_ERROR "OPENGL not found")
 endif()
 
-set (LIBRARIES )
+add_definitions ( -DUSE_PR2 -DJSS_CAM )
+
+if  ( WIN32 )
+	list (APPEND SOURCES
+		${SRC_DIR}/cd_null.c
+		${SRC_DIR}/localtime_win.c
+		${SRC_DIR}/movie_avi.c
+		${SRC_DIR}/sys_win.c
+	)
+
+	set ( LIBRARIES 
+		comctl32
+		wldap32
+		winmm
+		ws2_32
+		jansson
+		libcurl
+		expat
+		libpng16
+		pcre
+		SDL2
+		zlib
+		imm32	# SDL2 needs it
+		version	# SDL2 needs it
+	
+)
+
+	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB)
+# PNG disabled for now. Crashes on startup 
+#	add_definitions ( -DWITH_PNG -D__Q_PNG14__ )
+
+	link_directories(${SRC_DIR}/msvc32-libs/lib)
+endif()
+
 
 source_group ("Header Files" FILES ${HEADERS})
 source_group ("Source Files" FILES ${SOURCES})
@@ -376,4 +429,7 @@ source_group ("Source Files" FILES ${SOURCES})
 #	message ("Unknown compiler")
 #endif ()
 
-add_executable (${PROJECT} ${HEADERS} ${SOURCES} )
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT /arch:SSE2")
+
+add_executable (${PROJECT} WIN32 ${HEADERS} ${SOURCES} )
+target_link_libraries(${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES})
