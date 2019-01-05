@@ -34,7 +34,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif // __GNUC__
 
 #ifdef _MSC_VER
-#include <glext.h>
+// MS SDK doesn't include <GL/glext.h>
+// this one is taken from Khronos site https://www.khronos.org/registry/OpenGL/index_gl.php
+#include "glext.h"
 #endif
 
 #ifdef FRAMEBUFFERS
