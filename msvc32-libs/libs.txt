@@ -6,7 +6,7 @@ lib		version
 ============================
 curl		7.64.0-DEV
 expat		2.2.6
-jannson		2.12
+jansson		2.12
 pcre		8.42
 libpng		1.16.36
 SDL2		2.09		built with /arch:SSE2
