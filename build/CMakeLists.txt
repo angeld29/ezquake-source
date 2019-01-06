@@ -411,8 +411,7 @@ if  ( WIN32 )
 )
 
 	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB)
-# PNG disabled for now. Crashes on startup 
-#	add_definitions ( -DWITH_PNG -D__Q_PNG14__ )
+	add_definitions ( -DWITH_PNG -D__Q_PNG14__ )
 
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif()

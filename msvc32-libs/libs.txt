@@ -9,5 +9,5 @@ expat		2.2.6
 jansson		2.12
 pcre		8.42
 libpng		1.16.36
-SDL2		2.09		built with /arch:SSE2, SDL_DYNAMIC_API, 0 exports disabled
-zlib		1.2.11          ZLIB_WNIAPI undefined during compilation
+SDL2		2.09		built with /arch:SSE2, SDL_DYNAMIC_API 0, exports disabled
+zlib		1.2.11          ZLIB_WNIAPI undefined, Assembler code disabled 
