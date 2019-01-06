@@ -12,7 +12,7 @@ project (${PROJECT} C)
 
 set ( APP_NAME ${PROJECT})
 
-set( CMAKE_BUILD_TYPE RELEASE )
+#set( CMAKE_BUILD_TYPE RELEASE )
 
 set ( SRC_DIR ${PROJECT_SOURCE_DIR}/.. )
 
@@ -429,7 +429,8 @@ source_group ("Source Files" FILES ${SOURCES})
 #	message ("Unknown compiler")
 #endif ()
 
+# better way to do it?
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT /arch:SSE2")
 
-add_executable (${PROJECT} WIN32 ${HEADERS} ${SOURCES} )
+add_executable (${PROJECT} WIN32 ${SOURCES} )
 target_link_libraries(${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES})

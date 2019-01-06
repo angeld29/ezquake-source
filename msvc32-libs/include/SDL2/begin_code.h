@@ -59,7 +59,7 @@
 #    define DECLSPEC    __declspec(dllimport)
 #   endif
 #  else
-#   define DECLSPEC __declspec(dllexport)
+#   define DECLSPEC
 #  endif
 # elif defined(__OS2__)
 #   ifdef BUILD_SDL
