@@ -334,7 +334,6 @@ include_directories (
 	${SRC_DIR}/msvc32-libs/include/curl
 	${SRC_DIR}/msvc32-libs/include/expat
 	${SRC_DIR}/msvc32-libs/include/jansson
-	${SRC_DIR}/msvc32-libs/include/libpng
 	${SRC_DIR}/msvc32-libs/include/PCRE
 	${SRC_DIR}/msvc32-libs/include/SDL2
 	${SRC_DIR}/msvc32-libs/include/zlib
@@ -407,7 +406,6 @@ if  ( WIN32 )
 		jansson
 		libcurl
 		expat
-		libpng16
 		pcre
 		SDL2
 		zlib
@@ -417,8 +415,6 @@ if  ( WIN32 )
 )
 
 	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB -DWITH_ZIP)
-	add_definitions ( -DWITH_PNG -D__Q_PNG14__ )
-
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif()
 
@@ -431,6 +427,13 @@ if( WITH_ZIP )
 	source_group ("Minizip Source Files" FILES ${ZIP_SOURCES})
 	set ( ZIP_INCLUDES ${SRC_DIR}/minizip )
 	add_definitions ( -DWITH_ZIP)	
+endif()
+
+option( WITH_PNG "Adds PNG support" ON )
+if( WITH_PNG )
+	set ( PNG_INCLUDES 	${SRC_DIR}/msvc32-libs/include/libpng )
+	set ( PNG_LIBRARIES libpng16 )
+	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__)	
 endif()
 
 option( WITH_JPEG "Adds JPEG support" ON )
@@ -456,6 +459,7 @@ if ( WITH_ZIP )
 endif()
 
 add_executable ( ${PROJECT} WIN32 ${SOURCES} )
-target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES})
+target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES})
 target_include_directories ( ${PROJECT} PRIVATE ${ZIP_INCLUDES} )
+target_include_directories ( ${PROJECT} PRIVATE ${PNG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${JPEG_INCLUDES} )
