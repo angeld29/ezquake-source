@@ -422,15 +422,22 @@ if  ( WIN32 )
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif()
 
-option( WITH_ZIP "Adds pk3/pk4 files support" ON )
+option( WITH_ZIP "Adds pk3 packs and compressed demo files support" ON )
 if( WITH_ZIP )
 	set ( ZIP_SOURCES
 		${SRC_DIR}/minizip/ioapi.c
 		${SRC_DIR}/minizip/unzip.c
 	)
 	source_group ("Minizip Source Files" FILES ${ZIP_SOURCES})
-	set (ZIP_INCLUDES ${SRC_DIR}/minizip )
+	set ( ZIP_INCLUDES ${SRC_DIR}/minizip )
 	add_definitions ( -DWITH_ZIP)	
+endif()
+
+option( WITH_JPEG "Adds JPEG support" ON )
+if( WITH_ZIP )
+	set ( JPEG_INCLUDES ${SRC_DIR}/msvc32-libs/include/jpeg )
+	set ( JPEG_LIBRARIES libjpeg )
+	add_definitions ( -DWITH_JPEG_STATIC -DWITH_JPEG)	
 endif()
 
 #if (MSVC)
@@ -449,5 +456,6 @@ if ( WITH_ZIP )
 endif()
 
 add_executable ( ${PROJECT} WIN32 ${SOURCES} )
-target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} )
+target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES})
 target_include_directories ( ${PROJECT} PRIVATE ${ZIP_INCLUDES} )
+target_include_directories ( ${PROJECT} PRIVATE ${JPEG_INCLUDES} )
