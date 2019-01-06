@@ -340,6 +340,9 @@ include_directories (
 	${SRC_DIR}/msvc32-libs/include/zlib
 )
 
+source_group ("Header Files" FILES ${HEADERS})
+source_group ("Source Files" FILES ${SOURCES})
+
 find_package(Git)
 if(GIT_FOUND)
   message("git found: ${GIT_EXECUTABLE}")
@@ -377,7 +380,6 @@ list (APPEND SOURCES
 	${SRC_DIR}/help_variables.c
 )
 
-
 find_package(OpenGL REQUIRED)
 if( NOT ${OPENGL_FOUND})
     message(FATAL_ERROR "OPENGL not found")
@@ -386,11 +388,15 @@ endif()
 add_definitions ( -DUSE_PR2 -DJSS_CAM )
 
 if  ( WIN32 )
-	list (APPEND SOURCES
+	set ( WIN_SOURCES
 		${SRC_DIR}/cd_null.c
 		${SRC_DIR}/localtime_win.c
 		${SRC_DIR}/movie_avi.c
 		${SRC_DIR}/sys_win.c
+	)
+	source_group ( "Windows specific Source Files" FILES ${WIN_SOURCES} )
+	list ( APPEND SOURCES
+		${WIN_SOURCES}
 	)
 
 	set ( LIBRARIES 
@@ -410,15 +416,22 @@ if  ( WIN32 )
 	
 )
 
-	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB)
+	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB -DWITH_ZIP)
 	add_definitions ( -DWITH_PNG -D__Q_PNG14__ )
 
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif()
 
-
-source_group ("Header Files" FILES ${HEADERS})
-source_group ("Source Files" FILES ${SOURCES})
+option( WITH_ZIP "Adds pk3/pk4 files support" ON )
+if( WITH_ZIP )
+	set ( ZIP_SOURCES
+		${SRC_DIR}/minizip/ioapi.c
+		${SRC_DIR}/minizip/unzip.c
+	)
+	source_group ("Minizip Source Files" FILES ${ZIP_SOURCES})
+	set (ZIP_INCLUDES ${SRC_DIR}/minizip )
+	add_definitions ( -DWITH_ZIP)	
+endif()
 
 #if (MSVC)
 #	add_definitions (/W4)
@@ -431,5 +444,10 @@ source_group ("Source Files" FILES ${SOURCES})
 # better way to do it?
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT /arch:SSE2")
 
-add_executable (${PROJECT} WIN32 ${SOURCES} )
-target_link_libraries(${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES})
+if ( WITH_ZIP )
+	list ( APPEND SOURCES ${ZIP_SOURCES} )
+endif()
+
+add_executable ( ${PROJECT} WIN32 ${SOURCES} )
+target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} )
+target_include_directories ( ${PROJECT} PRIVATE ${ZIP_INCLUDES} )
