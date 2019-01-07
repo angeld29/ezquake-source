@@ -336,7 +336,6 @@ include_directories (
 	${SRC_DIR}/msvc32-libs/include/jansson
 	${SRC_DIR}/msvc32-libs/include/PCRE
 	${SRC_DIR}/msvc32-libs/include/SDL2
-	${SRC_DIR}/msvc32-libs/include/zlib
 )
 
 source_group ("Header Files" FILES ${HEADERS})
@@ -408,18 +407,26 @@ if  ( WIN32 )
 		expat
 		pcre
 		SDL2
-		zlib
 		imm32	# SDL2 needs it
 		version	# SDL2 needs it
-	
 )
 
-	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB -DWITH_ZIP)
+	add_definitions ( -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB )
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif ()
 
+option( WITH_NQPROGS " Adds Net Quake progs support" ON )
+if ( WITH_NQPROGS)
+	add_definitions ( -DNQPROGS )
+endif ()
+
+option( WITH_WINAMP " Adds MP3 player interface" ON )
+if ( WITH_WINAMP)
+	add_definitions ( -DWITH_WINAMP )
+endif ()
+
 option( WITH_ZIP "Adds pk3 packs and compressed demo files support" ON )
-if( WITH_ZIP )
+if ( WITH_ZIP )
 	set ( ZIP_SOURCES
 		${SRC_DIR}/minizip/ioapi.c
 		${SRC_DIR}/minizip/unzip.c
@@ -427,26 +434,32 @@ if( WITH_ZIP )
 	source_group ("Minizip Source Files" FILES ${ZIP_SOURCES})
 	list ( APPEND SOURCES ${ZIP_SOURCES} )
 	set ( ZIP_INCLUDES ${SRC_DIR}/minizip )
-	add_definitions ( -DWITH_ZIP)	
+	add_definitions ( -DWITH_ZIP )	
 endif ()
 
+option( WITH_ZLIB "Adds .gz and .zip support" ON )
+if ( WITH_ZLIB )
+	set ( ZLIB_INCLUDES 	${SRC_DIR}/msvc32-libs/include/zlib )
+	set ( ZLIB_LIBRARIES zlib )
+	add_definitions ( -DWITH_ZLIB )	
+endif ()
 
 option( WITH_PNG "Adds PNG support" ON ) # requires ZLIB
-if( WITH_PNG )
+if ( WITH_PNG )
 	set ( PNG_INCLUDES 	${SRC_DIR}/msvc32-libs/include/libpng )
 	set ( PNG_LIBRARIES libpng16 )
-	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__)	
+	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__ )	
 endif ()
 
 option( WITH_JPEG "Adds JPEG support" ON )
-if( WITH_ZIP )
+if ( WITH_ZIP )
 	set ( JPEG_INCLUDES ${SRC_DIR}/msvc32-libs/include/jpeg )
 	set ( JPEG_LIBRARIES libjpeg )
 	add_definitions ( -DWITH_JPEG_STATIC -DWITH_JPEG )	
 endif ()
 
 option( WITH_SPEEX "Adds in-game voice support" ON )
-if( WITH_SPEEX )
+if ( WITH_SPEEX )
 	set ( SPEEX_INCLUDES ${SRC_DIR}/msvc32-libs/include/speex )
 	set ( SPEEX_LIBRARIES libspeex libspeexdsp )
 	add_definitions ( -DWITH_SPEEX )	
@@ -464,8 +477,17 @@ endif ()
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MP /MT /arch:SSE2")
 
 add_executable ( ${PROJECT} WIN32 ${SOURCES} )
-target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES} ${SPEEX_LIBRARIES})
+target_link_libraries ( ${PROJECT} 
+	${LIBRARIES}
+	${OPENGL_LIBRARIES} 
+	${JPEG_LIBRARIES} 
+	${ZLIB_LIBRARIES}
+	${PNG_LIBRARIES}
+	${SPEEX_LIBRARIES}
+	)
+
 target_include_directories ( ${PROJECT} PRIVATE ${ZIP_INCLUDES} )
+target_include_directories ( ${PROJECT} PRIVATE ${ZLIB_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${PNG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${JPEG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${SPEEX_INCLUDES} )
