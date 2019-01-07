@@ -2,7 +2,8 @@
 # Nothing will work otherwise
 # written by a newbie in CMake :) BorisU
 
-cmake_minimum_required (VERSION 2.8)
+# is it right?
+cmake_minimum_required (VERSION 3.1)
 
 message(WARNING "This CMake config was made for the Windows build using msvc only.")
 
@@ -331,7 +332,6 @@ set ( SOURCES
 
 include_directories ( 
 	${SRC_DIR}/msvc32-libs/include
-	${SRC_DIR}/msvc32-libs/include/curl
 	${SRC_DIR}/msvc32-libs/include/expat
 	${SRC_DIR}/msvc32-libs/include/jansson
 	${SRC_DIR}/msvc32-libs/include/PCRE
@@ -345,7 +345,7 @@ source_group ("Source Files" FILES ${SOURCES})
 find_package(Git)
 if(GIT_FOUND)
   message("git found: ${GIT_EXECUTABLE}")
-endif()
+endif ()
 
 #how to find it properly on windows?  replace git with bash?
 set ( BASH_EXECUTABLE "C:/Program Files/Git/bin/bash.exe" )
@@ -380,9 +380,9 @@ list (APPEND SOURCES
 )
 
 find_package(OpenGL REQUIRED)
-if( NOT ${OPENGL_FOUND})
-    message(FATAL_ERROR "OPENGL not found")
-endif()
+if ( NOT ${OPENGL_FOUND} )
+    message ( FATAL_ERROR "OPENGL not found" )
+endif ()
 
 add_definitions ( -DUSE_PR2 -DJSS_CAM )
 
@@ -416,7 +416,7 @@ if  ( WIN32 )
 
 	add_definitions ( -DWITH_WINAMP -DPCRE_STATIC -DCURL_STATICLIB -DXML_STATIC -DWITH_ZLIB -DWITH_ZIP)
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
-endif()
+endif ()
 
 option( WITH_ZIP "Adds pk3 packs and compressed demo files support" ON )
 if( WITH_ZIP )
@@ -425,23 +425,32 @@ if( WITH_ZIP )
 		${SRC_DIR}/minizip/unzip.c
 	)
 	source_group ("Minizip Source Files" FILES ${ZIP_SOURCES})
+	list ( APPEND SOURCES ${ZIP_SOURCES} )
 	set ( ZIP_INCLUDES ${SRC_DIR}/minizip )
 	add_definitions ( -DWITH_ZIP)	
-endif()
+endif ()
 
-option( WITH_PNG "Adds PNG support" ON )
+
+option( WITH_PNG "Adds PNG support" ON ) # requires ZLIB
 if( WITH_PNG )
 	set ( PNG_INCLUDES 	${SRC_DIR}/msvc32-libs/include/libpng )
 	set ( PNG_LIBRARIES libpng16 )
 	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__)	
-endif()
+endif ()
 
 option( WITH_JPEG "Adds JPEG support" ON )
 if( WITH_ZIP )
 	set ( JPEG_INCLUDES ${SRC_DIR}/msvc32-libs/include/jpeg )
 	set ( JPEG_LIBRARIES libjpeg )
-	add_definitions ( -DWITH_JPEG_STATIC -DWITH_JPEG)	
-endif()
+	add_definitions ( -DWITH_JPEG_STATIC -DWITH_JPEG )	
+endif ()
+
+option( WITH_SPEEX "Adds in-game voice support" ON )
+if( WITH_SPEEX )
+	set ( SPEEX_INCLUDES ${SRC_DIR}/msvc32-libs/include/speex )
+	set ( SPEEX_LIBRARIES libspeex libspeexdsp )
+	add_definitions ( -DWITH_SPEEX )	
+endif ()
 
 #if (MSVC)
 #	add_definitions (/W4)
@@ -452,14 +461,11 @@ endif()
 #endif ()
 
 # better way to do it?
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MT /arch:SSE2")
-
-if ( WITH_ZIP )
-	list ( APPEND SOURCES ${ZIP_SOURCES} )
-endif()
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MP /MT /arch:SSE2")
 
 add_executable ( ${PROJECT} WIN32 ${SOURCES} )
-target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES})
+target_link_libraries ( ${PROJECT} ${LIBRARIES} ${OPENGL_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES} ${SPEEX_LIBRARIES})
 target_include_directories ( ${PROJECT} PRIVATE ${ZIP_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${PNG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${JPEG_INCLUDES} )
+target_include_directories ( ${PROJECT} PRIVATE ${SPEEX_INCLUDES} )

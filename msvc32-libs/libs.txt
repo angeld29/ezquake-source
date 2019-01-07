@@ -11,4 +11,6 @@ jpeg-turbo	8d  15-Jan-2012
 pcre		8.42
 libpng		1.16.36
 SDL2		2.09		built with /arch:SSE2, SDL_DYNAMIC_API 0, exports disabled
+speex		1.2.0		built with /arch:SSE2. _USE_SSE
+speexdsp	1.2.0		built with /arch:SSE2. _USE_SSE
 zlib		1.2.11          ZLIB_WNIAPI undefined, Assembler code disabled 
