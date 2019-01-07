@@ -2,6 +2,13 @@
 # Nothing will work otherwise
 # written by a newbie in CMake :) BorisU
 
+# tested on VS 2017, might work on earlier versions
+# start VS command prompt
+# use "cmake ."  command in the "build" directory
+# solution and projects files will be generated
+# you can compile it from VS IDE or
+# use "cmake --build . --config Release"
+
 # is it right?
 cmake_minimum_required (VERSION 3.1)
 
