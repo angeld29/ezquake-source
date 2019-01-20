@@ -422,17 +422,17 @@ if  ( WIN32 )
 	link_directories(${SRC_DIR}/msvc32-libs/lib)
 endif ()
 
-option ( WITH_NQPROGS " Adds Net Quake progs support" ON  )
+option ( WITH_NQPROGS " Adds Net Quake progs support" OFF )
 if ( WITH_NQPROGS)
 	add_definitions ( -DNQPROGS )
 endif ()
 
-option ( WITH_WINAMP " Adds MP3 player interface" ON  )
+option ( WITH_WINAMP " Adds MP3 player interface" ON )
 if ( WITH_WINAMP)
 	add_definitions ( -DWITH_WINAMP )
 endif ()
 
-option ( WITH_ZIP "Adds pk3 packs and compressed demo files support" ON  )
+option ( WITH_ZIP "Adds pk3 packs and compressed demo files support" ON )
 if ( WITH_ZIP )
 	set ( ZIP_SOURCES
 		${SRC_DIR}/minizip/ioapi.c
@@ -449,28 +449,28 @@ if ( WITH_ZIP )
 	add_definitions ( -DWITH_ZIP )	
 endif ()
 
-option ( WITH_ZLIB "Adds .gz and .zip support" ON  )
+option ( WITH_ZLIB "Adds .gz and .zip support" ON )
 if ( WITH_ZLIB )
 	set ( ZLIB_INCLUDES 	${SRC_DIR}/msvc32-libs/include/zlib )
 	set ( ZLIB_LIBRARIES zlib )
 	add_definitions ( -DWITH_ZLIB )	
 endif ()
 
-option ( WITH_PNG "Adds PNG support" ON  ) # requires ZLIB
+option ( WITH_PNG "Adds PNG support" ON ) # requires ZLIB
 if ( WITH_PNG )
 	set ( PNG_INCLUDES 	${SRC_DIR}/msvc32-libs/include/libpng )
 	set ( PNG_LIBRARIES libpng16 )
 	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__ )	
 endif ()
 
-option ( WITH_JPEG "Adds JPEG support" ON  )
+option ( WITH_JPEG "Adds JPEG support" ON )
 if ( WITH_ZIP )
 	set ( JPEG_INCLUDES ${SRC_DIR}/msvc32-libs/include/jpeg )
 	set ( JPEG_LIBRARIES libjpeg )
 	add_definitions ( -DWITH_JPEG_STATIC -DWITH_JPEG )	
 endif ()
 
-option( WITH_SPEEX "Adds in-game voice support" ON  )
+option( WITH_SPEEX "Adds in-game voice support" ON )
 if ( WITH_SPEEX )
 	set ( SPEEX_INCLUDES ${SRC_DIR}/msvc32-libs/include/speex )
 	set ( SPEEX_LIBRARIES libspeex libspeexdsp )
