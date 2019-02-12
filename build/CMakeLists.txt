@@ -109,7 +109,8 @@ set ( HEADERS
 	${SRC_DIR}/pmove.h
 	${SRC_DIR}/pr_comp.h
 	${SRC_DIR}/pr2.h
-	${SRC_DIR}/pr2_vm.h
+	${SRC_DIR}/vm_local.h
+	${SRC_DIR}/vm.h
 	${SRC_DIR}/progdefs.h
 	${SRC_DIR}/progs.h
 	${SRC_DIR}/protocol.h
@@ -271,7 +272,9 @@ set ( SOURCES
 	${SRC_DIR}/pr2_cmds.c
 	${SRC_DIR}/pr2_edict.c
 	${SRC_DIR}/pr2_exec.c
-	${SRC_DIR}/pr2_vm.c
+	${SRC_DIR}/vm.c
+	${SRC_DIR}/vm_interpreted.c
+	${SRC_DIR}/vm_x86.c
 	${SRC_DIR}/pr_cmds.c
 	${SRC_DIR}/pr_edict.c
 	${SRC_DIR}/pr_exec.c
