@@ -225,7 +225,7 @@ int TP_IsAmmoLow(int weapon)
 int TP_TeamFortressEngineerSpanner(void)
 {
 	char *player_skin=Info_ValueForKey(cl.players[cl.playernum].userinfo,"skin");
-	char *model_name=cl.model_precache[cl.viewent.current.modelindex]->name;
+	char *model_name=cl.model_precache[CL_WeaponModelForView()->current.modelindex]->name;
 	if (cl.teamfortress && player_skin
 			&& (strcasecmp(player_skin, "tf_eng") == 0)
 			&& model_name
@@ -2603,17 +2603,19 @@ static void HUD_Sort_Scoreboard(int flags)
 			active_player_position = -1;
 			for (i = 0; i < n_players + n_spectators; ++i) {
 				if (sorted_players[i].playernum == active_player) {
+					active_player_position = i;
 					if (hud_sortrules_includeself.integer == 1 && i > 0) {
 						sort_players_info_t temp = sorted_players[0];
 						sorted_players[0] = sorted_players[i];
 						sorted_players[i] = temp;
+						active_player_position = 0;
 					}
 					else if (hud_sortrules_includeself.integer == 2 && i > 1) {
 						sort_players_info_t temp = sorted_players[1];
 						sorted_players[1] = sorted_players[i];
 						sorted_players[i] = temp;
+						active_player_position = 1;
 					}
-					active_player_position = i;
 				}
 			}
 		}

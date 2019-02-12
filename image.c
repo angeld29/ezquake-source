@@ -979,12 +979,13 @@ png_data *Image_LoadPNG_All (vfsfile_t *fin, const char *filename, int matchwidt
 
 	// Set the return adress that PNGLib should return to if
 	// an error occurs during reading.
-#if 0
-	if (setjmp(png_ptr->jmpbuf)) 
+#if 1
+	if (setjmp(png_jmpbuf(png_ptr)))
 	{
 		png_destroy_read_struct(&png_ptr, &pnginfo, NULL);
 		VFS_CLOSE(fin);
 		fin = NULL;
+		Com_Printf("PNG image for %s is broken\n", filename);
 		return NULL;
 	}
 #endif

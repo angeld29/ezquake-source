@@ -3,3 +3,6 @@
 ezquake
 ezquake.exe
 ezquake-*-*
+build/
+help_commands.c
+help_variables.c

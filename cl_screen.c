@@ -686,14 +686,7 @@ void SCR_DrawFPS (void) {
 		return;
 
 	// Multiview
-	if (CL_MultiviewEnabled())
-	{
-		snprintf(str, sizeof(str), "%3.1f", (lastfps + 0.05)/CL_MultiviewNumberViews());
-	}
-	else
-	{
-		snprintf(str, sizeof(str), "%3.1f",  lastfps + 0.05);
-	}
+	snprintf(str, sizeof(str), "%3.1f", (lastfps + 0.05));
 
 	x = ELEMENT_X_COORD(show_fps);
 	y = ELEMENT_Y_COORD(show_fps);
@@ -807,7 +800,7 @@ void SCR_DrawGameClock (void) {
 	else
 		strlcpy (str, SecondsToHourString((int) abs(timelimit - cl.gametime + scr_gameclock_offset.value)), sizeof(str));
 
-	if ((scr_gameclock.value == 3 || scr_gameclock.value == 4) && (s = strstr(str, ":")))
+	if ((scr_gameclock.value == 3 || scr_gameclock.value == 4) && (s = strchr(str, ':')))
 		s++;		// or just use SecondsToMinutesString() ...
 	else
 		s = str;
@@ -3968,46 +3961,6 @@ void SCR_Init (void)
 	scr_initialized = true;
 
 	ScrollBars_Init();
-}
-
-void SCR_DrawMultiviewBorders(void)
-{
-	//
-	// Draw black borders around the views.
-	//
-	if (cl_multiview.value == 2 && !cl_mvinset.value)
-	{
-		Draw_Fill(0, vid.height / 2, vid.width - 1, 1, 0);
-	}
-	else if (cl_multiview.value == 2 && cl_mvinset.value)
-	{
-		if (vid.width <= 512 && cl_sbar.value)
-		{
-			Draw_Fill(vid.width / 3 * 2 + 1, vid.height / 3 - sb_lines / 3, vid.width / 3 + 2, 1, 0);
-			Draw_Fill(vid.width / 3 * 2 + 1, 0, 1, vid.height / 3 - sb_lines / 3, 0);
-		}
-		else if ((vid.width > 512 && cl_sbar.value && !cl_mvinsethud.value) || (vid.width > 512 && cl_sbar.value && !cl_mvdisplayhud.value))
-		{
-			Draw_Fill(vid.width / 3 * 2, vid.height / 3 - sb_lines / 3, vid.width / 3, 1, 0);
-			Draw_Fill(vid.width / 3 * 2, 0, 1, vid.height / 3 - sb_lines/3, 0);
-		}
-		else
-		{
-			// sbar 0 and <= 512 conwidth
-			Draw_Fill(vid.width / 3 * 2 + 1, vid.height / 3, vid.width / 3 + 2, 1, 0);
-			Draw_Fill(vid.width / 3 * 2 + 1, 0, 1, vid.height / 3, 0);
-		}
-	}
-	else if (cl_multiview.value == 3)
-	{
-		Draw_Fill(vid.width / 2, vid.height / 2, 1, vid.height / 2, 0);
-		Draw_Fill(0, vid.height / 2, vid.width, 1, 0);
-	}
-	else if (cl_multiview.value == 4)
-	{
-		Draw_Fill(vid.width / 2, 0, 1, vid.height, 0);
-		Draw_Fill(0, vid.height / 2, vid.width, 1, 0);
-	}
 }
 
 mpic_t * SCR_GetWeaponIconByFlag (int flag)

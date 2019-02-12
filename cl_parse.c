@@ -2378,7 +2378,7 @@ void CL_ParseVWepPrecache (char *str)
 			if (strstr(p, "..") || p[0] == '/' || p[0] == '\\')
 				Host_Error("CL_ParseVWepPrecache: illegal model name '%s'", p);
 
-			if (strstr(p, "/"))
+			if (strchr(p, '/'))
 			{
 				// A full path was specified.
 				strlcpy(cl.vw_model_name[i], p, sizeof(cl.vw_model_name[0]));
@@ -2391,7 +2391,7 @@ void CL_ParseVWepPrecache (char *str)
 			}
 
 			// Use default extension if not specified.
-			if (!strstr(p, "."))
+			if (!strchr(p, '.'))
 				strlcat(cl.vw_model_name[i], ".mdl", sizeof(cl.vw_model_name[0]));
 		}
 	}
@@ -3150,6 +3150,14 @@ void CL_ParseStufftext (void)
 		extern void MVD_ParseUserCommand (const char* s);
 
 		MVD_ParseUserCommand (s + sizeof("//ucmd ") - 1);
+	}
+	else if (!strncmp(s, "//finalscores ", sizeof("//finalscores ") - 1))
+	{
+		cmd_alias_t* alias = Cmd_FindAlias("f_qtvfinalscores");
+
+		if (alias) {
+			Cbuf_AddTextEx(&cbuf_svc, va("f_qtvfinalscores %s\n", s + sizeof("//finalscores ") - 1));
+		}
 	}
 	else
 	{
