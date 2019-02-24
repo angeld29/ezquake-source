@@ -466,6 +466,13 @@ if ( WITH_PNG )
 	add_definitions ( -DWITH_PNG_STATIC -DWITH_PNG -D__Q_PNG14__ )	
 endif ()
 
+option ( WITH_TCL "Adds TCL support" ON )
+if ( WITH_TCL )
+	set ( TCL_INCLUDES ${SRC_DIR}/msvc32-libs/include/tcl/generic )
+	set ( TCL_LIBRARIES tcl84 )
+	add_definitions ( -DWITH_TCL )	
+endif ()
+
 option ( WITH_JPEG "Adds JPEG support" ON )
 if ( WITH_ZIP )
 	set ( JPEG_INCLUDES ${SRC_DIR}/msvc32-libs/include/jpeg )
@@ -498,6 +505,7 @@ target_link_libraries ( ${PROJECT}
 	${OPENGL_LIBRARIES} 
 	${JPEG_LIBRARIES} 
 	${ZLIB_LIBRARIES}
+	${TCL_LIBRARIES}
 	${PNG_LIBRARIES}
 	${SPEEX_LIBRARIES}
 	)
@@ -507,3 +515,4 @@ target_include_directories ( ${PROJECT} PRIVATE ${ZLIB_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${PNG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${JPEG_INCLUDES} )
 target_include_directories ( ${PROJECT} PRIVATE ${SPEEX_INCLUDES} )
+target_include_directories ( ${PROJECT} PRIVATE ${TCL_INCLUDES} )
