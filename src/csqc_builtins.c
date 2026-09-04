@@ -335,9 +335,14 @@ static void csqc_sprintf (void)
 						s = NULL;
 					if (!s && !warned)
 					{
+						int k;
 						warned = 1;
 						Con_Printf ("csqc_sprintf: bad string arg (fmt=\"%s\" arg=%d off=%d argc=%d)\n",
 							fmt, pn - 1, off, vm->argc);
+						for (k = 0; k <= 15; k++)
+							Con_Printf ("  w%d int=%d float=%g\n", k,
+								*(int *)&vm->globals[OFS_PARM0 + k],
+								vm->globals[OFS_PARM0 + k]);
 					}
 				}
 				if (s)

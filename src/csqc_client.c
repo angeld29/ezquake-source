@@ -36,6 +36,7 @@ typedef struct csqc_client_state_s
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			global_time;	// смещение глобала time (или -1)
+	int			loaded_crc;		// CRC загруженного csprogs (сверка с *csprogs)
 	int			numcmds;
 	char		cmds[16][64];
 } csqc_client_state_t;
@@ -295,11 +296,12 @@ static qbool CSQC_Client_Load (void)
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 
 	s_csqc.loaded = true;
+	s_csqc.loaded_crc = vm->progs->crc;
 
-	Con_Printf ("CSQC: loaded csprogs.dat (%d statements), funcs i=%d w=%d u=%d c=%d s=%d "
-		"eu=%d er=%d pe=%d time=%d\n",
-		vm->progs->numstatements, s_csqc.func_init, s_csqc.func_world,
-		s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
+	Con_Printf ("CSQC: loaded csprogs.dat (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
+		"c=%d s=%d eu=%d er=%d pe=%d time=%d\n",
+		vm->progs->numstatements, (unsigned int)s_csqc.loaded_crc, s_csqc.func_init,
+		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.global_time);
 
@@ -311,21 +313,6 @@ static qbool CSQC_Client_Load (void)
 		vm->globals[OFS_PARM2] = 0;	// enginever (float в нашем модуле)
 		CSQC_Client_Exec (s_csqc.func_init);
 		s_csqc.inited = !s_csqc.errored;
-	}
-
-	// enablecsqc после готовности модуля (FTE шлёт после WorldLoaded; здесь —
-	// сразу после Init, чтобы не зависеть от первого активного 2D-кадра).
-	if (s_csqc.inited)
-	{
-#ifdef FTE_PEXT_CSQC
-		if (cls.fteprotocolextensions & FTE_PEXT_CSQC)
-#endif
-		{
-			MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
-			MSG_WriteString (&cls.netchan.message, "enablecsqc");
-			s_csqc.enable_sent = true;
-			Con_Printf ("CSQC: enablecsqc sent\n");
-		}
 	}
 	return true;
 }
@@ -342,27 +329,40 @@ CSQC_Client_ConnectCheck
 */
 void CSQC_Client_ConnectCheck (void)
 {
+	extern cvar_t cl_pext_csqc;
+	unsigned int serv_crc;
 	int sizep;
 
-	// Уже загружен: это, скорее всего, смена карты в том же соединении —
-	// сбрасываем world_done, чтобы CSQC_WorldLoaded вызвался для новой карты
-	// (как в FTE: WorldLoaded после каждого Surf_NewMap).
-	if (s_csqc.loaded)
-	{
-		s_csqc.world_done = false;
+	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
+	// модуль не грузится, клиент ведёт себя как раньше.
+	if (!cl_pext_csqc.value)
 		return;
-	}
 
-	// Гейт — по ключу *csprogssize в serverinfo (mvdsv шлёт hex, напр. "0x792a";
-	// поэтому читаем strtoul base 0, как FTE в fteqw/.../cl_parse.c). mvdsv шлёт
-	// ключ, когда сервер CSQC активен; сам клиент рекламирует FTE_PEXT_CSQC
-	// (cl_pext_csqc), но enablecsqc не шлёт — поэтому CSQC-сущности (76) не
-	// приходят до парсинга.
 	sizep = (int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogssize"), NULL, 0);
 	if (sizep <= 0)
 		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
 
-	CSQC_Client_Load ();
+	serv_crc = (unsigned int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogs"), NULL, 0);
+
+	// Загрузка/перезагрузка модуля на каждом входе в мир: csprogs может
+	// меняться между картами — сверяем CRC с серверным *csprogs.
+	if (!s_csqc.loaded || (serv_crc && serv_crc != (unsigned int)s_csqc.loaded_crc))
+	{
+		if (s_csqc.loaded)
+			Con_Printf ("CSQC: csprogs crc changed (0x%x -> 0x%x), reload\n",
+				(unsigned int)s_csqc.loaded_crc, serv_crc);
+		CSQC_Client_Disconnect ();	// полный сброс инстанса/команд перед перезагрузкой
+		CSQC_Client_Load ();
+		if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+			return;
+	}
+
+	// Вход в новую карту (первый коннект или map-change): сброс per-карта
+	// состояния — seen[]/remove, WorldLoaded и enablecsqc для этой карты.
+	memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
+	s_csqc.remove_pending = false;
+	s_csqc.world_done = false;
+	s_csqc.enable_sent = false;
 }
 
 /*
@@ -387,6 +387,19 @@ void CSQC_Client_Update (void)
 		s_csqc.world_done = true;
 		if (!CSQC_Client_Exec (s_csqc.func_world))
 			return;
+		// FTE: enablecsqc — после CSQC_WorldLoaded каждой карты (module ready).
+		if (!s_csqc.enable_sent)
+		{
+#ifdef FTE_PEXT_CSQC
+			if (cls.fteprotocolextensions & FTE_PEXT_CSQC)
+#endif
+			{
+				MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+				MSG_WriteString (&cls.netchan.message, "enablecsqc");
+				s_csqc.enable_sent = true;
+				Con_Printf ("CSQC: enablecsqc sent (map)\n");
+			}
+		}
 	}
 
 	if (s_csqc.func_update > 0)
