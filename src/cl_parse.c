@@ -46,6 +46,9 @@ $Id: cl_parse.c,v 1.135 2007-10-28 19:56:44 qqshka Exp $
 #include "r_brushmodel_sky.h"
 #include "demo_spawnwarn.h"
 #include "central.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"
+#endif
 
 int CL_LoginImageId(const char* name);
 
@@ -3452,10 +3455,15 @@ void CL_SetStat (int stat, int value)
 	}
 
 	// Extended CSQC-статы 32..127 (mvdsv шлёт их клиентам с FTE_PEXT_CSQC).
-	// cl.stats[] хранит только стандартные 0..31 — расширенные игнорируем до
-	// подшага «статы 32-127» (иначе бит CSQC вёл бы к Host_Error здесь).
+	// cl.stats[] хранит только стандартные 0..31 — расширенные складываются
+	// в хранилище клиентского CSQC (getstati/f читают их оттуда).
 	if (stat >= MAX_CL_STATS)
+	{
+#ifndef CLIENTONLY
+		CSQC_Client_SetStat (stat, value);
+#endif
 		return;
+	}
 
 	// Set the stat value for the current player we're parsing in the MVD.
 	if (cls.mvdplayback)

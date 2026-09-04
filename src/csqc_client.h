@@ -11,7 +11,8 @@ csqc_client.h -- клиентская обвязка PR1VM (наш csprogs.dat),
 #define CSQC_CLIENT_H
 
 // Доступ к клиентскому состоянию/выводу (реализация в csqc_client.c):
-float CSQC_Client_GetStat (int idx);				// cl.stats 0..31, выше — 0
+float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы
+void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 32..127 (CL_SetStat)
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
 void CSQC_Client_DrawText (float x, float y, const char *text, float alpha);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль

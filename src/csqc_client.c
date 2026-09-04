@@ -37,17 +37,30 @@ typedef struct csqc_client_state_s
 
 static csqc_client_state_t s_csqc;
 
+// Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
+// 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
+// (см. CSQC_Client_GetStat/SetStat).
+static int s_csqc_stat[128];
+
 /*
 =================
-CSQC_Client_GetStat / GetScreenSize / DrawText / RegisterCommand
-Accessor'ы для csqc_builtins.c (см. csqc_client.h).
+CSQC_Client_GetStat / SetStat / GetScreenSize / DrawText / RegisterCommand
+Accessor'ы для csqc_builtins.c и cl_parse.c (см. csqc_client.h).
 =================
 */
 float CSQC_Client_GetStat (int idx)
 {
-	if (idx >= 0 && idx < 32)	// cl.stats[] = стандартные 0..31
+	if (idx >= 0 && idx < 32)
 		return (float)cl.stats[idx];
-	return 0;					// 32..127 — до подшага «статы 32-127»
+	if (idx >= 32 && idx < 128)
+		return (float)s_csqc_stat[idx];
+	return 0;
+}
+
+void CSQC_Client_SetStat (int idx, int value)
+{
+	if (idx >= 32 && idx < 128)
+		s_csqc_stat[idx] = value;
 }
 
 void CSQC_Client_GetScreenSize (int *w, int *h)
@@ -332,6 +345,7 @@ void CSQC_Client_Disconnect (void)
 	}
 	CSQC_Client_ClearCommands ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
+	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.global_time = -1;
