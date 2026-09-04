@@ -71,11 +71,19 @@ void CSQC_Client_GetScreenSize (int *w, int *h)
 		*h = vid.height;
 }
 
-void CSQC_Client_DrawText (float x, float y, const char *text, float alpha)
+void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha)
 {
-	(void)alpha;
-	if (text)
-		Draw_SColoredStringBasic (x, y, text, 0, 1, true);
+	byte rgba[4];
+	if (!text)
+		return;
+	// Цвет задаёт модуль (параметр rgb drawstring); выставляем явно, чтобы не
+	// зависеть от scr_coloredText/состояния цвета предыдущих вызовов.
+	rgba[0] = bound (0, r, 255);
+	rgba[1] = bound (0, g, 255);
+	rgba[2] = bound (0, b, 255);
+	rgba[3] = (byte)(bound (0.0f, alpha, 1.0f) * 255.0f);
+	Draw_SetColor (rgba);
+	Draw_SString (x, y, text, 1, true);
 }
 
 static void CSQC_Client_ConsoleCommand_f (void);

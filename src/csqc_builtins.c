@@ -191,15 +191,15 @@ static void csqc_renderscene (void) { }
 float(vector position, string text, vector size, vector rgb,
       float alpha, float drawflag) drawstring = #326
 
-Рисуем строку в 2D-оверлее ezquake. Параметр position — слоты 0..2 (vector),
-text — слот 3 (string_t), size — 4..6 (игнор, шрифт по умолчанию), rgb — 7..9
-(0..1 → цветовой код &cRRGGBB), alpha — 10, drawflag — 11.
+Рисуем строку в 2D-оверлее ezquake. Параметры PR1 — каждые 3 слова на аргумент:
+pos=0..2 (vector), text=3 (string_t), size=6..8 (игнор — шрифт по умолчанию),
+rgb=9..11 (0..1 → байты), alpha=12, drawflag=15.
+Цвет выставляем явно (Draw_SetColor) — не зависит от scr_coloredText.
 */
 static void csqc_drawstring (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	float *g;
-	static char buf[4096];
 	int r, gg, b;
 	char *s;
 	if (!vm)
@@ -208,13 +208,10 @@ static void csqc_drawstring (void)
 	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (!s)
 		return;
-	// rgb 0..1 → &cRRGGBB (поддерживается scr_coloredText). Параметры PR1 —
-	// каждые 3 слова: pos=0..2, text=3, size=6..8, rgb=9..11, alpha=12, flags=15.
 	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
 	gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
 	b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
-	snprintf (buf, sizeof (buf), "&c%02X%02X%02X%s", r, gg, b, s);
-	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], buf, g[OFS_PARM0 + 12]);
+	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s, r, gg, b, g[OFS_PARM0 + 12]);
 }
 
 /*
