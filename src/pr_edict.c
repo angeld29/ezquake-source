@@ -1138,20 +1138,16 @@ void PR_InitPatchTables (void)
 
 /*
 =================
-PR1VM_LoadData
+PR1VM_FillAndSwapLumps
 
-PR1VM (S2): заполняет инстанс из файла progs (v6). Байтсвоп заголовка и lumps;
-валидацию версии/CRC и тексты ошибок оставляет серверной обёртке PR1_LoadProgs.
+PR1VM: из уже байтсвопнутого заголовка заполняет зеркала инстанса и делает
+байтсвоп lumps. Общий для v6 и v7 (первые 15 полей заголовка совпадают;
+v7 дополняет их полями отладки/типов после entityfields).
 =================
 */
-void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
+static void PR1VM_FillAndSwapLumps (pr1vm_t *vm, dprograms_t *p)
 {
 	int i;
-	dprograms_t *p = hdr;
-
-	// byte swap the header
-	for (i = 0; i < (int) sizeof(*p) / 4 ; i++)
-		((int *)p)[i] = LittleLong ( ((int *)p)[i] );
 
 	vm->progs = p;
 	vm->functions = (dfunction_t *)((byte *)p + p->ofs_functions);
@@ -1163,7 +1159,6 @@ void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
 	vm->globals = (float *)vm->global_struct;
 	vm->edict_size = p->entityfields * 4;
 
-	// byte swap the lumps
 	for (i = 0; i < p->numstatements; i++)
 	{
 		vm->statements[i].op = LittleShort(vm->statements[i].op);
@@ -1202,6 +1197,26 @@ void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
 
 /*
 =================
+PR1VM_LoadData
+
+PR1VM (S2): заполняет инстанс из файла progs (v6). Байтсвоп заголовка и lumps;
+валидацию версии/CRC и тексты ошибок оставляет серверной обёртке PR1_LoadProgs.
+=================
+*/
+void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
+{
+	int i;
+	dprograms_t *p = hdr;
+
+	// byte swap the header
+	for (i = 0; i < (int) sizeof(*p) / 4 ; i++)
+		((int *)p)[i] = LittleLong ( ((int *)p)[i] );
+
+	PR1VM_FillAndSwapLumps (vm, p);
+}
+
+/*
+=================
 PR1VM_CommitServer
 
 PR1VM (S2): сервер — зеркала инстанса -> общие «модульные» глобалы (их читают
@@ -1219,6 +1234,151 @@ void PR1VM_CommitServer (pr1vm_t *vm)
 	pr_global_struct = vm->global_struct;
 	pr_globals = vm->globals;
 	pr_edict_size = vm->edict_size;
+}
+
+/*
+=================
+PR1VM_LoadClientV7
+
+PR1VM (S3): клиентский v7-secondary16 loader (наш csprogs.dat, «пустой»
+extended). CRC не проверяется; ошибки -> false + Con_Printf (без SV_Error).
+=================
+*/
+#define PR1VM_SECONDARYVERSION16 0x021b1461
+
+qbool PR1VM_LoadClientV7 (pr1vm_t *vm, const byte *data, int filesize)
+{
+	int i;
+	int *h = (int *)(void *)data;
+	int numtypes, numbodylessfuncs, blockscompressed, secondaryversion;
+
+	if (!data || filesize < 23 * (int)sizeof(int))
+	{
+		Con_Printf ("PR1VM_LoadClientV7: file too small (%d bytes)\n", filesize);
+		return false;
+	}
+
+	// смотрим сырую LE-версию до байтсвопа
+	if (LittleLong(h[0]) != 7)
+	{
+		Con_Printf ("PR1VM_LoadClientV7: not a v7 progs (version=%d)\n", LittleLong(h[0]));
+		return false;
+	}
+
+	// byte swap the (23-int) header
+	for (i = 0; i < 23; i++)
+		h[i] = LittleLong (h[i]);
+
+	// поля за пределами классического dprograms_t (индексы v7-заголовка)
+	numbodylessfuncs = h[18];
+	numtypes = h[20];
+	blockscompressed = h[21];
+	secondaryversion = h[22];
+
+	if (secondaryversion != PR1VM_SECONDARYVERSION16)
+	{
+		Con_Printf ("PR1VM_LoadClientV7: not an FTE-16 progs (secondaryversion=0x%x)\n", secondaryversion);
+		return false;
+	}
+	if (numtypes != 0 || numbodylessfuncs != 0 || blockscompressed != 0)
+	{
+		Con_Printf ("PR1VM_LoadClientV7: non-empty extended progs unsupported "
+			"(numtypes=%d numbodylessfuncs=%d blockscompressed=%d)\n",
+			numtypes, numbodylessfuncs, blockscompressed);
+		return false;
+	}
+
+	PR1VM_FillAndSwapLumps (vm, (dprograms_t *)data);
+	return true;
+}
+
+char *PR1VM_GetString (pr1vm_t *vm, int num)
+{
+	if (!vm || !vm->strings || num < 0)
+		return NULL;
+	return vm->strings + num;
+}
+
+dfunction_t *PR1VM_FindFunction (pr1vm_t *vm, const char *name)
+{
+	int i;
+
+	if (!vm || !vm->functions || !name)
+		return NULL;
+
+	for (i = 0; i < vm->progs->numfunctions; i++)
+	{
+		char *s = PR1VM_GetString (vm, vm->functions[i].s_name);
+		if (s && s[0] && !strcmp (s, name))
+			return &vm->functions[i];
+	}
+	return NULL;
+}
+
+int PR1VM_FindGlobal (pr1vm_t *vm, const char *name)
+{
+	int i;
+
+	if (!vm || !vm->globaldefs || !name)
+		return -1;
+
+	for (i = 0; i < vm->progs->numglobaldefs; i++)
+	{
+		char *s = PR1VM_GetString (vm, vm->globaldefs[i].s_name);
+		if (s && s[0] && !strcmp (s, name))
+			return vm->globaldefs[i].ofs;
+	}
+	return -1;
+}
+
+/*
+=================
+PR1VM_CSQCSmoke_f
+
+PR1VM (S3, debug): загружает csprogs.dat (v7) из текущего gamedir в
+статический клиентский инстанс, резолвит CSQC-функции и исполняет
+CSQC_WorldLoaded (пустое тело — builtins клиента ещё не подключены, S5).
+=================
+*/
+static pr1vm_t csqc_smoke_vm;
+
+void PR1VM_CSQCSmoke_f (void)
+{
+	byte *data;
+	int filesize;
+	pr1vm_t *vm = &csqc_smoke_vm;
+	dfunction_t *f;
+	func_t idx;
+
+	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
+	if (!data)
+	{
+		Con_Printf ("csqc_smoke: couldn't load csprogs.dat from gamedir\n");
+		return;
+	}
+
+	PR1VM_Reset (vm);
+	if (!PR1VM_LoadClientV7 (vm, data, filesize))
+	{
+		Con_Printf ("csqc_smoke: v7 load failed\n");
+		return;
+	}
+
+	Con_Printf ("csqc_smoke: client v7: statements=%d functions=%d globals=%d"
+		" (server PR1: statements=%d functions=%d)\n",
+		vm->progs->numstatements, vm->progs->numfunctions, vm->progs->numglobals,
+		progs ? progs->numstatements : -1, progs ? progs->numfunctions : -1);
+
+	f = PR1VM_FindFunction (vm, "CSQC_Init");
+	Con_Printf ("csqc_smoke: CSQC_Init %s\n", f ? "found" : "MISSING");
+	f = PR1VM_FindFunction (vm, "CSQC_WorldLoaded");
+	Con_Printf ("csqc_smoke: CSQC_WorldLoaded %s\n", f ? "found" : "MISSING");
+	if (!f)
+		return;
+
+	idx = (func_t)(f - vm->functions);
+	PR1VM_ExecuteProgram (vm, idx);
+	Con_Printf ("csqc_smoke: CSQC_WorldLoaded executed ok (server PR1 still alive)\n");
 }
 
 void PR1_LoadProgs (void)

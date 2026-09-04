@@ -301,7 +301,7 @@ void PR_RunError (char *error, ...)
 	{
 		if (vm->xfunction)
 		{
-			PR_PrintStatement (pr_statements + vm->xstatement);
+			PR_PrintStatement (vm->statements + vm->xstatement);
 			PR_StackTrace ();
 		}
 		vm->depth = 0; // dump the stack so SV_Error can shutdown functions
@@ -334,7 +334,7 @@ int PR1VM_EnterFunction (pr1vm_t *vm, dfunction_t *f)
 		PR_RunError ("PR_ExecuteProgram: locals stack overflow\n");
 
 	for (i=0 ; i < c ; i++)
-		vm->localstack[vm->localstack_used+i] = ((int *)pr_globals)[f->parm_start + i];
+		vm->localstack[vm->localstack_used+i] = ((int *)vm->globals)[f->parm_start + i];
 	vm->localstack_used += c;
 
 	// copy parameters
@@ -343,7 +343,7 @@ int PR1VM_EnterFunction (pr1vm_t *vm, dfunction_t *f)
 	{
 		for (j=0 ; j<f->parm_size[i] ; j++)
 		{
-			((int *)pr_globals)[o] = ((int *)pr_globals)[OFS_PARM0+i*3+j];
+			((int *)vm->globals)[o] = ((int *)vm->globals)[OFS_PARM0+i*3+j];
 			o++;
 		}
 	}
@@ -371,7 +371,7 @@ int PR1VM_LeaveFunction (pr1vm_t *vm)
 		PR_RunError ("PR_ExecuteProgram: locals stack underflow\n");
 
 	for (i=0 ; i < c ; i++)
-		((int *)pr_globals)[vm->xfunction->parm_start + i] = vm->localstack[vm->localstack_used+i];
+		((int *)vm->globals)[vm->xfunction->parm_start + i] = vm->localstack[vm->localstack_used+i];
 
 	// up stack
 	vm->depth--;
@@ -402,14 +402,14 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	saved_active = g_active;
 	g_active = vm;
 
-	if (!fnum || fnum >= progs->numfunctions)
+	if (!fnum || fnum >= vm->progs->numfunctions)
 	{
-		if (pr_global_struct->self)
-			ED_Print (PROG_TO_EDICT(pr_global_struct->self));
+		if (vm->global_struct->self)
+			ED_Print (PROG_TO_EDICT(vm->global_struct->self));
 		SV_Error ("PR_ExecuteProgram: NULL function");
 	}
 
-	f = &pr_functions[fnum];
+	f = &vm->functions[fnum];
 
 	runaway = 100000;
 	pr_trace = false;
@@ -423,10 +423,10 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	{
 		s++; // next statement
 
-		st = &pr_statements[s];
-		a = (eval_t *)&pr_globals[st->a];
-		b = (eval_t *)&pr_globals[st->b];
-		c = (eval_t *)&pr_globals[st->c];
+		st = &vm->statements[s];
+		a = (eval_t *)&vm->globals[st->a];
+		b = (eval_t *)&vm->globals[st->b];
+		c = (eval_t *)&vm->globals[st->c];
 
 		if (--runaway == 0)
 			PR_RunError ("runaway loop error");
@@ -659,7 +659,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			if (!a->function)
 				PR_RunError ("NULL function");
 
-			newf = &pr_functions[a->function];
+			newf = &vm->functions[a->function];
 
 			if (newf->first_statement < 0)
 			{	// negative statements are built in functions
@@ -676,9 +676,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 
 		case OP_DONE:
 		case OP_RETURN:
-			pr_globals[OFS_RETURN] = pr_globals[st->a];
-			pr_globals[OFS_RETURN+1] = pr_globals[st->a+1];
-			pr_globals[OFS_RETURN+2] = pr_globals[st->a+2];
+			vm->globals[OFS_RETURN] = vm->globals[st->a];
+			vm->globals[OFS_RETURN+1] = vm->globals[st->a+1];
+			vm->globals[OFS_RETURN+2] = vm->globals[st->a+2];
 
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
@@ -689,8 +689,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			break;
 
 		case OP_STATE:
-			ed = PROG_TO_EDICT(pr_global_struct->self);
-			ed->v->nextthink = pr_global_struct->time + 0.1;
+			ed = PROG_TO_EDICT(vm->global_struct->self);
+			ed->v->nextthink = vm->global_struct->time + 0.1;
 			if (a->_float != ed->v->frame)
 			{
 				ed->v->frame = a->_float;

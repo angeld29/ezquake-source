@@ -78,6 +78,18 @@ void PR1VM_LoadData(pr1vm_t *vm, dprograms_t *hdr);
 // Сервер: зеркала инстанса -> общие «модульные» глобалы (PR2/sv_*.c читают их).
 void PR1VM_CommitServer(pr1vm_t *vm);
 
+// Клиентский v7-secondary16 loader («пустой» extended). Возвращает false и
+// печатает причину через Con_Printf (без SV_Error).
+qbool PR1VM_LoadClientV7(pr1vm_t *vm, const byte *data, int filesize);
+
+// Резолв по имени на инстансе (в отличие от ED_Find* — по зеркалам vm).
+dfunction_t *PR1VM_FindFunction(pr1vm_t *vm, const char *name);
+int PR1VM_FindGlobal(pr1vm_t *vm, const char *name);
+char *PR1VM_GetString(pr1vm_t *vm, int num);
+
+// S3 debug: консольная команда csqc_smoke (регистрируется в PR2_Init).
+void PR1VM_CSQCSmoke_f(void);
+
 int  PR1VM_EnterFunction(pr1vm_t *vm, dfunction_t *f);
 int  PR1VM_LeaveFunction(pr1vm_t *vm);
 void PR1VM_ExecuteProgram(pr1vm_t *vm, func_t fnum);
