@@ -41,6 +41,9 @@ $Id: cl_screen.c,v 1.156 2007-10-29 00:56:47 qqshka Exp $
 #include "Ctrl.h"
 #include "qtv.h"
 #include "demo_controls.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"
+#endif
 #include "r_trace.h"
 #include "r_lightmaps.h"
 #include "r_local.h"
@@ -821,6 +824,10 @@ static void SCR_DrawElements(void)
 				HUD_Editor_Draw();
 
 				DemoControls_Draw();
+#ifndef CLIENTONLY
+				// CSQC-оверлей (наш csprogs.dat): поверх движкового HUD.
+				CSQC_Client_Update ();
+#endif
 			}
 		}
 

@@ -1525,6 +1525,7 @@ void CL_ParseServerData (void)
 
 	if (!com_serveractive)
 		FS_SetGamedir (str, false);
+	Con_Printf ("[csqc] serverdata: gamedir=%s\n", str);
 
 	if (cfg_legacy_exec.value && (cflag || cfg_legacy_exec.value >= 2)) 
 	{
@@ -1645,6 +1646,7 @@ void CL_ParseServerData (void)
 
 	// now waiting for downloads, etc
 	cls.state = ca_onserver;
+	Con_Printf ("[csqc] state=ca_onserver\n");
 
 #ifdef FTE_PEXT2_VOICECHAT
 	S_Voip_MapChange();
@@ -3446,10 +3448,16 @@ void CL_SetStat (int stat, int value)
 	int	j;
 	extern cvar_t scr_gameclock;
 
-	if (stat < 0 || stat >= MAX_CL_STATS) {
+	if (stat < 0 || stat > 127) {
 		Host_Error("CL_SetStat: %i is invalid", stat);
 		return;
 	}
+
+	// Extended CSQC-статы 32..127 (mvdsv шлёт их клиентам с FTE_PEXT_CSQC).
+	// cl.stats[] хранит только стандартные 0..31 — расширенные игнорируем до
+	// подшага «статы 32-127» (иначе бит CSQC вёл бы к Host_Error здесь).
+	if (stat >= MAX_CL_STATS)
+		return;
 
 	// Set the stat value for the current player we're parsing in the MVD.
 	if (cls.mvdplayback)

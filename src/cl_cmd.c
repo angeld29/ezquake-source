@@ -1030,6 +1030,10 @@ void CL_FullServerinfo_f (void) {
 		return;
 
 	strlcpy (cl.serverinfo, Cmd_Argv(1), sizeof(cl.serverinfo));
+	Con_Printf ("[csqc] fullserverinfo: csprogssize=%s csprogs=%s gamedir=%s\n",
+		Info_ValueForKey (cl.serverinfo, "*csprogssize"),
+		Info_ValueForKey (cl.serverinfo, "*csprogs"),
+		Info_ValueForKey (cl.serverinfo, "*gamedir"));
 
 	p = Info_ValueForKey (cl.serverinfo, "*cheats");
 	if (*p)

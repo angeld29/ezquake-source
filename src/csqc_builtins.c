@@ -12,6 +12,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
 #include "pr1vm.h"
+#include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
 static pr1vm_t *CSQCVM_Active (void)
 {
@@ -61,7 +62,10 @@ void(string cmdname) registercommand = #352
 */
 static void csqc_registercommand (void)
 {
-	// Пока no-op: реальная привязка команд клиента — в мини-каркасе Фазы 5.
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *cmd = CSQCVM_Str (OFS_PARM0);
+	if (vm && cmd)
+		CSQC_Client_RegisterCommand (cmd);
 }
 
 /*
@@ -146,6 +150,220 @@ static void csqc_strstrofs (void)
 	vm->globals[OFS_RETURN] = p ? (p - hay) : -1;
 }
 
+/*
+float(float property, ...) getproperty = #309
+(VF_SCREENVSIZE=204 → vector (vid.width, vid.height, 0); остальные → 0.)
+*/
+#define CSQC_VF_SCREENVSIZE 204
+
+static void csqc_getproperty (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float prop;
+	if (!vm)
+		return;
+	prop = vm->globals[OFS_PARM0];
+	vm->globals[OFS_RETURN] = 0;
+	vm->globals[OFS_RETURN + 1] = 0;
+	vm->globals[OFS_RETURN + 2] = 0;
+	if ((int)prop == CSQC_VF_SCREENVSIZE)
+	{
+		int w = 0, h = 0;
+		CSQC_Client_GetScreenSize (&w, &h);
+		vm->globals[OFS_RETURN] = w;
+		vm->globals[OFS_RETURN + 1] = h;
+	}
+}
+
+/*
+void() clearscene = #300 / void(float mask) addentities = #301 /
+float(float property, ...) setproperty = #303 / void() renderscene = #304
+No-op: 3D-рендер модуля не делаем (движок рисует сам), HUD — поверх.
+*/
+static void csqc_clearscene (void) { }
+static void csqc_addentities (void) { }
+static void csqc_setproperty (void) { }
+static void csqc_renderscene (void) { }
+
+/*
+float(vector position, string text, vector size, vector rgb,
+      float alpha, float drawflag) drawstring = #326
+
+Рисуем строку в 2D-оверлее ezquake. Параметр position — слоты 0..2 (vector),
+text — слот 3 (string_t), size — 4..6 (игнор, шрифт по умолчанию), rgb — 7..9
+(0..1 → цветовой код &cRRGGBB), alpha — 10, drawflag — 11.
+*/
+static void csqc_drawstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	static char buf[4096];
+	int r, gg, b;
+	char *s;
+	if (!vm)
+		return;
+	g = vm->globals;
+	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	if (!s)
+		return;
+	// rgb 0..1 → &cRRGGBB (поддерживается scr_coloredText)
+	r = (int)(bound (0, g[OFS_PARM0 + 7], 1) * 255.0f + 0.5f);
+	gg = (int)(bound (0, g[OFS_PARM0 + 8], 1) * 255.0f + 0.5f);
+	b = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
+	snprintf (buf, sizeof (buf), "&c%02X%02X%02X%s", r, gg, b, s);
+	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], buf, g[OFS_PARM0 + 10]);
+}
+
+/*
+float(float stnum) getstati = #330 / float(float stnum, ...) getstatf = #331
+Стандартные статы 0..31 — из cl.stats; 32..127 (кастомные серверные) — 0 до
+подшага «статы 32–127». Бит-выборки getstatf(stnum, firstbit, bitcount) не
+используются нашим модулем — не реализованы.
+*/
+static float csqc_getstat_value (pr1vm_t *vm, int idx)
+{
+	(void)vm;
+	// Стандартные статы 0..31; 32..127 (кастомные серверные) — 0 до подшага
+	// «статы 32–127» (реализация доступа — в CSQC_Client_GetStat).
+	return CSQC_Client_GetStat (idx);
+}
+
+static void csqc_getstati (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = csqc_getstat_value (vm, (int)vm->globals[OFS_PARM0]);
+}
+
+static void csqc_getstatf (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = csqc_getstat_value (vm, (int)vm->globals[OFS_PARM0]);
+}
+
+/*
+string(string fmt, ...) sprintf = #627
+Мини-форматтер (QC): %d/%i (int), %s (string), %f/%g (+ %.Nprec), %v (vector),
+%%. Аргументы читаются по порядку из парам-слотов (начиная с OFS_PARM1);
+число слотов не ограничиваем длиной формата (vararg-call счётчик движка
+ненадёжен для vector-аргументов).
+*/
+static void csqc_sprintf (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	static char buf[2048];
+	char tmp[512];
+	const char *fmt, *p;
+	int slot = 1;
+	size_t o = 0;
+
+	if (!vm)
+		return;
+	fmt = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	if (!fmt)
+		fmt = "";
+
+	for (p = fmt; *p && o < sizeof (buf) - 1; p++)
+	{
+		char conv;
+		int prec = -1;
+		double dv;
+
+		if (*p != '%')
+		{
+			buf[o++] = *p;
+			continue;
+		}
+		p++;
+		if (*p == '%')
+		{
+			buf[o++] = '%';
+			continue;
+		}
+		if (*p == '.')
+		{
+			prec = 0;
+			p++;
+			while (*p >= '0' && *p <= '9')
+				prec = prec * 10 + (*p++ - '0');
+		}
+		conv = *p;
+		if (!conv)
+			break;
+
+		switch (conv)
+		{
+		case 'd':
+		case 'i':
+			if (slot < 48)
+				snprintf (tmp, sizeof (tmp), "%d", (int)vm->globals[OFS_PARM0 + slot]);
+			else
+				tmp[0] = 0;
+			slot++;
+			break;
+		case 'f':
+			dv = (slot < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
+			slot++;
+			if (prec >= 0)
+				snprintf (tmp, sizeof (tmp), "%.*f", prec, dv);
+			else
+				snprintf (tmp, sizeof (tmp), "%f", dv);
+			break;
+		case 'g':
+			dv = (slot < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
+			slot++;
+			if (prec >= 0)
+				snprintf (tmp, sizeof (tmp), "%.*g", prec, dv);
+			else
+				snprintf (tmp, sizeof (tmp), "%g", dv);
+			break;
+		case 's':
+			{
+				char *s = (slot < 48) ? PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + slot]) : NULL;
+				slot++;
+				if (s)
+					snprintf (tmp, sizeof (tmp), "%s", s);
+				else
+					tmp[0] = 0;
+			}
+			break;
+		case 'v':
+			{
+				double x = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
+				double y = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot + 1] : 0;
+				double z = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot + 2] : 0;
+				slot += 3;
+				snprintf (tmp, sizeof (tmp), "%g %g %g", x, y, z);
+			}
+			break;
+		default:
+			tmp[0] = conv;
+			tmp[1] = 0;
+			break;
+		}
+		{
+			size_t l = strlen (tmp);
+			if (o + l >= sizeof (buf))
+				l = sizeof (buf) - 1 - o;
+			memcpy (buf + o, tmp, l);
+			o += l;
+		}
+	}
+	buf[o] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+void(string evname, string evargs, ...) sendevent = #359
+Стаб: реальная запись clcfte_qcrequest-сообщения — в сетевом подшаге
+(после клиентского парсинга cgamepacket). Без стаба вызов из
+CSQC_ConsoleCommand ронял бы VM («Bad builtin call number»).
+*/
+static void csqc_sendevent (void) { }
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
@@ -155,6 +373,18 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
 	PR1VM_RegisterBuiltin (vm, 441, (builtin_t)csqc_tokenize);
 	PR1VM_RegisterBuiltin (vm, 442, (builtin_t)csqc_argv);
+
+	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
+	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
+	PR1VM_RegisterBuiltin (vm, 301, (builtin_t)csqc_addentities);
+	PR1VM_RegisterBuiltin (vm, 303, (builtin_t)csqc_setproperty);
+	PR1VM_RegisterBuiltin (vm, 304, (builtin_t)csqc_renderscene);
+	PR1VM_RegisterBuiltin (vm, 309, (builtin_t)csqc_getproperty);
+	PR1VM_RegisterBuiltin (vm, 326, (builtin_t)csqc_drawstring);
+	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati);
+	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
+	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);
+	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf);
 }
 
 #endif // !CLIENTONLY

@@ -1,0 +1,348 @@
+/*
+csqc_client.c -- клиентская обвязка PR1VM (наш csprogs.dat), Фаза 5 (мини-каркас).
+
+Что делает (спайк, «оверлей + статы 0-31»):
+  1. При получении полного serverinfo с *csprogs / *csprogssize и битом
+     FTE_PEXT_CSQC — грузит локальный csprogs.dat в статический клиентский
+     инстанс PR1VM (v7-secondary16), регистрирует клиентские builtins и
+     вызывает CSQC_Init.
+  2. В первом 2D-кадре (ca_active) — CSQC_WorldLoaded, каждый кадр —
+     CSQC_UpdateView(w,h,menushown); перед вызовом обновляет глобал time.
+  3. registercommand -> Cmd_AddCommand; выполнение команды -> CSQC_ConsoleCommand.
+  4. При разрыве — CSQC_Shutdown, PR1VM_UnLoad, снятие команд.
+
+Вне скоупа мини-каркаса (следующие подшаги): парсинг 76/83/90/92, статы
+32-127, реальный sendevent (clcfte_qcrequest), read*-builtins, скачивание
+csprogs.dat.
+*/
+
+#ifndef CLIENTONLY
+#include "quakedef.h"	// client.h (cl.stats), draw.h, vid.h, common.h (Cmd_*)
+#include "keys.h"		// key_dest / key_menu
+#include "pr1vm.h"
+#include "csqc_client.h"
+
+typedef struct csqc_client_state_s
+{
+	pr1vm_t		vm;
+	qbool		loaded;		// модуль загружен в инстанс
+	qbool		inited;		// CSQC_Init вызван
+	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
+	qbool		world_done;	// CSQC_WorldLoaded вызван
+	int			update_count;	// число вызовов CSQC_UpdateView (для трассы)
+	int			func_init, func_world, func_update, func_console, func_shutdown;
+	int			global_time;	// смещение глобала time (или -1)
+	int			numcmds;
+	char		cmds[16][64];
+} csqc_client_state_t;
+
+static csqc_client_state_t s_csqc;
+
+/*
+=================
+CSQC_Client_GetStat / GetScreenSize / DrawText / RegisterCommand
+Accessor'ы для csqc_builtins.c (см. csqc_client.h).
+=================
+*/
+float CSQC_Client_GetStat (int idx)
+{
+	if (idx >= 0 && idx < 32)	// cl.stats[] = стандартные 0..31
+		return (float)cl.stats[idx];
+	return 0;					// 32..127 — до подшага «статы 32-127»
+}
+
+void CSQC_Client_GetScreenSize (int *w, int *h)
+{
+	if (w)
+		*w = vid.width;
+	if (h)
+		*h = vid.height;
+}
+
+void CSQC_Client_DrawText (float x, float y, const char *text, float alpha)
+{
+	(void)alpha;
+	if (text)
+		Draw_SColoredStringBasic (x, y, text, 0, 1, true);
+}
+
+static void CSQC_Client_ConsoleCommand_f (void);
+
+void CSQC_Client_RegisterCommand (const char *cmd)
+{
+	int i;
+	if (!cmd || !cmd[0])
+		return;
+	for (i = 0; i < s_csqc.numcmds; i++)
+		if (!strcmp (s_csqc.cmds[i], cmd))
+			return;					// уже зарегистрирована
+	if (s_csqc.numcmds >= (int)(sizeof (s_csqc.cmds) / sizeof (s_csqc.cmds[0])))
+		return;
+	strlcpy (s_csqc.cmds[s_csqc.numcmds], cmd, sizeof (s_csqc.cmds[0]));
+	s_csqc.numcmds++;
+	Cmd_AddCommand (s_csqc.cmds[s_csqc.numcmds - 1], CSQC_Client_ConsoleCommand_f);
+}
+
+/*
+=================
+host-колбэки клиентского инстанса
+=================
+*/
+static void CSQC_Client_HostPrint (pr1vm_t *vm, const char *msg)
+{
+	(void)vm;
+	Con_Printf ("%s\n", msg);
+}
+
+static void CSQC_Client_HostError (pr1vm_t *vm, const char *msg)
+{
+	(void)vm;
+	Con_Printf ("CSQC (PR1VM) program error: %s\n", msg);
+	s_csqc.errored = true;
+	// Дальше спайк живёт: кадры отключаются (errored), перезагрузка при
+	// следующем ConnectCheck (новая карта/коннект).
+}
+
+/*
+=================
+Внутренние помощники
+=================
+*/
+static void CSQC_Client_SetTime (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	if (s_csqc.global_time >= 0)
+		vm->globals[s_csqc.global_time] = (float)Sys_DoubleTime ();
+}
+
+static qbool CSQC_Client_Exec (int fidx)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	if (fidx <= 0 || fidx >= vm->progs->numfunctions)
+		return false;
+	CSQC_Client_SetTime ();
+	PR1VM_ExecuteProgram (vm, (func_t)fidx);
+	return !s_csqc.errored;
+}
+
+static void CSQC_Client_ClearCommands (void)
+{
+	int i;
+	for (i = 0; i < s_csqc.numcmds; i++)
+		Cmd_RemoveCommand (s_csqc.cmds[i]);
+	s_csqc.numcmds = 0;
+}
+
+/*
+=================
+CSQC_Client_ConsoleCommand_f
+
+Команда, зарегистрированная модулем через registercommand. Восстанавливаем
+полную строку («name arg1 arg2 …») и зовём CSQC_ConsoleCommand(string cmd).
+=================
+*/
+static void CSQC_Client_ConsoleCommand_f (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	const char *line;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.func_console <= 0)
+		return;
+
+	if (Cmd_Argc () > 1)
+		line = va ("%s %s", Cmd_Argv (0), Cmd_Args ());
+	else
+		line = Cmd_Argv (0);
+
+	CSQC_Client_SetTime ();
+	PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)line);
+	vm->globals[OFS_RETURN] = 0;
+	PR1VM_ExecuteProgram (vm, (func_t)s_csqc.func_console);
+}
+
+/*
+=================
+CSQC_Client_Active
+=================
+*/
+int CSQC_Client_Active (void)
+{
+	return (s_csqc.loaded && !s_csqc.errored) ? 1 : 0;
+}
+
+/*
+=================
+CSQC_Client_Load
+
+Пытается загрузить csprogs.dat (локальный файл из gamedir; download — вне
+скоупа мини-каркаса) в клиентский инстанс и вызвать CSQC_Init. Возвращает
+true при успехе. При неудаче печатает причину и допускает повторную попытку
+(файл может появиться позже: download / путь к gamedir ещё не в FS).
+=================
+*/
+static qbool CSQC_Client_Load (void)
+{
+	byte *data;
+	int filesize;
+	pr1vm_t *vm;
+	dfunction_t *f;
+
+	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
+	if (!data)
+	{
+		Con_Printf ("CSQC: server offers csprogs but csprogs.dat not found locally\n");
+		return false;
+	}
+
+	memset (&s_csqc, 0, sizeof (s_csqc));
+	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
+		s_csqc.func_console = s_csqc.func_shutdown = -1;
+	s_csqc.global_time = -1;
+
+	vm = &s_csqc.vm;
+	vm->host_error = CSQC_Client_HostError;
+	vm->host_print = CSQC_Client_HostPrint;
+
+	if (!PR1VM_LoadClientV7 (vm, data, filesize))
+	{
+		Con_Printf ("CSQC: csprogs.dat load failed (v7)\n");
+		return false;
+	}
+
+	CSQCVM_RegisterBuiltins (vm);
+
+	f = PR1VM_FindFunction (vm, "CSQC_Init");
+	if (f)
+		s_csqc.func_init = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_WorldLoaded");
+	if (f)
+		s_csqc.func_world = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_UpdateView");
+	if (f)
+		s_csqc.func_update = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_ConsoleCommand");
+	if (f)
+		s_csqc.func_console = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Shutdown");
+	if (f)
+		s_csqc.func_shutdown = (int)(f - vm->functions);
+
+	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
+
+	s_csqc.loaded = true;
+
+	Con_Printf ("CSQC: loaded csprogs.dat (%d statements), funcs i=%d w=%d u=%d c=%d s=%d time=%d\n",
+		vm->progs->numstatements, s_csqc.func_init, s_csqc.func_world,
+		s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
+		s_csqc.global_time);
+
+	// CSQC_Init(apiver, enginename, enginever) — сигнатура нашего модуля.
+	if (s_csqc.func_init > 0)
+	{
+		vm->globals[OFS_PARM0] = 0;	// apiver (float)
+		PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_PARM1], "ezquake-orig");
+		vm->globals[OFS_PARM2] = 0;	// enginever (float в нашем модуле)
+		CSQC_Client_Exec (s_csqc.func_init);
+		s_csqc.inited = !s_csqc.errored;
+	}
+	return true;
+}
+
+/*
+=================
+CSQC_Client_ConnectCheck
+
+Вызывается при входе в мир (CL_MakeActive, до ca_active) — момент, когда весь
+контент (включая csprogs.dat) уже доступен в FS (аналог преспауна FTE).
+Если сервер предлагает CSQC (*csprogssize) и модуль ещё не загружен —
+грузим и вызываем CSQC_Init.
+=================
+*/
+void CSQC_Client_ConnectCheck (void)
+{
+	int sizep;
+
+	Con_Printf ("[csqc] ConnectCheck: loaded=%d\n", (int)s_csqc.loaded);
+
+	// Уже загружен: это, скорее всего, смена карты в том же соединении —
+	// сбрасываем world_done, чтобы CSQC_WorldLoaded вызвался для новой карты
+	// (как в FTE: WorldLoaded после каждого Surf_NewMap).
+	if (s_csqc.loaded)
+	{
+		s_csqc.world_done = false;
+		return;
+	}
+
+	// Гейт — по ключу *csprogssize в serverinfo (mvdsv шлёт hex, напр. "0x792a";
+	// поэтому читаем strtoul base 0, как FTE в fteqw/.../cl_parse.c). mvdsv шлёт
+	// ключ, когда сервер CSQC активен; сам клиент рекламирует FTE_PEXT_CSQC
+	// (cl_pext_csqc), но enablecsqc не шлёт — поэтому CSQC-сущности (76) не
+	// приходят до парсинга.
+	sizep = (int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogssize"), NULL, 0);
+	Con_Printf ("[csqc] ConnectCheck: *csprogssize=%d\n", sizep);
+	if (sizep <= 0)
+		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
+
+	CSQC_Client_Load ();
+}
+
+/*
+=================
+CSQC_Client_Update
+
+Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
+после входа в мир; далее CSQC_UpdateView(vid.width, vid.height, menushown).
+=================
+*/
+void CSQC_Client_Update (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (cls.state != ca_active)
+		return;
+
+	if (!s_csqc.world_done)
+	{
+		s_csqc.world_done = true;
+		if (!CSQC_Client_Exec (s_csqc.func_world))
+			return;
+		Con_Printf ("[csqc] CSQC_WorldLoaded executed ok\n");
+	}
+
+	if (s_csqc.func_update > 0)
+	{
+		vm->globals[OFS_PARM0] = vid.width;
+		vm->globals[OFS_PARM1] = vid.height;
+		vm->globals[OFS_PARM2] = (key_dest == key_menu) ? 1 : 0;
+		CSQC_Client_Exec (s_csqc.func_update);
+		s_csqc.update_count++;
+		if (s_csqc.update_count == 1)
+			Con_Printf ("[csqc] CSQC_UpdateView #1 executed ok\n");
+	}
+}
+
+/*
+=================
+CSQC_Client_Disconnect
+=================
+*/
+void CSQC_Client_Disconnect (void)
+{
+	if (s_csqc.loaded)
+	{
+		if (s_csqc.inited && !s_csqc.errored)
+			CSQC_Client_Exec (s_csqc.func_shutdown);
+		PR1VM_UnLoad (&s_csqc.vm);
+	}
+	CSQC_Client_ClearCommands ();
+	memset (&s_csqc, 0, sizeof (s_csqc));
+	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
+		s_csqc.func_console = s_csqc.func_shutdown = -1;
+	s_csqc.global_time = -1;
+}
+
+#endif // !CLIENTONLY

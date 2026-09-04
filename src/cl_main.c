@@ -35,6 +35,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "hud.h"
 #include "hud_common.h"
 #include "hud_editor.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"
+#endif
 #include "input.h"
 #include "gl_model.h"
 #include "tr_types.h"
@@ -110,8 +113,13 @@ cvar_t	cl_shownet = {"cl_shownet", "0"};	// can be 0, 1, or 2
 #if defined(PROTOCOL_VERSION_FTE) || defined(PROTOCOL_VERSION_FTE2) || defined(PROTOCOL_VERSION_MVD1)
 cvar_t  cl_pext = {"cl_pext", "1"};					// allow/disallow protocol extensions at all.
 													// some extensions can be explicitly controlled.
-cvar_t  cl_pext_limits = { "cl_pext_limits", "1" }; // enhanced protocol limits
-cvar_t  cl_pext_other = {"cl_pext_other", "0"};		// extensions which does not have own variables should be controlled by this variable.
+ cvar_t  cl_pext_limits = { "cl_pext_limits", "1" }; // enhanced protocol limits
+ cvar_t  cl_pext_other = {"cl_pext_other", "0"};		// extensions which does not have own variables should be controlled by this variable.
+#ifdef FTE_PEXT_CSQC
+#ifndef CLIENTONLY
+ cvar_t  cl_pext_csqc = {"cl_pext_csqc", "1"};			// CSQC (наш клиентский PR1VM, csqc_client.c)
+#endif
+#endif
 cvar_t  cl_pext_warndemos = { "cl_pext_warndemos", "1" }; // if set, user will be warned when saving demos that are not backwards compatible
 cvar_t  cl_pext_lagteleport = { "cl_pext_lagteleport", "1" }; // server-side adjustment of yaw angle through teleports
 #ifdef MVD_PEXT1_SERVERSIDEWEAPON
@@ -411,6 +419,9 @@ int CL_ClientState (void)
 
 void CL_MakeActive(void) 
 {
+#ifndef CLIENTONLY
+	Con_Printf ("[csqc] CL_MakeActive entered\n");
+#endif
 #ifdef DEBUG_MEMORY_ALLOCATIONS
 	Sys_Printf("\nevent,active (map=%s)\n", host_mapname.string);
 #endif
@@ -420,6 +431,12 @@ void CL_MakeActive(void)
 	if (GL_Supported(R_SUPPORT_RENDERING_SHADERS)) {
 		R_ProgramCompileAll();
 	}
+
+#ifndef CLIENTONLY
+	// CSQC: вход в мир (весь контент уже в FS) — аналог преспауна FTE.
+	// Грузим csprogs.dat + CSQC_Init строго до первого активного кадра.
+	CSQC_Client_ConnectCheck ();
+#endif
 
 	cls.state = ca_active;
 	if (cls.demoplayback) 
@@ -526,6 +543,17 @@ unsigned int CL_SupportedFTEExtensions (void)
 		fteprotextsupported |= FTE_PEXT_HLBSP;
 #endif
 	}
+
+	// CSQC (наш клиентский PR1VM). Сам по себе бит безопасен: сервер (mvdsv)
+	// шлёт extended-статы 32..127 (клиент их игнорирует до подшага «статы
+	// 32-127»), а CSQC-сущности — только после enablecsqc (его клиент не шлёт,
+	// пока нет парсинга 76/83/90/92).
+#ifdef FTE_PEXT_CSQC
+#ifndef CLIENTONLY
+	if (cl_pext_csqc.value)
+		fteprotextsupported |= FTE_PEXT_CSQC;
+#endif
+#endif
 
 	return fteprotextsupported;
 }
@@ -1528,6 +1556,11 @@ void CL_Disconnect (void)
 	// well, we need free qtv users before new connection
 	QTV_FreeUserList();
 
+#ifndef CLIENTONLY
+	// CSQC: Shutdown + выгрузка клиентского инстанса модуля.
+	CSQC_Client_Disconnect ();
+#endif
+
 	Cvar_ForceSet(&host_mapname, ""); // Notice mapname not valid yet
 }
 
@@ -2072,9 +2105,14 @@ static void CL_InitLocal(void)
 
 #if defined(PROTOCOL_VERSION_FTE) || defined(PROTOCOL_VERSION_FTE2) || defined(PROTOCOL_VERSION_MVD1)
 	Cvar_Register(&cl_pext);
-	Cvar_Register(&cl_pext_limits);
-	Cvar_Register(&cl_pext_other);
-	Cvar_Register(&cl_pext_warndemos);
+ 	Cvar_Register(&cl_pext_limits);
+ 	Cvar_Register(&cl_pext_other);
+#ifdef FTE_PEXT_CSQC
+#ifndef CLIENTONLY
+ 	Cvar_Register(&cl_pext_csqc);
+#endif
+#endif
+ 	Cvar_Register(&cl_pext_warndemos);
 #ifdef MVD_PEXT1_HIGHLAGTELEPORT
 	Cvar_Register(&cl_pext_lagteleport);
 #endif
