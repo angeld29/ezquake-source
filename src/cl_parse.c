@@ -4113,6 +4113,14 @@ void CL_ParseServerMessage (void)
 					CL_ParseServerInfoChange();
 					break;
 				}
+#if defined(FTE_PEXT_CSQC) && !defined(CLIENTONLY)
+			case svc_fte_csqcentities:
+				{
+					// CSQC-сущности (76): модуль читает payload через read*.
+					CSQC_Client_ParseEntities ();
+					break;
+				}
+#endif
 			case svc_download:
 				{
 					CL_ParseDownload();

@@ -29,7 +29,12 @@ typedef struct csqc_client_state_s
 	qbool		inited;		// CSQC_Init вызван
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
+	qbool		enable_sent;	// enablecsqc уже отправлен серверу
+	qbool		remove_pending;	// временный Remove: entnum для readentitynum
+	int			remove_ent;
+	qbool		seen[2048];		// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
+	int			func_entupdate, func_entremove, func_parseevent;
 	int			global_time;	// смещение глобала time (или -1)
 	int			numcmds;
 	char		cmds[16][64];
@@ -61,6 +66,30 @@ void CSQC_Client_SetStat (int idx, int value)
 {
 	if (idx >= 32 && idx < 128)
 		s_csqc_stat[idx] = value;
+}
+
+/*
+=================
+CSQC_Client_SetRemoveEnt / ReadEntityNum
+
+Временный путь Remove (без edict-модели): entnum передаётся builtin-стримом —
+readentitynum() в модуле вернёт отложенный номер (и снимет pending).
+=================
+*/
+void CSQC_Client_SetRemoveEnt (int entnum)
+{
+	s_csqc.remove_pending = true;
+	s_csqc.remove_ent = entnum;
+}
+
+int CSQC_Client_ReadEntityNum (void)
+{
+	if (s_csqc.remove_pending)
+	{
+		s_csqc.remove_pending = false;
+		return s_csqc.remove_ent;
+	}
+	return -1;
 }
 
 void CSQC_Client_GetScreenSize (int *w, int *h)
@@ -223,6 +252,7 @@ static qbool CSQC_Client_Load (void)
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
+	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.global_time = -1;
 
 	vm = &s_csqc.vm;
@@ -252,14 +282,25 @@ static qbool CSQC_Client_Load (void)
 	f = PR1VM_FindFunction (vm, "CSQC_Shutdown");
 	if (f)
 		s_csqc.func_shutdown = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Ent_Update");
+	if (f)
+		s_csqc.func_entupdate = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Ent_Remove");
+	if (f)
+		s_csqc.func_entremove = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Parse_Event");
+	if (f)
+		s_csqc.func_parseevent = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 
 	s_csqc.loaded = true;
 
-	Con_Printf ("CSQC: loaded csprogs.dat (%d statements), funcs i=%d w=%d u=%d c=%d s=%d time=%d\n",
+	Con_Printf ("CSQC: loaded csprogs.dat (%d statements), funcs i=%d w=%d u=%d c=%d s=%d "
+		"eu=%d er=%d pe=%d time=%d\n",
 		vm->progs->numstatements, s_csqc.func_init, s_csqc.func_world,
 		s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
+		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.global_time);
 
 	// CSQC_Init(apiver, enginename, enginever) — сигнатура нашего модуля.
@@ -270,6 +311,21 @@ static qbool CSQC_Client_Load (void)
 		vm->globals[OFS_PARM2] = 0;	// enginever (float в нашем модуле)
 		CSQC_Client_Exec (s_csqc.func_init);
 		s_csqc.inited = !s_csqc.errored;
+	}
+
+	// enablecsqc после готовности модуля (FTE шлёт после WorldLoaded; здесь —
+	// сразу после Init, чтобы не зависеть от первого активного 2D-кадра).
+	if (s_csqc.inited)
+	{
+#ifdef FTE_PEXT_CSQC
+		if (cls.fteprotocolextensions & FTE_PEXT_CSQC)
+#endif
+		{
+			MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+			MSG_WriteString (&cls.netchan.message, "enablecsqc");
+			s_csqc.enable_sent = true;
+			Con_Printf ("CSQC: enablecsqc sent\n");
+		}
 	}
 	return true;
 }
@@ -344,6 +400,78 @@ void CSQC_Client_Update (void)
 
 /*
 =================
+CSQC_Client_ParseEntities
+
+Парсинг svc_fte_csqcentities(76), простая версия (S1):
+для каждой сущности — short entnum, бит 0x8000 = remove, 0 = конец.
+Update: CSQC_Ent_Update(isnew) — модуль читает payload из текущего сообщения
+(read*). Remove: временно entnum через builtin-стрим (SetRemoveEnt), без edict.
+=================
+*/
+void CSQC_Client_ParseEntities (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	unsigned int entnum;
+	qbool removeflag;
+	static int dbg_upd = 0, dbg_rem = 0, dbg_bad = 0;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.func_entupdate <= 0 && s_csqc.func_entremove <= 0)
+		return;
+
+	for (;;)
+	{
+		entnum = (unsigned short)MSG_ReadShort ();
+		removeflag = !!(entnum & 0x8000);
+		entnum &= ~0x8000u;
+		if ((!entnum && !removeflag) || msg_badread)
+		{
+			if (msg_badread && !dbg_bad)
+			{
+				dbg_bad = 1;
+				Con_Printf ("CSQC: csqcentities badread\n");
+			}
+			break;
+		}
+		if (entnum >= (unsigned int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
+			break;
+
+		if (removeflag)
+		{
+			if (s_csqc.func_entremove > 0)
+			{
+				if (!dbg_rem)
+				{
+					dbg_rem = 1;
+					Con_Printf ("CSQC: first entity remove entnum=%u\n", entnum);
+				}
+				CSQC_Client_SetRemoveEnt ((int)entnum);
+				CSQC_Client_Exec (s_csqc.func_entremove);
+			}
+			s_csqc.seen[entnum] = false;
+			continue;
+		}
+
+		if (s_csqc.func_entupdate > 0)
+		{
+			if (!dbg_upd)
+			{
+				dbg_upd = 1;
+				Con_Printf ("CSQC: first entity update entnum=%u isnew=%d\n",
+					entnum, s_csqc.seen[entnum] ? 0 : 1);
+			}
+			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
+			s_csqc.seen[entnum] = true;
+			CSQC_Client_Exec (s_csqc.func_entupdate);
+			if (s_csqc.errored)
+				return;
+		}
+	}
+}
+
+/*
+=================
 CSQC_Client_Disconnect
 =================
 */
@@ -360,6 +488,7 @@ void CSQC_Client_Disconnect (void)
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
+	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.global_time = -1;
 }
 

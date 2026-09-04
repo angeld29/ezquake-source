@@ -23,4 +23,10 @@ void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: l
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + выгрузка + снятие команд
 void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once + UpdateView
 
+// Парсинг svc_fte_csqcentities(76) (S1; sized-92 — отдельно E3).
+void CSQC_Client_ParseEntities (void);
+// Временный Remove: entnum передаётся builtin-стримом (не edict/self.entnum).
+void CSQC_Client_SetRemoveEnt (int entnum);
+int CSQC_Client_ReadEntityNum (void);	// remove-pending ? entnum (и потребляет) : -1
+
 #endif /* CSQC_CLIENT_H */

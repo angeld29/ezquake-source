@@ -380,6 +380,43 @@ CSQC_ConsoleCommand ронял бы VM («Bad builtin call number»).
 */
 static void csqc_sendevent (void) { }
 
+/*
+S1 read*-минимум: читают из текущего сетевого сообщения (как FTE), для Remove
+entnum подставляется через CSQC_Client_ReadEntityNum (временный путь).
+*/
+static void csqc_readbyte (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadByte ();
+}
+
+static void csqc_readshort (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadShort ();
+}
+
+static void csqc_readlong (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadLong ();
+}
+
+static void csqc_readentitynum (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int e;
+	if (!vm)
+		return;
+	e = CSQC_Client_ReadEntityNum ();
+	if (e < 0)
+		e = MSG_ReadShort ();
+	vm->globals[OFS_RETURN] = e;
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
@@ -401,6 +438,12 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);
 	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf);
+
+	// S1 read*-минимум (полный набор — S2).
+	PR1VM_RegisterBuiltin (vm, 360, (builtin_t)csqc_readbyte);
+	PR1VM_RegisterBuiltin (vm, 362, (builtin_t)csqc_readshort);
+	PR1VM_RegisterBuiltin (vm, 363, (builtin_t)csqc_readlong);
+	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
 }
 
 #endif // !CLIENTONLY
