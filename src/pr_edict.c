@@ -1419,7 +1419,8 @@ void PR1VM_CSQCSmoke_f (void)
 		return;
 	}
 
-	PR1VM_Reset (vm);
+	// S6/P2.1: очистка (в т.ч. Q_free builtin-таблицы), затем загрузка заново
+	PR1VM_UnLoad (vm);
 	if (!PR1VM_LoadClientV7 (vm, data, filesize))
 	{
 		Con_Printf ("csqc_smoke: v7 load failed\n");
@@ -1431,16 +1432,39 @@ void PR1VM_CSQCSmoke_f (void)
 		vm->progs->numstatements, vm->progs->numfunctions, vm->progs->numglobals,
 		progs ? progs->numstatements : -1, progs ? progs->numfunctions : -1);
 
+	// P2.1: builtin-таблица клиента (слой C)
+	CSQCVM_RegisterBuiltins (vm);
+
 	f = PR1VM_FindFunction (vm, "CSQC_Init");
 	Con_Printf ("csqc_smoke: CSQC_Init %s\n", f ? "found" : "MISSING");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;
+		vm->globals[OFS_PARM1] = 0;
+		vm->globals[OFS_PARM2] = 0;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_Init executed ok (registercommand builtins)\n");
+	}
 	f = PR1VM_FindFunction (vm, "CSQC_WorldLoaded");
 	Con_Printf ("csqc_smoke: CSQC_WorldLoaded %s\n", f ? "found" : "MISSING");
-	if (!f)
-		return;
-
-	idx = (func_t)(f - vm->functions);
-	PR1VM_ExecuteProgram (vm, idx);
-	Con_Printf ("csqc_smoke: CSQC_WorldLoaded executed ok (server PR1 still alive)\n");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_WorldLoaded executed ok (server PR1 still alive)\n");
+	}
+	f = PR1VM_FindFunction (vm, "CSQC_ConsoleCommand");
+	Con_Printf ("csqc_smoke: CSQC_ConsoleCommand %s\n", f ? "found" : "MISSING");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;	// пустая команда
+		vm->globals[OFS_RETURN] = -1;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_ConsoleCommand ok (ret=%.0f, tokenize/argv builtins)\n",
+			vm->globals[OFS_RETURN]);
+	}
 }
 
 void PR1_LoadProgs (void)

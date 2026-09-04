@@ -106,6 +106,13 @@ int PR1VM_FindGlobal(pr1vm_t *vm, const char *name);
 char *PR1VM_GetString(pr1vm_t *vm, int num);
 void PR1VM_SetString(pr1vm_t *vm, string_t *address, char *s);
 
+// Регистрация builtin по номеру (клиентская/любая таблица на инстансе).
+// Таблица растёт до num+1 слотов; незаполненные слоты = NULL (диспетчер ошибётся).
+void PR1VM_RegisterBuiltin(pr1vm_t *vm, int num, builtin_t fn);
+
+// Клиентские builtins нашего csprogs (слой C; csqc_builtins.c).
+void CSQCVM_RegisterBuiltins(pr1vm_t *vm);
+
 // S3 debug: консольная команда csqc_smoke (регистрируется в PR2_Init).
 void PR1VM_CSQCSmoke_f(void);
 // S4 debug: провокация PR_RunError на серверном инстансе (pr1vm_test_error).

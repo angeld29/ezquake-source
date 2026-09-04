@@ -248,6 +248,7 @@ set(server
         ${SOURCE_DIR}/pr_cmds.c
         ${SOURCE_DIR}/pr_edict.c
         ${SOURCE_DIR}/pr_exec.c
+        ${SOURCE_DIR}/csqc_builtins.c
         ${SOURCE_DIR}/sv_ccmds.c
         ${SOURCE_DIR}/sv_demo.c
         ${SOURCE_DIR}/sv_demo_misc.c

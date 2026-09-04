@@ -52,10 +52,40 @@ void PR1VM_UnLoad (pr1vm_t *vm)
 	void (*host_print)(pr1vm_t *, const char *) = vm->host_print;
 	void *host_udata = vm->host_udata;
 
+	// Builtin-таблицы выделяются Q_malloc (server PR_InitBuiltins / клиентская
+	// регистрация) — освобождаем; следующая загрузка создаст заново.
+	if (vm->builtins)
+	{
+		Q_free (vm->builtins);
+		vm->builtins = NULL;
+	}
+
 	memset (vm, 0, sizeof (*vm));
 	vm->host_error = host_error;
 	vm->host_print = host_print;
 	vm->host_udata = host_udata;
+}
+
+// P2.1: регистрация builtin по номеру (растущая таблица инстанса).
+void PR1VM_RegisterBuiltin (pr1vm_t *vm, int num, builtin_t fn)
+{
+	if (num < 0 || !vm)
+		return;
+
+	if (num >= vm->numbuiltins)
+	{
+		builtin_t *nt = (builtin_t *) Q_malloc ((num + 1) * sizeof (builtin_t));
+		if (!nt)
+			return;
+		if (vm->builtins)
+		{
+			memcpy (nt, vm->builtins, vm->numbuiltins * sizeof (builtin_t));
+			Q_free (vm->builtins);
+		}
+		vm->builtins = nt;
+		vm->numbuiltins = num + 1;
+	}
+	vm->builtins[num] = fn;
 }
 
 // forward decls (определены ниже в этом файле)
@@ -716,8 +746,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			if (newf->first_statement < 0)
 			{	// negative statements are built in functions
 				i = -newf->first_statement;
-				if (i >= vm->numbuiltins)
-					PR_RunError ("Bad builtin call number");
+				if (i >= vm->numbuiltins || !vm->builtins[i])
+					PR_RunError ("Bad builtin call number %d", i);
 				vm->builtins[i] ();
 				break;
 			}
