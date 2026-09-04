@@ -45,6 +45,19 @@ void PR1VM_Reset(pr1vm_t *vm)
 	memset(vm, 0, sizeof(*vm));
 }
 
+// S6: полный сброс зеркал/exec-состояния, host-колбэки сохраняются.
+void PR1VM_UnLoad (pr1vm_t *vm)
+{
+	void (*host_error)(pr1vm_t *, const char *) = vm->host_error;
+	void (*host_print)(pr1vm_t *, const char *) = vm->host_print;
+	void *host_udata = vm->host_udata;
+
+	memset (vm, 0, sizeof (*vm));
+	vm->host_error = host_error;
+	vm->host_print = host_print;
+	vm->host_udata = host_udata;
+}
+
 // forward decls (определены ниже в этом файле)
 void PR_PrintStatement (dstatement_t *s);
 void PR_StackTrace (void);
@@ -948,12 +961,13 @@ void PR1_UnLoadProgs(void)
 {
 	if (progs)
 	{
-		// FIXME: There should be done alot of variables reseting...
-
 #ifdef WITH_NQPROGS
 		pr_nqprogs = false;
 #endif
 		progs = NULL;
+
+		// PR1VM S6: инстанс больше не ссылается на освобождаемый модуль.
+		PR1VM_UnLoad (PR1VM_Server ());
 	}
 }
 

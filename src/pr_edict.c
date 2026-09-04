@@ -1499,6 +1499,10 @@ void PR1_LoadProgs (void)
 	{
 		pr1vm_t *vm = PR1VM_Server();
 
+		// S6: каждая загрузка (включая повторные/после ошибок) начинается с
+		// чистого инстанса — чинит стейл-зеркала после неудачного load.
+		PR1VM_UnLoad (vm);
+
 		num_prstr = 0;
 
 		PR1VM_LoadData(vm, progs);
