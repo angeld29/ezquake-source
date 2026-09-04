@@ -111,9 +111,11 @@ static void csqc_strcat (void)
 	if (n <= 0)
 		n = 1;
 	buf[0] = 0;
-	for (i = 0; i < n && i < 8; i++)
+	// Параметры PR1 — каждые 3 float-слота на аргумент (как PF_VarString,
+	// pr_cmds.c: OFS_PARM0 + i*3); argc = число аргументов.
+	for (i = 0; i < n && i < 16; i++)
 	{
-		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i]);
+		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (s)
 			len += snprintf (buf + len, sizeof (buf) - len, "%s", s);
 		if (len >= (int)sizeof (buf) - 1)
@@ -206,12 +208,13 @@ static void csqc_drawstring (void)
 	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (!s)
 		return;
-	// rgb 0..1 → &cRRGGBB (поддерживается scr_coloredText)
-	r = (int)(bound (0, g[OFS_PARM0 + 7], 1) * 255.0f + 0.5f);
-	gg = (int)(bound (0, g[OFS_PARM0 + 8], 1) * 255.0f + 0.5f);
-	b = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
+	// rgb 0..1 → &cRRGGBB (поддерживается scr_coloredText). Параметры PR1 —
+	// каждые 3 слова: pos=0..2, text=3, size=6..8, rgb=9..11, alpha=12, flags=15.
+	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
+	gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
+	b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
 	snprintf (buf, sizeof (buf), "&c%02X%02X%02X%s", r, gg, b, s);
-	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], buf, g[OFS_PARM0 + 10]);
+	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], buf, g[OFS_PARM0 + 12]);
 }
 
 /*
@@ -257,7 +260,7 @@ static void csqc_sprintf (void)
 	static char buf[2048];
 	char tmp[512];
 	const char *fmt, *p;
-	int slot = 1;
+	int pn = 1;		// номер аргумента (после fmt); base = OFS_PARM0 + pn*3
 	size_t o = 0;
 
 	if (!vm)
@@ -298,23 +301,23 @@ static void csqc_sprintf (void)
 		{
 		case 'd':
 		case 'i':
-			if (slot < 48)
-				snprintf (tmp, sizeof (tmp), "%d", (int)vm->globals[OFS_PARM0 + slot]);
+			if (pn < 32)
+				snprintf (tmp, sizeof (tmp), "%d", (int)vm->globals[OFS_PARM0 + pn * 3]);
 			else
 				tmp[0] = 0;
-			slot++;
+			pn++;
 			break;
 		case 'f':
-			dv = (slot < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
-			slot++;
+			dv = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
+			pn++;
 			if (prec >= 0)
 				snprintf (tmp, sizeof (tmp), "%.*f", prec, dv);
 			else
 				snprintf (tmp, sizeof (tmp), "%f", dv);
 			break;
 		case 'g':
-			dv = (slot < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
-			slot++;
+			dv = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
+			pn++;
 			if (prec >= 0)
 				snprintf (tmp, sizeof (tmp), "%.*g", prec, dv);
 			else
@@ -322,8 +325,24 @@ static void csqc_sprintf (void)
 			break;
 		case 's':
 			{
-				char *s = (slot < 48) ? PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + slot]) : NULL;
-				slot++;
+				int off = (pn < 32) ? *(int *)&vm->globals[OFS_PARM0 + pn * 3] : 0;
+				char *s = NULL;
+				static int warned = 0;
+				pn++;
+				if (pn - 1 < 32)
+				{
+					s = PR1VM_GetString (vm, off);
+					// Валидация: неотрицательный offset обязан лежать в строковой
+					// области модуля; отрицательные — во временных таблицах.
+					if (s && off >= 0 && (unsigned)off >= (unsigned)vm->progs->numstrings)
+						s = NULL;
+					if (!s && !warned)
+					{
+						warned = 1;
+						Con_Printf ("csqc_sprintf: bad string arg (fmt=\"%s\" arg=%d off=%d argc=%d)\n",
+							fmt, pn - 1, off, vm->argc);
+					}
+				}
 				if (s)
 					snprintf (tmp, sizeof (tmp), "%s", s);
 				else
@@ -332,10 +351,10 @@ static void csqc_sprintf (void)
 			break;
 		case 'v':
 			{
-				double x = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot] : 0;
-				double y = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot + 1] : 0;
-				double z = (slot + 2 < 48) ? (double)vm->globals[OFS_PARM0 + slot + 2] : 0;
-				slot += 3;
+				double x = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
+				double y = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3 + 1] : 0;
+				double z = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3 + 2] : 0;
+				pn++;
 				snprintf (tmp, sizeof (tmp), "%g %g %g", x, y, z);
 			}
 			break;
