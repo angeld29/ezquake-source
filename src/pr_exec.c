@@ -21,27 +21,50 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
+#include "pr1vm.h"
 #include <limits.h>
 
-typedef struct prstack_s
+// Состояние исполнения PR1 перенесено в pr1vm_t (pr1vm.h). Остаются общими:
+// pr_trace (флаг отладки) и pr_argc (число аргументов вызова builtin) — до S5.
+
+static pr1vm_t sv_pr1vm;	// серверный инстанс (default для PR_* обёрток)
+static pr1vm_t *g_active;	// инстанс, внутри которого сейчас исполняется PR1
+
+pr1vm_t *PR1VM_Active(void)
 {
-	int s;
-	dfunction_t *f;
-} prstack_t;
+	return g_active;
+}
 
-#define	MAX_STACK_DEPTH 32
-prstack_t	pr_stack[MAX_STACK_DEPTH];
-int			pr_depth;
+pr1vm_t *PR1VM_Server(void)
+{
+	return &sv_pr1vm;
+}
 
-#define	LOCALSTACK_SIZE 2048
-int			localstack[LOCALSTACK_SIZE];
-int			localstack_used;
+void PR1VM_Reset(pr1vm_t *vm)
+{
+	memset(vm, 0, sizeof(*vm));
+}
 
+void PR1VM_BindServer(pr1vm_t *vm)
+{
+	// Зеркала общих «модульных» глобалов (см. pr1vm.h). Exec-состояние не трогаем:
+	// BindServer может вызываться и на вложенном (рекурсивном) PR_ExecuteProgram.
+	vm->progs = progs;
+	vm->functions = pr_functions;
+	vm->fielddefs = pr_fielddefs;
+	vm->globaldefs = pr_globaldefs;
+	vm->statements = pr_statements;
+	vm->strings = pr_strings;
+	vm->global_struct = pr_global_struct;
+	vm->globals = pr_globals;
+	vm->edict_size = pr_edict_size;
+	vm->edicts = (edict_t *)sv.edicts;
+	vm->num_edicts = sv.num_edicts;
+	vm->max_edicts = sv.max_edicts;
+	vm->game_edicts = sv.game_edicts;
+}
 
 qbool		pr_trace;
-dfunction_t	*pr_xfunction;
-int			pr_xstatement;
-
 
 int			pr_argc;
 
@@ -191,17 +214,18 @@ void PR_StackTrace (void)
 {
 	dfunction_t *f;
 	int i;
+	pr1vm_t *vm = g_active;
 
-	if (pr_depth == 0)
+	if (!vm || vm->depth == 0)
 	{
 		Con_Printf ("<NO STACK>\n");
 		return;
 	}
 
-	pr_stack[pr_depth].f = pr_xfunction;
-	for (i=pr_depth ; i>0 ; i--)
+	vm->stack[vm->depth].f = vm->xfunction;
+	for (i=vm->depth ; i>0 ; i--)
 	{
-		f = pr_stack[i].f;
+		f = vm->stack[i].f;
 
 		if (!f)
 			Con_Printf ("<NO FUNCTION>\n");
@@ -264,6 +288,7 @@ void PR_RunError (char *error, ...)
 {
 	va_list argptr;
 	char string[1024];
+	pr1vm_t *vm = g_active;
 
 	va_start (argptr,error);
 	vsnprintf (string, sizeof(string), error, argptr);
@@ -272,11 +297,16 @@ void PR_RunError (char *error, ...)
 
 	sv_error = true;
 
-	PR_PrintStatement (pr_statements + pr_xstatement);
-	PR_StackTrace ();
+	if (vm)
+	{
+		if (vm->xfunction)
+		{
+			PR_PrintStatement (pr_statements + vm->xstatement);
+			PR_StackTrace ();
+		}
+		vm->depth = 0; // dump the stack so SV_Error can shutdown functions
+	}
 	Con_Printf ("%s\n", string);
-
-	pr_depth = 0; // dump the stack so SV_Error can shutdown functions
 
 	SV_Error ("Program error (PR_RunError)");
 }
@@ -288,24 +318,24 @@ PR_EnterFunction
 Returns the new program statement counter
 ====================
 */
-int PR_EnterFunction (dfunction_t *f)
+int PR1VM_EnterFunction (pr1vm_t *vm, dfunction_t *f)
 {
 	int i, j, c, o;
 
-	pr_stack[pr_depth].s = pr_xstatement;
-	pr_stack[pr_depth].f = pr_xfunction;
-	pr_depth++;
-	if (pr_depth >= MAX_STACK_DEPTH)
+	vm->stack[vm->depth].s = vm->xstatement;
+	vm->stack[vm->depth].f = vm->xfunction;
+	vm->depth++;
+	if (vm->depth >= PR1VM_MAX_STACK)
 		PR_RunError ("stack overflow");
 
 	// save off any locals that the new function steps on
 	c = f->locals;
-	if (localstack_used + c > LOCALSTACK_SIZE)
+	if (vm->localstack_used + c > PR1VM_LOCALSTACK)
 		PR_RunError ("PR_ExecuteProgram: locals stack overflow\n");
 
 	for (i=0 ; i < c ; i++)
-		localstack[localstack_used+i] = ((int *)pr_globals)[f->parm_start + i];
-	localstack_used += c;
+		vm->localstack[vm->localstack_used+i] = ((int *)pr_globals)[f->parm_start + i];
+	vm->localstack_used += c;
 
 	// copy parameters
 	o = f->parm_start;
@@ -318,7 +348,7 @@ int PR_EnterFunction (dfunction_t *f)
 		}
 	}
 
-	pr_xfunction = f;
+	vm->xfunction = f;
 	return f->first_statement - 1; // offset the s++
 }
 
@@ -327,38 +357,39 @@ int PR_EnterFunction (dfunction_t *f)
 PR_LeaveFunction
 ====================
 */
-int PR_LeaveFunction (void)
+int PR1VM_LeaveFunction (pr1vm_t *vm)
 {
 	int i, c;
 
-	if (pr_depth <= 0)
+	if (vm->depth <= 0)
 		SV_Error ("prog stack underflow");
 
 	// restore locals from the stack
-	c = pr_xfunction->locals;
-	localstack_used -= c;
-	if (localstack_used < 0)
+	c = vm->xfunction->locals;
+	vm->localstack_used -= c;
+	if (vm->localstack_used < 0)
 		PR_RunError ("PR_ExecuteProgram: locals stack underflow\n");
 
 	for (i=0 ; i < c ; i++)
-		((int *)pr_globals)[pr_xfunction->parm_start + i] = localstack[localstack_used+i];
+		((int *)pr_globals)[vm->xfunction->parm_start + i] = vm->localstack[vm->localstack_used+i];
 
 	// up stack
-	pr_depth--;
-	pr_xfunction = pr_stack[pr_depth].f;
-	return pr_stack[pr_depth].s;
+	vm->depth--;
+	vm->xfunction = vm->stack[vm->depth].f;
+	return vm->stack[vm->depth].s;
 }
 
 /*
 ============================================================================
-PR_ExecuteProgram
+PR1VM_ExecuteProgram
 
-The interpretation main loop
+The interpretation main loop (per-instance)
 ============================================================================
 */
-void PR_ExecuteProgram (func_t fnum)
+void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 {
 	eval_t *a = NULL, *b = NULL, *c = NULL;
+	pr1vm_t *saved_active;
 	int s;
 	dstatement_t *st = NULL;
 	dfunction_t *f, *newf;
@@ -367,6 +398,9 @@ void PR_ExecuteProgram (func_t fnum)
 	edict_t *ed;
 	int exitdepth;
 	eval_t *ptr;
+
+	saved_active = g_active;
+	g_active = vm;
 
 	if (!fnum || fnum >= progs->numfunctions)
 	{
@@ -381,9 +415,9 @@ void PR_ExecuteProgram (func_t fnum)
 	pr_trace = false;
 
 	// make a stack frame
-	exitdepth = pr_depth;
+	exitdepth = vm->depth;
 
-	s = PR_EnterFunction (f);
+	s = PR1VM_EnterFunction (vm, f);
 
 	while (1)
 	{
@@ -397,8 +431,8 @@ void PR_ExecuteProgram (func_t fnum)
 		if (--runaway == 0)
 			PR_RunError ("runaway loop error");
 
-		pr_xfunction->profile++;
-		pr_xstatement = s;
+		vm->xfunction->profile++;
+		vm->xstatement = s;
 
 		if (pr_trace)
 			PR_PrintStatement (st);
@@ -636,7 +670,7 @@ void PR_ExecuteProgram (func_t fnum)
 				break;
 			}
 
-			s = PR_EnterFunction (newf);
+			s = PR1VM_EnterFunction (vm, newf);
 
 			break;
 
@@ -646,9 +680,12 @@ void PR_ExecuteProgram (func_t fnum)
 			pr_globals[OFS_RETURN+1] = pr_globals[st->a+1];
 			pr_globals[OFS_RETURN+2] = pr_globals[st->a+2];
 
-			s = PR_LeaveFunction ();
-			if (pr_depth == exitdepth)
+			s = PR1VM_LeaveFunction (vm);
+			if (vm->depth == exitdepth)
+			{
+				g_active = saved_active;
 				return;		// all done
+			}
 			break;
 
 		case OP_STATE:
@@ -666,6 +703,20 @@ void PR_ExecuteProgram (func_t fnum)
 		}
 	}
 
+}
+
+/*
+============
+PR_ExecuteProgram
+
+Server-facing wrapper: runs on the server PR1 instance (зеркала из общих
+глобалов обновляются перед каждым вызовом).
+============
+*/
+void PR_ExecuteProgram (func_t fnum)
+{
+	PR1VM_BindServer (&sv_pr1vm);
+	PR1VM_ExecuteProgram (&sv_pr1vm, fnum);
 }
 
 //=============================================================================

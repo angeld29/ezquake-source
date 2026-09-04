@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
+#include "pr1vm.h"
 
 static tokenizecontext_t pr1_tokencontext;
 
@@ -65,7 +66,7 @@ void PF_error (void)
 	edict_t	*ed;
 
 	s = PF_VarString(0);
-	Con_Printf ("======SERVER ERROR in %s:\n%s\n", PR1_GetString(pr_xfunction->s_name) ,s);
+	Con_Printf ("======SERVER ERROR in %s:\n%s\n", PR1_GetString(PR1VM_Active()->xfunction->s_name) ,s);
 	ed = PROG_TO_EDICT(pr_global_struct->self);
 	ED_Print (ed);
 
@@ -88,7 +89,7 @@ void PF_objerror (void)
 	edict_t	*ed;
 
 	s = PF_VarString(0);
-	Con_Printf ("======OBJECT ERROR in %s:\n%s\n", PR1_GetString(pr_xfunction->s_name),s);
+	Con_Printf ("======OBJECT ERROR in %s:\n%s\n", PR1_GetString(PR1VM_Active()->xfunction->s_name),s);
 	ed = PROG_TO_EDICT(pr_global_struct->self);
 	ED_Print (ed);
 	ED_Free (ed);
@@ -1470,14 +1471,14 @@ void PF_walkmove (void)
 	move[2] = 0;
 
 	// save program state, because SV_movestep may call other progs
-	oldf = pr_xfunction;
+	oldf = PR1VM_Active()->xfunction;
 	oldself = pr_global_struct->self;
 
 	G_FLOAT(OFS_RETURN) = SV_movestep(ent, move, true);
 
 
 	// restore program state
-	pr_xfunction = oldf;
+	PR1VM_Active()->xfunction = oldf;
 	pr_global_struct->self = oldself;
 }
 

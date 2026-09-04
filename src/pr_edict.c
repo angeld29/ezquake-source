@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
+#include "pr1vm.h"
 
 dprograms_t		*progs;
 dfunction_t		*pr_functions;
@@ -1273,6 +1274,9 @@ void PR1_Init (void)
 	Cmd_AddCommand ("profile", PR_Profile_f);
 
 	memset(pr_newstrtbl, 0, sizeof(pr_newstrtbl));
+
+	// PR1VM: серверный инстанс исполнения (S1) — обнуляем состояние.
+	PR1VM_Reset(PR1VM_Server());
 }
 
 edict_t *EDICT_NUM(int n)
