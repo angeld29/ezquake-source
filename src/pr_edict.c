@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
 #include "pr1vm.h"
+#include <limits.h>
 
 dprograms_t		*progs;
 dfunction_t		*pr_functions;
@@ -1294,9 +1295,70 @@ qbool PR1VM_LoadClientV7 (pr1vm_t *vm, const byte *data, int filesize)
 
 char *PR1VM_GetString (pr1vm_t *vm, int num)
 {
-	if (!vm || !vm->strings || num < 0)
+	if (!vm)
 		return NULL;
+
+	// dual: серверный инстанс делегирует глобальным таблицам (их читают PR2/sv_*)
+	if (vm == PR1VM_Server())
+		return PR1_GetString (num);
+
+	if (!vm->strings)
+		return NULL;
+
+	if (num < 0)
+	{
+		int idx = -num;
+		if (idx >= 2 * MAX_PRSTR)
+			return NULL;
+		if (idx >= MAX_PRSTR)
+			return vm->newstrtbl[idx - MAX_PRSTR];
+		return vm->strtbl[idx];
+	}
 	return vm->strings + num;
+}
+
+void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
+{
+	int i;
+
+	if (!address)
+		return;
+
+	// dual: серверный инстанс — глобальная таблица (как раньше)
+	if (vm == PR1VM_Server())
+	{
+		PR1_SetString (address, s);
+		return;
+	}
+
+	if (!s || !s[0])
+	{
+		*address = 0;
+		return;
+	}
+
+	if (!vm->strings)
+		return;
+
+	if (s - vm->strings < 0 || s - vm->strings > INT_MAX)
+	{
+		for (i = 0; i < vm->numstr; i++)
+		{
+			if (vm->strtbl[i] == s)
+			{
+				*address = -i;
+				return;
+			}
+		}
+		if (vm->numstr + 1 >= MAX_PRSTR)
+			return;	// клиент: без фатала (S4; расширится с builtins в S5)
+		vm->strtbl[++vm->numstr] = s;
+		*address = -vm->numstr;
+	}
+	else
+	{
+		*address = (int)(s - vm->strings);
+	}
 }
 
 dfunction_t *PR1VM_FindFunction (pr1vm_t *vm, const char *name)

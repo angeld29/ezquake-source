@@ -56,9 +56,16 @@ struct pr1vm_s
 	dfunction_t		*xfunction;
 	int				xstatement;
 
-	// Host-интерфейс (заполняется в S4; зарезервировано).
-	void (*host_error)(pr1vm_t *vm, const char *fmt, ...);
-	void (*host_print)(pr1vm_t *vm, const char *fmt, ...);
+	// Клиентские (per-instance) динамические строки. Для серверного инстанса
+	// не используются: он делегирует глобальным таблицам (PR1_GetString/...),
+	// т.к. их читают PR2 и sv_*.
+	char			*strtbl[MAX_PRSTR];
+	char			*newstrtbl[MAX_PRSTR];
+	int				numstr;
+
+	// Host-интерфейс (S4): колбэки получают готовую строку.
+	void (*host_error)(pr1vm_t *vm, const char *msg);
+	void (*host_print)(pr1vm_t *vm, const char *msg);
 	void *host_udata;
 };
 
@@ -86,9 +93,12 @@ qbool PR1VM_LoadClientV7(pr1vm_t *vm, const byte *data, int filesize);
 dfunction_t *PR1VM_FindFunction(pr1vm_t *vm, const char *name);
 int PR1VM_FindGlobal(pr1vm_t *vm, const char *name);
 char *PR1VM_GetString(pr1vm_t *vm, int num);
+void PR1VM_SetString(pr1vm_t *vm, string_t *address, char *s);
 
 // S3 debug: консольная команда csqc_smoke (регистрируется в PR2_Init).
 void PR1VM_CSQCSmoke_f(void);
+// S4 debug: провокация PR_RunError на серверном инстансе (pr1vm_test_error).
+void PR1VM_TestError_f(void);
 
 int  PR1VM_EnterFunction(pr1vm_t *vm, dfunction_t *f);
 int  PR1VM_LeaveFunction(pr1vm_t *vm);

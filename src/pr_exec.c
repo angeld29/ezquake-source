@@ -45,6 +45,25 @@ void PR1VM_Reset(pr1vm_t *vm)
 	memset(vm, 0, sizeof(*vm));
 }
 
+// forward decls (определены ниже в этом файле)
+void PR_PrintStatement (dstatement_t *s);
+void PR_StackTrace (void);
+
+// Серверный host_error: печатает statement/стек и завершает как раньше
+// (PR_RunError-поведение до S4). Клиентский инстанс получит свой колбэк в S5.
+static void PR1VM_ServerHostError (pr1vm_t *vm, const char *msg)
+{
+	sv_error = true;
+	if (vm && vm->xfunction)
+	{
+		PR_PrintStatement (vm->statements + vm->xstatement);
+		PR_StackTrace ();
+		vm->depth = 0; // dump the stack so SV_Error can shutdown functions
+	}
+	Con_Printf ("%s\n", msg);
+	SV_Error ("Program error (PR_RunError)");
+}
+
 void PR1VM_BindServer(pr1vm_t *vm)
 {
 	// Зеркала общих «модульных» глобалов (см. pr1vm.h). Exec-состояние не трогаем:
@@ -62,6 +81,16 @@ void PR1VM_BindServer(pr1vm_t *vm)
 	vm->num_edicts = sv.num_edicts;
 	vm->max_edicts = sv.max_edicts;
 	vm->game_edicts = sv.game_edicts;
+	vm->host_error = PR1VM_ServerHostError;
+}
+
+// S4 debug: провокация PR_RunError на серверном инстансе (проверка host_error).
+void PR1VM_TestError_f (void)
+{
+	pr1vm_t *vm = PR1VM_Server ();
+	PR1VM_BindServer (vm);
+	g_active = vm;
+	PR_RunError ("PR1VM test error (host_error path)");
 }
 
 qbool		pr_trace;
@@ -294,9 +323,14 @@ void PR_RunError (char *error, ...)
 	vsnprintf (string, sizeof(string), error, argptr);
 	va_end (argptr);
 
+	if (vm && vm->host_error)
+	{
+		vm->host_error (vm, string);
+		return;
+	}
 
+	// fallback (vm==NULL или host_error не назначен): прежнее поведение
 	sv_error = true;
-
 	if (vm)
 	{
 		if (vm->xfunction)
@@ -313,7 +347,7 @@ void PR_RunError (char *error, ...)
 
 /*
 ====================
-PR_EnterFunction
+PR1VM_EnterFunction
 
 Returns the new program statement counter
 ====================
@@ -354,7 +388,7 @@ int PR1VM_EnterFunction (pr1vm_t *vm, dfunction_t *f)
 
 /*
 ====================
-PR_LeaveFunction
+PR1VM_LeaveFunction
 ====================
 */
 int PR1VM_LeaveFunction (pr1vm_t *vm)
@@ -515,7 +549,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			c->_float = !a->vector[0] && !a->vector[1] && !a->vector[2];
 			break;
 		case OP_NOT_S:
-			c->_float = !a->string || !*PR1_GetString(a->string);
+			c->_float = !a->string || !*PR1VM_GetString(vm, a->string);
 			break;
 		case OP_NOT_FNC:
 			c->_float = !a->function;
@@ -533,7 +567,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			            (a->vector[2] == b->vector[2]);
 			break;
 		case OP_EQ_S:
-			c->_float = !strcmp(PR1_GetString(a->string), PR1_GetString(b->string));
+			c->_float = !strcmp(PR1VM_GetString(vm, a->string), PR1VM_GetString(vm, b->string));
 			break;
 		case OP_EQ_E:
 			c->_float = a->_int == b->_int;
@@ -552,7 +586,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			            (a->vector[2] != b->vector[2]);
 			break;
 		case OP_NE_S:
-			c->_float = strcmp(PR1_GetString(a->string), PR1_GetString(b->string));
+			c->_float = strcmp(PR1VM_GetString(vm, a->string), PR1VM_GetString(vm, b->string));
 			break;
 		case OP_NE_E:
 			c->_float = a->_int != b->_int;
