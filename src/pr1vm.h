@@ -72,6 +72,12 @@ pr1vm_t *PR1VM_Server(void);
 void PR1VM_Reset(pr1vm_t *vm);
 void PR1VM_BindServer(pr1vm_t *vm);
 
+// Загрузка: байтсвоп заголовка+lumps и заполнение зеркал инстанса (без
+// валидации версии/CRC — их делает серверная обёртка).
+void PR1VM_LoadData(pr1vm_t *vm, dprograms_t *hdr);
+// Сервер: зеркала инстанса -> общие «модульные» глобалы (PR2/sv_*.c читают их).
+void PR1VM_CommitServer(pr1vm_t *vm);
+
 int  PR1VM_EnterFunction(pr1vm_t *vm, dfunction_t *f);
 int  PR1VM_LeaveFunction(pr1vm_t *vm);
 void PR1VM_ExecuteProgram(pr1vm_t *vm, func_t fnum);

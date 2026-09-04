@@ -1136,6 +1136,91 @@ void PR_InitPatchTables (void)
 }
 #endif
 
+/*
+=================
+PR1VM_LoadData
+
+PR1VM (S2): заполняет инстанс из файла progs (v6). Байтсвоп заголовка и lumps;
+валидацию версии/CRC и тексты ошибок оставляет серверной обёртке PR1_LoadProgs.
+=================
+*/
+void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
+{
+	int i;
+	dprograms_t *p = hdr;
+
+	// byte swap the header
+	for (i = 0; i < (int) sizeof(*p) / 4 ; i++)
+		((int *)p)[i] = LittleLong ( ((int *)p)[i] );
+
+	vm->progs = p;
+	vm->functions = (dfunction_t *)((byte *)p + p->ofs_functions);
+	vm->strings = (char *)p + p->ofs_strings;
+	vm->globaldefs = (ddef_t *)((byte *)p + p->ofs_globaldefs);
+	vm->fielddefs = (ddef_t *)((byte *)p + p->ofs_fielddefs);
+	vm->statements = (dstatement_t *)((byte *)p + p->ofs_statements);
+	vm->global_struct = (globalvars_t *)((byte *)p + p->ofs_globals);
+	vm->globals = (float *)vm->global_struct;
+	vm->edict_size = p->entityfields * 4;
+
+	// byte swap the lumps
+	for (i = 0; i < p->numstatements; i++)
+	{
+		vm->statements[i].op = LittleShort(vm->statements[i].op);
+		vm->statements[i].a = LittleShort(vm->statements[i].a);
+		vm->statements[i].b = LittleShort(vm->statements[i].b);
+		vm->statements[i].c = LittleShort(vm->statements[i].c);
+	}
+
+	for (i = 0; i < p->numfunctions; i++)
+	{
+		vm->functions[i].first_statement = LittleLong (vm->functions[i].first_statement);
+		vm->functions[i].parm_start = LittleLong (vm->functions[i].parm_start);
+		vm->functions[i].s_name = LittleLong (vm->functions[i].s_name);
+		vm->functions[i].s_file = LittleLong (vm->functions[i].s_file);
+		vm->functions[i].numparms = LittleLong (vm->functions[i].numparms);
+		vm->functions[i].locals = LittleLong (vm->functions[i].locals);
+	}
+
+	for (i = 0; i < p->numglobaldefs; i++)
+	{
+		vm->globaldefs[i].type = LittleShort (vm->globaldefs[i].type);
+		vm->globaldefs[i].ofs = LittleShort (vm->globaldefs[i].ofs);
+		vm->globaldefs[i].s_name = LittleLong (vm->globaldefs[i].s_name);
+	}
+
+	for (i = 0; i < p->numfielddefs; i++)
+	{
+		vm->fielddefs[i].type = LittleShort (vm->fielddefs[i].type);
+		vm->fielddefs[i].ofs = LittleShort (vm->fielddefs[i].ofs);
+		vm->fielddefs[i].s_name = LittleLong (vm->fielddefs[i].s_name);
+	}
+
+	for (i = 0; i < p->numglobals; i++)
+		((int *)vm->globals)[i] = LittleLong (((int *)vm->globals)[i]);
+}
+
+/*
+=================
+PR1VM_CommitServer
+
+PR1VM (S2): сервер — зеркала инстанса -> общие «модульные» глобалы (их читают
+PR2 и sv_*.c). Зовётся после успешной PR1VM_LoadData.
+=================
+*/
+void PR1VM_CommitServer (pr1vm_t *vm)
+{
+	progs = vm->progs;
+	pr_functions = vm->functions;
+	pr_strings = vm->strings;
+	pr_globaldefs = vm->globaldefs;
+	pr_fielddefs = vm->fielddefs;
+	pr_statements = vm->statements;
+	pr_global_struct = vm->global_struct;
+	pr_globals = vm->globals;
+	pr_edict_size = vm->edict_size;
+}
+
 void PR1_LoadProgs (void)
 {
 	int	i;
@@ -1187,65 +1272,26 @@ void PR1_LoadProgs (void)
 	snprintf (num, sizeof(num), "%i", CRC_Block ((byte *)progs, filesize));
 	Info_SetValueForStarKey (svs.info, "*progs", num, MAX_SERVERINFO_STRING);
 
-	// byte swap the header
-	for (i = 0; i < (int) sizeof(*progs) / 4 ; i++)
-		((int *)progs)[i] = LittleLong ( ((int *)progs)[i] );
-
-	if (progs->version != PROG_VERSION)
-		SV_Error ("qwprogs.dat has wrong version number (%i should be %i)", progs->version, PROG_VERSION);
-	if (progs->crc != (pr_nqprogs ? NQ_PROGHEADER_CRC : PROGHEADER_CRC))
-		SV_Error ("You must have the qwprogs.dat from QuakeWorld installed");
-
-	pr_functions = (dfunction_t *)((byte *)progs + progs->ofs_functions);
-	pr_strings = (char *)progs + progs->ofs_strings;
-	pr_globaldefs = (ddef_t *)((byte *)progs + progs->ofs_globaldefs);
-	pr_fielddefs = (ddef_t *)((byte *)progs + progs->ofs_fielddefs);
-	pr_statements = (dstatement_t *)((byte *)progs + progs->ofs_statements);
-
-	num_prstr = 0;
-
-	pr_global_struct = (globalvars_t *)((byte *)progs + progs->ofs_globals);
-	pr_globals = (float *)pr_global_struct;
-
-	pr_edict_size = progs->entityfields * 4;
-
-	// byte swap the lumps
-	for (i = 0; i < progs->numstatements; i++)
+	// PR1VM (S2): загрузка в инстанс (swap заголовка+lumps) + проверки,
+	// затем коммит зеркал в общие глобалы.
 	{
-		pr_statements[i].op = LittleShort(pr_statements[i].op);
-		pr_statements[i].a = LittleShort(pr_statements[i].a);
-		pr_statements[i].b = LittleShort(pr_statements[i].b);
-		pr_statements[i].c = LittleShort(pr_statements[i].c);
-	}
+		pr1vm_t *vm = PR1VM_Server();
 
-	for (i = 0; i < progs->numfunctions; i++)
-	{
-		pr_functions[i].first_statement = LittleLong (pr_functions[i].first_statement);
-		pr_functions[i].parm_start = LittleLong (pr_functions[i].parm_start);
-		pr_functions[i].s_name = LittleLong (pr_functions[i].s_name);
-		pr_functions[i].s_file = LittleLong (pr_functions[i].s_file);
-		pr_functions[i].numparms = LittleLong (pr_functions[i].numparms);
-		pr_functions[i].locals = LittleLong (pr_functions[i].locals);
-	}
+		num_prstr = 0;
 
-	for (i = 0; i < progs->numglobaldefs; i++)
-	{
-		pr_globaldefs[i].type = LittleShort (pr_globaldefs[i].type);
-		pr_globaldefs[i].ofs = LittleShort (pr_globaldefs[i].ofs);
-		pr_globaldefs[i].s_name = LittleLong (pr_globaldefs[i].s_name);
-	}
+		PR1VM_LoadData(vm, progs);
 
-	for (i = 0; i < progs->numfielddefs; i++)
-	{
-		pr_fielddefs[i].type = LittleShort (pr_fielddefs[i].type);
-		if (pr_fielddefs[i].type & DEF_SAVEGLOBAL)
-			SV_Error ("PR1_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
-		pr_fielddefs[i].ofs = LittleShort (pr_fielddefs[i].ofs);
-		pr_fielddefs[i].s_name = LittleLong (pr_fielddefs[i].s_name);
-	}
+		if (vm->progs->version != PROG_VERSION)
+			SV_Error ("qwprogs.dat has wrong version number (%i should be %i)", vm->progs->version, PROG_VERSION);
+		if (vm->progs->crc != (pr_nqprogs ? NQ_PROGHEADER_CRC : PROGHEADER_CRC))
+			SV_Error ("You must have the qwprogs.dat from QuakeWorld installed");
 
-	for (i = 0; i < progs->numglobals; i++)
-		((int *)pr_globals)[i] = LittleLong (((int *)pr_globals)[i]);
+		for (i = 0; i < vm->progs->numfielddefs; i++)
+			if (vm->fielddefs[i].type & DEF_SAVEGLOBAL)
+				SV_Error ("PR1_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
+
+		PR1VM_CommitServer(vm);
+	}
 
 	PR_InitBuiltins();
 }
