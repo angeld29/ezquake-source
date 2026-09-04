@@ -91,10 +91,67 @@ static void csqc_argv (void)
 	CSQCVM_SetRetStr (Cmd_Argv (n));
 }
 
+/*
+string(string s1, optional string s2, ...) strcat = #115
+(P2.2) Конкатенация переданных строк (до vm->argc аргументов).
+*/
+static void csqc_strcat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	static char buf[2048];
+	int n, i, len = 0;
+
+	if (!vm)
+		return;
+	n = vm->argc;
+	if (n <= 0)
+		n = 1;
+	buf[0] = 0;
+	for (i = 0; i < n && i < 8; i++)
+	{
+		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i]);
+		if (s)
+			len += snprintf (buf + len, sizeof (buf) - len, "%s", s);
+		if (len >= (int)sizeof (buf) - 1)
+			break;
+	}
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+float(string s1, string sub, optional float startidx) strstrofs = #221
+(P2.2) Возвращает позицию подстроки (0-based) или -1.
+*/
+static void csqc_strstrofs (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *hay, *needle, *p;
+	int start;
+
+	if (!vm)
+		return;
+	hay = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	needle = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM1]);
+	start = (int)vm->globals[OFS_PARM2];
+	if (!hay || !needle)
+	{
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	if (start < 0)
+		start = 0;
+	if (start > (int)strlen (hay))
+		start = (int)strlen (hay);
+	p = strstr (hay + start, needle);
+	vm->globals[OFS_RETURN] = p ? (p - hay) : -1;
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
+	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
+	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
 	PR1VM_RegisterBuiltin (vm, 441, (builtin_t)csqc_tokenize);
 	PR1VM_RegisterBuiltin (vm, 442, (builtin_t)csqc_argv);

@@ -1465,6 +1465,17 @@ void PR1VM_CSQCSmoke_f (void)
 		Con_Printf ("csqc_smoke: CSQC_ConsoleCommand ok (ret=%.0f, tokenize/argv builtins)\n",
 			vm->globals[OFS_RETURN]);
 	}
+	// P2.2: weapon_name(0) -> ftos(0)="0" (builtin ftos + string return)
+	f = PR1VM_FindFunction (vm, "weapon_name");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;
+		vm->globals[OFS_RETURN] = 0;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: weapon_name(0) -> \"%s\" (ftos builtin)\n",
+			PR1VM_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
+	}
 }
 
 void PR1_LoadProgs (void)
