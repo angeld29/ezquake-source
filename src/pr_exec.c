@@ -93,6 +93,7 @@ void PR1VM_BindServer(pr1vm_t *vm)
 	vm->edicts = (edict_t *)sv.edicts;
 	vm->num_edicts = sv.num_edicts;
 	vm->max_edicts = sv.max_edicts;
+	vm->state = sv.state;
 	vm->game_edicts = sv.game_edicts;
 	vm->host_error = PR1VM_ServerHostError;
 }
@@ -356,6 +357,12 @@ void PR_RunError (char *error, ...)
 	SV_Error ("Program error (PR_RunError)");
 }
 
+// PR1VM S5b: entity-адресация через зеркала инстанса (формулы из progs.h на vm).
+static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
+{
+	return &vm->edicts[e / vm->edict_size];
+}
+
 /*
 ====================
 PR1VM_EnterFunction
@@ -449,8 +456,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 
 	if (!fnum || fnum >= vm->progs->numfunctions)
 	{
-		if (vm->global_struct->self)
-			ED_Print (PROG_TO_EDICT(vm->global_struct->self));
+		if (vm->global_struct && vm->global_struct->self && vm->edicts)
+			ED_Print (PR1VM_ProgToEdict(vm, vm->global_struct->self));
 		SV_Error ("PR_ExecuteProgram: NULL function");
 	}
 
@@ -566,7 +573,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			c->_float = !a->function;
 			break;
 		case OP_NOT_ENT:
-			c->_float = (PROG_TO_EDICT(a->edict) == sv.edicts);
+			c->_float = (PR1VM_ProgToEdict(vm, a->edict) == vm->edicts);
 			break;
 
 		case OP_EQ_F:
@@ -625,24 +632,24 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_STOREP_FLD:		// integers
 		case OP_STOREP_S:
 		case OP_STOREP_FNC:		// pointers
-			ptr = (eval_t *)((byte *)sv.game_edicts + b->_int);
+			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
 			ptr->_int = a->_int;
 			break;
 		case OP_STOREP_V:
-			ptr = (eval_t *)((byte *)sv.game_edicts + b->_int);
+			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
 			ptr->vector[0] = a->vector[0];
 			ptr->vector[1] = a->vector[1];
 			ptr->vector[2] = a->vector[2];
 			break;
 
 		case OP_ADDRESS:
-			ed = PROG_TO_EDICT(a->edict);
+			ed = PR1VM_ProgToEdict(vm, a->edict);
 #ifdef PARANOID
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
-			if (ed == (edict_t *)sv.edicts && sv.state == ss_active)
+			if (ed == vm->edicts && vm->state == ss_active)
 				PR_RunError ("assignment to world entity");
-			c->_int = (byte *)((int *)ed->v + PR_FIELDOFS(b->_int)) - (byte *)sv.game_edicts;
+			c->_int = (byte *)((int *)ed->v + PR_FIELDOFS(b->_int)) - (byte *)vm->game_edicts;
 			break;
 
 		case OP_LOAD_F:
@@ -650,7 +657,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_LOAD_ENT:
 		case OP_LOAD_S:
 		case OP_LOAD_FNC:
-			ed = PROG_TO_EDICT(a->edict);
+			ed = PR1VM_ProgToEdict(vm, a->edict);
 #ifdef PARANOID
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
@@ -665,7 +672,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			break;
 
 		case OP_LOAD_V:
-			ed = PROG_TO_EDICT(a->edict);
+			ed = PR1VM_ProgToEdict(vm, a->edict);
 #ifdef PARANOID
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
@@ -734,7 +741,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			break;
 
 		case OP_STATE:
-			ed = PROG_TO_EDICT(vm->global_struct->self);
+			ed = PR1VM_ProgToEdict(vm, vm->global_struct->self);
 			ed->v->nextthink = vm->global_struct->time + 0.1;
 			if (a->_float != ed->v->frame)
 			{

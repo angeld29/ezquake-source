@@ -42,10 +42,11 @@ struct pr1vm_s
 	float			*globals;
 	int				edict_size;		// bytes per entvars block
 
-	// Edict-модель (сервер: sv.edicts / sv.game_edicts).
+	// Edict-модель (сервер: sv.edicts / sv.game_edicts). S5b: state зеркалит sv.state.
 	edict_t			*edicts;
 	int				num_edicts;
 	int				max_edicts;
+	int				state;
 	void			*game_edicts;	// entvars-база для STOREP_*/EDICT_TO_PROG
 
 	// Состояние исполнения (перенесено из глобалов pr_exec.c).
