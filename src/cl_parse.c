@@ -1525,7 +1525,6 @@ void CL_ParseServerData (void)
 
 	if (!com_serveractive)
 		FS_SetGamedir (str, false);
-	Con_Printf ("[csqc] serverdata: gamedir=%s\n", str);
 
 	if (cfg_legacy_exec.value && (cflag || cfg_legacy_exec.value >= 2)) 
 	{
@@ -1646,7 +1645,6 @@ void CL_ParseServerData (void)
 
 	// now waiting for downloads, etc
 	cls.state = ca_onserver;
-	Con_Printf ("[csqc] state=ca_onserver\n");
 
 #ifdef FTE_PEXT2_VOICECHAT
 	S_Voip_MapChange();

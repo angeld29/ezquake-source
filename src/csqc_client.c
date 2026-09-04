@@ -29,7 +29,6 @@ typedef struct csqc_client_state_s
 	qbool		inited;		// CSQC_Init вызван
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
-	int			update_count;	// число вызовов CSQC_UpdateView (для трассы)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			global_time;	// смещение глобала time (или -1)
 	int			numcmds;
@@ -264,8 +263,6 @@ void CSQC_Client_ConnectCheck (void)
 {
 	int sizep;
 
-	Con_Printf ("[csqc] ConnectCheck: loaded=%d\n", (int)s_csqc.loaded);
-
 	// Уже загружен: это, скорее всего, смена карты в том же соединении —
 	// сбрасываем world_done, чтобы CSQC_WorldLoaded вызвался для новой карты
 	// (как в FTE: WorldLoaded после каждого Surf_NewMap).
@@ -281,7 +278,6 @@ void CSQC_Client_ConnectCheck (void)
 	// (cl_pext_csqc), но enablecsqc не шлёт — поэтому CSQC-сущности (76) не
 	// приходят до парсинга.
 	sizep = (int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogssize"), NULL, 0);
-	Con_Printf ("[csqc] ConnectCheck: *csprogssize=%d\n", sizep);
 	if (sizep <= 0)
 		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
 
@@ -310,7 +306,6 @@ void CSQC_Client_Update (void)
 		s_csqc.world_done = true;
 		if (!CSQC_Client_Exec (s_csqc.func_world))
 			return;
-		Con_Printf ("[csqc] CSQC_WorldLoaded executed ok\n");
 	}
 
 	if (s_csqc.func_update > 0)
@@ -319,9 +314,6 @@ void CSQC_Client_Update (void)
 		vm->globals[OFS_PARM1] = vid.height;
 		vm->globals[OFS_PARM2] = (key_dest == key_menu) ? 1 : 0;
 		CSQC_Client_Exec (s_csqc.func_update);
-		s_csqc.update_count++;
-		if (s_csqc.update_count == 1)
-			Con_Printf ("[csqc] CSQC_UpdateView #1 executed ok\n");
 	}
 }
 

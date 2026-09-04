@@ -419,9 +419,6 @@ int CL_ClientState (void)
 
 void CL_MakeActive(void) 
 {
-#ifndef CLIENTONLY
-	Con_Printf ("[csqc] CL_MakeActive entered\n");
-#endif
 #ifdef DEBUG_MEMORY_ALLOCATIONS
 	Sys_Printf("\nevent,active (map=%s)\n", host_mapname.string);
 #endif
