@@ -23,6 +23,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qwsvdef.h"
 #include "pr1vm.h"
 
+// PR1VM S5: argc/trace живут в активном инстансе (вызов builtin всегда внутри exec).
+#define pr_argc (PR1VM_Active()->argc)
+#define pr_trace (PR1VM_Active()->trace)
+
 static tokenizecontext_t pr1_tokencontext;
 
 #define	RETURN_EDICT(e) (((int *)pr_globals)[OFS_RETURN] = EDICT_TO_PROG(e))
@@ -2816,36 +2820,39 @@ static struct { int num; builtin_t func; } ext_builtins[] =
 
 #define num_ext_builtins (sizeof(ext_builtins)/sizeof(ext_builtins[0]))
 
-builtin_t *pr_builtins = NULL;
+// pr_numbuiltins остаётся глобальным mirror-ом (sv_init.c:547 читает);
+// сама таблица живёт на серверном инстансе (PR1VM S5): vm->builtins.
 int pr_numbuiltins = 0;
 
 void PR_InitBuiltins (void)
 {
 	int i;
+	builtin_t *table;
+	pr1vm_t *vm = PR1VM_Server();
 
-	if (pr_builtins)
+	if (vm->builtins)
 		return; // We don't need reinit it.
 
-	// Free old array.
-	Q_free (pr_builtins);
 	// We have at least iD builtins.
 	pr_numbuiltins = num_std_builtins;
 	// Find highest builtin number to see how much space we actually need.
 	for (i = 0; i < num_ext_builtins; i++)
 		pr_numbuiltins = max(ext_builtins[i].num + 1, pr_numbuiltins);
 	// Allocate builtins array.
-	pr_builtins = (builtin_t *) Q_malloc(pr_numbuiltins * sizeof(builtin_t));
+	table = (builtin_t *) Q_malloc(pr_numbuiltins * sizeof(builtin_t));
 	// Init new array to PF_Fixme().
 	for (i = 0; i < pr_numbuiltins; i++)
-		pr_builtins[i] = PF_Fixme;
+		table[i] = PF_Fixme;
 	// Copy iD builtins in new array.
-	memcpy (pr_builtins, std_builtins, num_std_builtins * sizeof(builtin_t));
+	memcpy (table, std_builtins, num_std_builtins * sizeof(builtin_t));
 	// Add QSG builtins or, probably, overwrite iD ones.
 	for (i = 0; i < num_ext_builtins; i++)
 	{
 		assert (ext_builtins[i].num >= 0);
-		pr_builtins[ext_builtins[i].num] = ext_builtins[i].func;
+		table[ext_builtins[i].num] = ext_builtins[i].func;
 	}
+	vm->builtins = table;
+	vm->numbuiltins = pr_numbuiltins;
 }
 
 #endif // CLIENTONLY

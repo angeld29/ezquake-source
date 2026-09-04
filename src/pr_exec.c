@@ -93,9 +93,7 @@ void PR1VM_TestError_f (void)
 	PR_RunError ("PR1VM test error (host_error path)");
 }
 
-qbool		pr_trace;
-
-int			pr_argc;
+// pr_argc/pr_trace перенесены в pr1vm_t (S5): vm->argc / vm->trace.
 
 char *pr_opnames[] =
     {
@@ -446,7 +444,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	f = &vm->functions[fnum];
 
 	runaway = 100000;
-	pr_trace = false;
+	vm->trace = false;
 
 	// make a stack frame
 	exitdepth = vm->depth;
@@ -468,7 +466,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		vm->xfunction->profile++;
 		vm->xstatement = s;
 
-		if (pr_trace)
+		if (vm->trace)
 			PR_PrintStatement (st);
 
 		switch (st->op)
@@ -689,7 +687,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_CALL6:
 		case OP_CALL7:
 		case OP_CALL8:
-			pr_argc = st->op - OP_CALL0;
+			vm->argc = st->op - OP_CALL0;
 			if (!a->function)
 				PR_RunError ("NULL function");
 
@@ -698,9 +696,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			if (newf->first_statement < 0)
 			{	// negative statements are built in functions
 				i = -newf->first_statement;
-				if (i >= pr_numbuiltins)
+				if (i >= vm->numbuiltins)
 					PR_RunError ("Bad builtin call number");
-				pr_builtins[i] ();
+				vm->builtins[i] ();
 				break;
 			}
 

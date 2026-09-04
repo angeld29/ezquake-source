@@ -56,6 +56,13 @@ struct pr1vm_s
 	dfunction_t		*xfunction;
 	int				xstatement;
 
+	// Builtin-контейнер (S5): диспетчер по номеру -first_statement.
+	int				numbuiltins;
+	builtin_t		*builtins;
+	// Текущий вызов (S5): число аргументов + флаг трассы.
+	int				argc;
+	qbool			trace;
+
 	// Клиентские (per-instance) динамические строки. Для серверного инстанса
 	// не используются: он делегирует глобальным таблицам (PR1_GetString/...),
 	// т.к. их читают PR2 и sv_*.
