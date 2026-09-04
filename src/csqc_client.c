@@ -73,17 +73,21 @@ void CSQC_Client_GetScreenSize (int *w, int *h)
 
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha)
 {
-	byte rgba[4];
+	extern cvar_t scr_coloredText;
+	static char buf[4096];
+	float saved;
+	(void)alpha;
 	if (!text)
 		return;
-	// Цвет задаёт модуль (параметр rgb drawstring); выставляем явно, чтобы не
-	// зависеть от scr_coloredText/состояния цвета предыдущих вызовов.
-	rgba[0] = bound (0, r, 255);
-	rgba[1] = bound (0, g, 255);
-	rgba[2] = bound (0, b, 255);
-	rgba[3] = (byte)(bound (0.0f, alpha, 1.0f) * 255.0f);
-	Draw_SetColor (rgba);
-	Draw_SString (x, y, text, 1, true);
+	// Цвет модуля передаём &cRRGGBB-кодом движка. Чтобы он не зависел от
+	// scr_coloredText пользователя, временно включаем его на время отрисовки.
+	saved = scr_coloredText.value;
+	Cvar_SetValue (&scr_coloredText, 1);
+	// Цвет &cRGB — 3 hex-разряда (канал×16), а не &cRRGGBB.
+	snprintf (buf, sizeof (buf), "&c%X%X%X%s",
+		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, text);
+	Draw_SColoredStringBasic (x, y, buf, 0, 1, true);
+	Cvar_SetValue (&scr_coloredText, saved);
 }
 
 static void CSQC_Client_ConsoleCommand_f (void);
