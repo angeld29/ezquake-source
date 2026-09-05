@@ -65,6 +65,18 @@ static qbool csqc_inputdebug_registered;
 // модулем через cvar #45). Регистрируется так же.
 static cvar_t csqc_d2d = {"csqc_d2d", "0", 0};
 
+// Слой D шаг 3 — #343 setcursormode (A3.1): состояние курсора модуля. Пока
+// usecursor=1 и модуль активен в игре (CSQC_Client_CSQCCursor), мышь свободна
+// (vid_sdl2 не отдаёт её OS-курсору), а SCR_DrawCursor рисует курсор модуля.
+typedef struct
+{
+	qbool	usecursor;
+	char	cursorimage[MAX_QPATH];
+	float	hotspot[2];
+	float	scale;
+} csqc_cursormode_t;
+static csqc_cursormode_t s_cursormode;
+
 // Клиентская арена edicts (ADR 0017, P1/D2): прямая карта entnum -> слот.
 // entity-значение PR1 = N*edict_size; слот 0 — world. edict_size = entityfields*4
 // (у нас 432). Только Q_malloc (не hunk — урок Bug1).
@@ -225,6 +237,76 @@ qbool CSQC_Client_PrecachePic (const char *name)
 	if (!name || !name[0])
 		return false;
 	return Draw_CachePicSafe (name, false, false) != NULL;
+}
+
+void CSQC_Client_SetCursorMode (qbool usecursor, const char *image,
+	float hotspot_x, float hotspot_y, float scale)
+{
+	// Полная реализация (roadmap A3.1): запоминаем параметры; эффект включается
+	// самим состоянием CSQC_Client_CSQCCursor() — пока usecursor=1 и модуль активен
+	// в игре, mouse-механика ezquake не отдаёт мышь OS-курсору (vid_sdl2.c), а
+	// SCR_DrawCursor рисует курсор модуля. Клики/InputEvent-канал — C1.
+	s_cursormode.usecursor = usecursor;
+	s_cursormode.cursorimage[0] = 0;
+	if (image)
+		strlcpy (s_cursormode.cursorimage, image, sizeof (s_cursormode.cursorimage));
+	s_cursormode.hotspot[0] = hotspot_x;
+	s_cursormode.hotspot[1] = hotspot_y;
+	s_cursormode.scale = scale;
+}
+
+qbool CSQC_Client_CSQCCursor (void)
+{
+	// Курсор модуля действует только в игровом кадре (key_game): при открытом
+	// консоль/меню движка их собственный курсор/мышь имеют приоритет.
+	return s_cursormode.usecursor && s_csqc.loaded && !s_csqc.errored
+		&& key_dest == key_game;
+}
+
+void CSQC_Client_GetCursorPos (float *x, float *y)
+{
+	extern double cursor_x, cursor_y;	// cl_screen.c:161 (сырые координаты указателя)
+	if (x)
+		*x = (float)cursor_x;
+	if (y)
+		*y = (float)cursor_y;
+}
+
+void CSQC_Client_DrawCursor (void)
+{
+	extern double cursor_x, cursor_y;
+	mpic_t *pic;
+	float scale, x, y;
+
+	if (!CSQC_Client_CSQCCursor ())
+		return;
+	// FTE: scale <= 0 -> 1; hotspot — «остриё» курсора в пикселях картинки
+	// (умножается на масштаб), т.е. позиция указывает на точку клика.
+	scale = (s_cursormode.scale > 0) ? s_cursormode.scale : 1;
+	x = (float)cursor_x - s_cursormode.hotspot[0] * scale;
+	y = (float)cursor_y - s_cursormode.hotspot[1] * scale;
+
+	if (s_cursormode.cursorimage[0])
+	{
+		pic = Draw_CachePicSafe (s_cursormode.cursorimage, false, false);
+		if (!pic)
+			pic = Draw_CachePicSafe (s_cursormode.cursorimage, false, true);	// tga/png
+		if (pic)
+		{
+			Draw_SColoredSubPic2 (x, y, pic, 0, 0, pic->width, pic->height,
+				scale, scale, 255, 255, 255, 1);
+			return;
+		}
+	}
+	// Без картинки — дефолтное перекрестие (визуально как ezquake-курсор).
+	{
+		color_t c = RGBA_TO_COLOR (0, 255, 0, 255);
+		float s = scale;
+		Draw_AlphaLineRGB (x + 4 * s, y + 4 * s, x + 16 * s, y + 16 * s, 2 * s, c);
+		Draw_AlphaLineRGB (x, y, x + 8 * s, y, 2 * s, c);
+		Draw_AlphaLineRGB (x, y, x, y + 8 * s, 2 * s, c);
+		Draw_AlphaLineRGB (x + 8 * s, y, x, y + 8 * s, 2 * s, c);
+	}
 }
 
 static void CSQC_Client_ConsoleCommand_f (void);
@@ -969,6 +1051,10 @@ void CSQC_Client_Disconnect (void)
 	CSQC_Client_ClearCommands ();
 	// P1/D2: арена edicts до memset (указатели ещё на месте).
 	CSQC_Client_FreeArena ();
+	// Сброс курсора модуля (#343 A3.1): при новом коннекте состояние чистое.
+	s_cursormode.usecursor = false;
+	s_cursormode.cursorimage[0] = 0;
+	s_cursormode.scale = 0;
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =

@@ -38,6 +38,9 @@ $Id: cl_screen.c,v 1.156 2007-10-29 00:56:47 qqshka Exp $
 #include "utils.h"
 #include "sbar.h"
 #include "menu.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"	// CSQC-курсор модуля (#343 A3.1)
+#endif
 #include "Ctrl.h"
 #include "qtv.h"
 #include "demo_controls.h"
@@ -621,6 +624,17 @@ static double SCR_GetCursorScale(void)
 static void SCR_DrawCursor(void) 
 {
 	double scale = SCR_GetCursorScale();
+
+#ifndef CLIENTONLY
+	// CSQC-курсор модуля (#343 setcursormode, A3.1) — приоритет над штатным
+	// Quake-курсором движка (иначе рисовались бы оба).
+	if (CSQC_Client_CSQCCursor ()) {
+		CSQC_Client_DrawCursor ();
+		scr_pointer_state.x_old = scr_pointer_state.x;
+		scr_pointer_state.y_old = scr_pointer_state.y;
+		return;
+	}
+#endif
 
 	// Always draw the cursor if fullscreen
 	if (IN_QuakeMouseCursorRequired()) {

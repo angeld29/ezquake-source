@@ -40,6 +40,17 @@ void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, 
 float CSQC_Client_StringWidth (const char *text, qbool usecolours, float fontsize_x);
 qbool CSQC_Client_PrecachePic (const char *name);
 
+// Слой D, шаг 3 — #343 setcursormode (полная реализация, A3.1). Парсинг ABI в
+// csqc_builtins.c; здесь состояние курсора модуля и его отрисовка. Пока активен
+// CSQC-курсор, mouse-механика ezquake учитывает CSQC_Client_CSQCCursor() (vid_sdl2.c),
+// а SCR_DrawCursor рисует курсор модуля (image/hotspot/scale). Клики/InputEvent в
+// модуль — C1; здесь — release/grab мыши + собственный курсор + позиция (A3.2 #344).
+void CSQC_Client_SetCursorMode (qbool usecursor, const char *image,
+	float hotspot_x, float hotspot_y, float scale);
+qbool CSQC_Client_CSQCCursor (void);		// usecursor=1 && модуль загружен && в игре
+void CSQC_Client_DrawCursor (void);			// отрисовка курсора модуля (SCR_DrawCursor)
+void CSQC_Client_GetCursorPos (float *x, float *y);	// позиция указателя (#344, A3.2)
+
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
 // как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом
 // клиентского сообщения (см. csqc_builtins.c csqc_sendevent).

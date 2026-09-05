@@ -760,6 +760,29 @@ static void csqc_serverkey (void)
 	CSQCVM_SetRetStr (Info_ValueForKey (cl.serverinfo, key ? key : ""));
 }
 
+/*
+void(float usecursor, optional string cursorimage, optional vector hotspot,
+     optional float scale) setcursormode = #343
+FTE (pr_clcmd.c PF_cl_setcursormode): освобождает/хватает мышь и настраивает курсор.
+ezquake (A3.1): полная реализация — пока usecursor=1 и модуль активен в игре, мышь
+не отдаётся OS-курсору и SCR_DrawCursor рисует курсор модуля (image/hotspot/scale);
+при 0 мышь возвращается движку. Клики/InputEvent-канал модуля — C1.
+ABI i*3: usecursor w0, cursorimage w3, hotspot w6..8, scale w9.
+*/
+static void csqc_setcursormode (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	CSQC_Client_SetCursorMode (g[OFS_PARM0] != 0,
+		vm->argc > 1 ? PR1VM_GetString (vm, *(int *)&g[OFS_PARM1]) : NULL,
+		vm->argc > 2 ? g[OFS_PARM2]     : 0,
+		vm->argc > 2 ? g[OFS_PARM2 + 1] : 0,
+		vm->argc > 3 ? g[OFS_PARM0 + 9] : 0);
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
@@ -772,6 +795,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	// #349 isdemo, #354 serverkey.
 	PR1VM_RegisterBuiltin (vm, 349, (builtin_t)csqc_isdemo);
 	PR1VM_RegisterBuiltin (vm, 354, (builtin_t)csqc_serverkey);
+	// #343 setcursormode (A3.1: полная — курсор модуля в CSQC-оверлее).
+	PR1VM_RegisterBuiltin (vm, 343, (builtin_t)csqc_setcursormode);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
