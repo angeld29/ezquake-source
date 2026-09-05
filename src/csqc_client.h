@@ -30,8 +30,19 @@ void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once 
 #define clcfte_qcrequest	81	// CSQC sendevent (client -> server)
 #endif
 
-// Парсинг svc_fte_csqcentities(76) (S1; sized-92 — отдельно E3).
-void CSQC_Client_ParseEntities (void);
+// Размер-варианты CSQC-сообщений (только от mvdsv под sv_csqcdebug; в qwprot
+// нет — как в mvdsv server.h, локально): 92 = 76 + short-длина payload на
+// каждую сущность, 90 = 83 + short-длина payload в начале.
+#ifndef svc_fte_csqcentities_sized
+#define svc_fte_csqcentities_sized	92
+#endif
+#ifndef svc_fte_cgamepacket_sized
+#define svc_fte_cgamepacket_sized	90
+#endif
+
+// Парсинг svc_fte_csqcentities(76)/sized(92) (S1/E3): sized = перед payload
+// каждой сущности идёт short-длина (skip-защита от рассинхрона).
+void CSQC_Client_ParseEntities (qbool sized);
 // Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.
 void CSQC_Client_ParseEvent (void);
 // Временный Remove: entnum передаётся builtin-стримом (не edict/self.entnum).

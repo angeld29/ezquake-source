@@ -564,7 +564,19 @@ Update: CSQC_Ent_Update(isnew) — модуль читает payload из тек
 (read*). Remove: временно entnum через builtin-стрим (SetRemoveEnt), без edict.
 =================
 */
-void CSQC_Client_ParseEntities (void)
+/*
+=================
+CSQC_Client_ParseEntities
+
+Парсинг svc_fte_csqcentities(76)/sized(92):
+для каждой сущности — short entnum, бит 0x8000 = remove, 0 = конец.
+Update: CSQC_Ent_Update(isnew) — модуль читает payload из текущего сообщения
+(read*). Remove: временно entnum через builtin-стрим (SetRemoveEnt), без edict.
+Sized (92, только mvdsv под sv_csqcdebug): перед payload каждой update-сущности
+идёт short-длина — skip-защита от рассинхрона (E3).
+=================
+*/
+void CSQC_Client_ParseEntities (qbool sized)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 	unsigned int entnum;
@@ -619,6 +631,9 @@ void CSQC_Client_ParseEntities (void)
 
 		if (s_csqc.func_entupdate > 0)
 		{
+			int payload_start;
+			int payload_len = -1;
+
 			if (!dbg_upd)
 			{
 				dbg_upd = 1;
@@ -627,9 +642,23 @@ void CSQC_Client_ParseEntities (void)
 			}
 			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
 			s_csqc.seen[entnum] = true;
+
+			// Sized: перед payload — short-длина (mvdsv sv_ents.c:700).
+			payload_start = msg_readcount;
+			if (sized)
+				payload_len = MSG_ReadShort ();
+
 			CSQC_Client_Exec (s_csqc.func_entupdate);
 			if (s_csqc.errored)
 				return;
+
+			// Skip-защита: если модуль прочитал меньше payload_len — дочитать.
+			if (payload_len >= 0)
+			{
+				int used = msg_readcount - payload_start;
+				if (used < payload_len)
+					MSG_ReadSkip (payload_len - used);
+			}
 		}
 	}
 

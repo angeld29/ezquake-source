@@ -4132,7 +4132,14 @@ void CL_ParseServerMessage (void)
 						Con_Printf ("CSQC: svc 76 raw received (count=%d read=%d)\n",
 							dbg_svc76, msg_readcount);
 					dbg_svc76++;
-					CSQC_Client_ParseEntities ();
+					CSQC_Client_ParseEntities (false);
+					break;
+				}
+			case svc_fte_csqcentities_sized:
+				{
+					// Sized-вариант (92, mvdsv под sv_csqcdebug): перед payload
+					// каждой сущности — short-длина (E3).
+					CSQC_Client_ParseEntities (true);
 					break;
 				}
 #endif
@@ -4258,6 +4265,25 @@ void CL_ParseServerMessage (void)
 					}
 #endif
 					CL_ParseQizmoVoice();
+					break;
+				}
+			case svc_fte_cgamepacket_sized:
+				{
+					// Sized cgamepacket (90, mvdsv под sv_csqcdebug): [90][len][payload]
+					// (sv_send.c:450-462). Payload = как 83 (имя события + args).
+					int payload_start = msg_readcount;
+					int payload_len = MSG_ReadShort ();
+#if defined(FTE_PEXT_CSQC) && !defined(CLIENTONLY)
+					extern cvar_t cl_pext_csqc;
+					if (cl_pext_csqc.value && (cls.fteprotocolextensions & FTE_PEXT_CSQC))
+						CSQC_Client_ParseEvent ();
+#endif
+					// skip-защита: дочитать невычитанный остаток payload
+					{
+						int used = msg_readcount - payload_start;
+						if (used < payload_len)
+							MSG_ReadSkip (payload_len - used);
+					}
 					break;
 				}
 #ifdef MVD_PEXT1_SIMPLEPROJECTILE
