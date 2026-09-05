@@ -734,6 +734,32 @@ static void csqc_stringtokeynum (void)
 	vm->globals[OFS_RETURN] = name ? Key_StringToKeynum (name) : -1;
 }
 
+/*
+float() isdemo = #349
+0 — не демо; 1 — обычное демо; 2 — MVD/QTV-просмотр (cls.mvdplayback: 1=MVD, 2=QTV).
+Семантика совпадает с FTE PF_cl_playingdemo (pr_clcmd.c: DPB_NONE=0, DPB_MVD=2, иначе 1).
+*/
+static void csqc_isdemo (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = cls.mvdplayback ? 2 : (cls.demoplayback ? 1 : 0);
+}
+
+/*
+string(string key) serverkey = #354
+Значение ключа из cl.serverinfo; нет ключа -> "" (Info_ValueForKey уже возвращает "").
+*/
+static void csqc_serverkey (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *key = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (Info_ValueForKey (cl.serverinfo, key ? key : ""));
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
@@ -743,6 +769,9 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	// Слой D шаг 3 — ввод/интерфейс: #340 keynumtostring, #341 stringtokeynum.
 	PR1VM_RegisterBuiltin (vm, 340, (builtin_t)csqc_keynumtostring);
 	PR1VM_RegisterBuiltin (vm, 341, (builtin_t)csqc_stringtokeynum);
+	// #349 isdemo, #354 serverkey.
+	PR1VM_RegisterBuiltin (vm, 349, (builtin_t)csqc_isdemo);
+	PR1VM_RegisterBuiltin (vm, 354, (builtin_t)csqc_serverkey);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
