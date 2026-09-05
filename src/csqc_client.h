@@ -23,6 +23,13 @@ void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: l
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + выгрузка + снятие команд
 void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once + UpdateView
 
+// Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
+// как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом
+// клиентского сообщения (см. csqc_builtins.c csqc_sendevent).
+#ifndef clcfte_qcrequest
+#define clcfte_qcrequest	81	// CSQC sendevent (client -> server)
+#endif
+
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — отдельно E3).
 void CSQC_Client_ParseEntities (void);
 // Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.

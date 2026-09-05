@@ -11,6 +11,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
+#include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -379,11 +380,82 @@ static void csqc_sprintf (void)
 
 /*
 void(string evname, string evargs, ...) sendevent = #359
-Стаб: реальная запись clcfte_qcrequest-сообщения — в сетевом подшаге
-(после клиентского парсинга cgamepacket). Без стаба вызов из
-CSQC_ConsoleCommand ронял бы VM («Bad builtin call number»).
+(E2) Реальная запись clcfte_qcrequest(81) — wire-контракт ftew PF_cs_sendevent
+(pr_csqc.c:3794) / mvdsv SV_ReadQCRequest (sv_user.c:4616):
+  [byte 81] затем до 6 аргументов "[byte type][значение]", затем [byte 0
+  (ev_void-терминатор)] и [string evname].
+Типы: 's'=1 ev_string+string, 'f'=2 ev_float+float, 'v'=3 ev_vector+3 floats,
+'i'=8 ev_integer+long (raw-bits из float-слота, как ftew G_INT). Неизвестный
+символ (вкл. '\0') — break (остаток не шлём; 'e'/'u'/'F'/'I'/'p' модуль не
+использует). Гварды: активный коннект + договорённый FTE_PEXT_CSQC + cl_pext_csqc
+(сервер без CSQC иначе дропает клиента, sv_user.c:5146).
 */
-static void csqc_sendevent (void) { }
+#define CSQC_EV_VOID	0
+#define CSQC_EV_STRING	1
+#define CSQC_EV_FLOAT	2
+#define CSQC_EV_VECTOR	3
+#define CSQC_EV_INTEGER	8
+
+static void csqc_sendevent (void)
+{
+	extern cvar_t cl_pext_csqc;
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *evname, *argtypes;
+	char c;
+	int i;
+
+	if (!vm)
+		return;
+	if (cls.state != ca_active)
+		return;
+	if (!cl_pext_csqc.value)
+		return;
+#ifdef PROTOCOL_VERSION_FTE
+	if (!(cls.fteprotocolextensions & FTE_PEXT_CSQC))
+		return;
+#endif
+
+	evname = CSQCVM_Str (OFS_PARM0);
+	argtypes = CSQCVM_Str (OFS_PARM1);
+	if (!evname || !argtypes)
+		return;
+
+	MSG_WriteByte (&cls.netchan.message, clcfte_qcrequest);
+
+	for (i = 0; i < 6; i++)
+	{
+		int base = OFS_PARM2 + i * 3;
+		c = argtypes[i];
+		if (c == 's')
+		{
+			char *s = PR1VM_GetString (vm, *(int *)&vm->globals[base]);
+			MSG_WriteByte (&cls.netchan.message, CSQC_EV_STRING);
+			MSG_WriteString (&cls.netchan.message, s ? s : "");
+		}
+		else if (c == 'f')
+		{
+			MSG_WriteByte (&cls.netchan.message, CSQC_EV_FLOAT);
+			MSG_WriteFloat (&cls.netchan.message, vm->globals[base]);
+		}
+		else if (c == 'v')
+		{
+			MSG_WriteByte (&cls.netchan.message, CSQC_EV_VECTOR);
+			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 0]);
+			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 1]);
+			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 2]);
+		}
+		else if (c == 'i')
+		{
+			MSG_WriteByte (&cls.netchan.message, CSQC_EV_INTEGER);
+			MSG_WriteLong (&cls.netchan.message, *(int *)&vm->globals[base]);
+		}
+		else
+			break;
+	}
+
+	MSG_WriteByte (&cls.netchan.message, CSQC_EV_VOID);
+	MSG_WriteString (&cls.netchan.message, evname);
+}
 
 /*
 S1 read*-минимум: читают из текущего сетевого сообщения (как FTE), для Remove
