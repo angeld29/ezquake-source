@@ -104,7 +104,7 @@ void CSQC_Client_GetScreenSize (int *w, int *h)
 		*h = vid.height;
 }
 
-void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha)
+void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale)
 {
 	extern cvar_t scr_coloredText;
 	static char buf[4096];
@@ -112,14 +112,15 @@ void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int
 	(void)alpha;
 	if (!text)
 		return;
-	// Цвет модуля передаём &cRRGGBB-кодом движка. Чтобы он не зависел от
+	// Слой D шаг 2: масштаб шрифта из size.x (scale=size.x/8; 0 => 1). Цвет
+	// модуля передаём &cRRGGBB-кодом движка. Чтобы он не зависел от
 	// scr_coloredText пользователя, временно включаем его на время отрисовки.
 	saved = scr_coloredText.value;
 	Cvar_SetValue (&scr_coloredText, 1);
 	// Цвет &cRGB — 3 hex-разряда (канал×16), а не &cRRGGBB.
 	snprintf (buf, sizeof (buf), "&c%X%X%X%s",
 		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, text);
-	Draw_SColoredStringBasic (x, y, buf, 0, 1, true);
+	Draw_SColoredStringBasic (x, y, buf, 0, (scale > 0) ? scale : 1, true);
 	Cvar_SetValue (&scr_coloredText, saved);
 }
 
@@ -144,10 +145,10 @@ void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int
 	Draw_AlphaRectangleRGB (x, y, w, h, 1, true, CSQC_Client_Color (r, g, b, alpha));
 }
 
-void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, float alpha)
+void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha)
 {
 	mpic_t *pic;
-	float sx, sy;
+	float sx, sy, a = bound (0, alpha, 1);
 	if (!name || !name[0] || w < 0 || h < 0)
 		return;
 	pic = Draw_CachePicSafe (name, false, false);
@@ -155,10 +156,35 @@ void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, 
 		return;
 	sx = (w > 0) ? w / (float)pic->width : 1;
 	sy = (h > 0) ? h / (float)pic->height : 1;
-	Draw_SAlphaSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy, bound (0, alpha, 1));
+	// Слой D шаг 2: цветной tint (rgb != 255,255,255) — через Draw_SColoredSubPic2;
+	// white (по умолчанию) — прежний путь SAlphaSubPic2.
+	if (r == 255 && g == 255 && b == 255)
+		Draw_SAlphaSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy, a);
+	else
+		Draw_SColoredSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy,
+			bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
 }
 
-void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha)
+void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *name, float srcx, float srcy, float srcw, float srch, int r, int g, int b, float alpha)
+{
+	mpic_t *pic;
+	float a = bound (0, alpha, 1);
+	if (!name || !name[0] || w <= 0 || h <= 0 || srcw <= 0 || srch <= 0)
+		return;
+	pic = Draw_CachePicSafe (name, false, false);
+	if (!pic)
+		return;
+	// Субрегион src (в пикселях пикчи) растягивается в target (w,h):
+	// scale = target / src.
+	if (r == 255 && g == 255 && b == 255)
+		Draw_SAlphaSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch,
+			w / srcw, h / srch, a);
+	else
+		Draw_SColoredSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch,
+			w / srcw, h / srch, bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
+}
+
+void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha, float scale)
 {
 	extern cvar_t scr_coloredText;
 	static char buf[8];
@@ -166,12 +192,12 @@ void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, f
 	int c = ch & 0xff;
 	if (c <= 0)
 		return;
-	// Один символ default-шрифта с цветом &cRGB (как DrawText; scale 1).
+	// Один символ default-шрифта с цветом &cRGB (как DrawText).
 	saved = scr_coloredText.value;
 	Cvar_SetValue (&scr_coloredText, 1);
 	snprintf (buf, sizeof (buf), "&c%X%X%X%c",
 		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, c);
-	Draw_SColoredStringBasic (x, y, buf, 0, 1, true);
+	Draw_SColoredStringBasic (x, y, buf, 0, (scale > 0) ? scale : 1, true);
 	Cvar_SetValue (&scr_coloredText, saved);
 }
 
@@ -182,14 +208,16 @@ void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, 
 	Draw_AlphaLineRGB (x1, y1, x2, y2, width, CSQC_Client_Color (r, g, b, alpha));
 }
 
-float CSQC_Client_StringWidth (const char *text, qbool usecolours)
+float CSQC_Client_StringWidth (const char *text, qbool usecolours, float fontsize_x)
 {
+	float scale;
 	if (!text)
 		return 0;
-	// Та же метрика, что рисует drawstring (scale 1, proportional):
-	// r_draw_charset.c Draw_StringLength/Colors.
-	return usecolours ? Draw_StringLengthColors (text, -1, 1, true)
-		: Draw_StringLength (text, -1, 1, true);
+	// Масштаб из size.x (как DrawText; 0 => 1) — та же метрика, что рисует
+	// drawstring: r_draw_charset.c Draw_StringLength/Colors.
+	scale = (fontsize_x > 0) ? fontsize_x / 8.0f : 1;
+	return usecolours ? Draw_StringLengthColors (text, -1, scale, true)
+		: Draw_StringLength (text, -1, scale, true);
 }
 
 qbool CSQC_Client_PrecachePic (const char *name)

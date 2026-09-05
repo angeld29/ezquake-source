@@ -215,6 +215,7 @@ static void csqc_drawstring (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	float *g;
 	int r, gg, b;
+	float scale;
 	char *s;
 	if (!vm)
 		return;
@@ -225,7 +226,9 @@ static void csqc_drawstring (void)
 	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
 	gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
 	b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
-	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s, r, gg, b, g[OFS_PARM0 + 12]);
+	// Слой D шаг 2: size.x -> scale (8px ячейка FTE); 0 => 1.
+	scale = (g[OFS_PARM0 + 6] > 0) ? g[OFS_PARM0 + 6] / 8.0f : 1;
+	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s, r, gg, b, g[OFS_PARM0 + 12], scale);
 }
 
 /*
@@ -270,14 +273,16 @@ static void csqc_drawcharacter (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	float *g;
+	float scale;
 	if (!vm)
 		return;
 	g = vm->globals;
+	scale = (g[OFS_PARM0 + 6] > 0) ? g[OFS_PARM0 + 6] / 8.0f : 1;
 	CSQC_Client_DrawCharacter (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], (int)g[OFS_PARM0 + 3],
 		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
-		g[OFS_PARM0 + 12]);
+		g[OFS_PARM0 + 12], scale);
 	vm->globals[OFS_RETURN] = 0;
 }
 
@@ -296,8 +301,35 @@ static void csqc_drawpic (void)
 	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (name)
 		CSQC_Client_DrawPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
-			g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name, g[OFS_PARM0 + 12]);
+			g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name,
+			(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
+			(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
+			(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
+			g[OFS_PARM0 + 12]);
 	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
+void(vector pos, vector sz, string pic, vector srcpos, vector srcsz, vector rgb,
+     float alpha, optional float drawflag) drawsubpic = #328
+*/
+static void csqc_drawsubpic (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	char *name;
+	if (!vm)
+		return;
+	g = vm->globals;
+	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 6]);
+	if (name)
+		CSQC_Client_DrawSubPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
+			g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], name,
+			g[OFS_PARM0 + 9], g[OFS_PARM0 + 10], g[OFS_PARM0 + 12], g[OFS_PARM0 + 13],
+			(int)(bound (0, g[OFS_PARM0 + 15], 1) * 255.0f + 0.5f),
+			(int)(bound (0, g[OFS_PARM0 + 16], 1) * 255.0f + 0.5f),
+			(int)(bound (0, g[OFS_PARM0 + 17], 1) * 255.0f + 0.5f),
+			g[OFS_PARM0 + 18]);
 }
 
 /*
@@ -349,7 +381,8 @@ static void csqc_stringwidth (void)
 	if (!vm)
 		return;
 	text = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
-	vm->globals[OFS_RETURN] = CSQC_Client_StringWidth (text ? text : "", vm->globals[OFS_PARM0 + 3] != 0);
+	vm->globals[OFS_RETURN] = CSQC_Client_StringWidth (text ? text : "",
+		vm->globals[OFS_PARM0 + 3] != 0, vm->globals[OFS_PARM0 + 6]);
 }
 
 /*
@@ -692,6 +725,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 322, (builtin_t)csqc_drawpic);
 	PR1VM_RegisterBuiltin (vm, 323, (builtin_t)csqc_drawfill);
 	PR1VM_RegisterBuiltin (vm, 327, (builtin_t)csqc_stringwidth);
+	PR1VM_RegisterBuiltin (vm, 328, (builtin_t)csqc_drawsubpic);
 	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati);
 	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);

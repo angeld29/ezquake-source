@@ -16,7 +16,7 @@ struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); без зави
 float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы
 void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 32..127 (CL_SetStat)
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
-void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha);
+void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:
@@ -33,10 +33,11 @@ void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 // Слой D, шаг 1 — 2D-графика (draw.h/r_draw*; координаты — сырые пиксели видео,
 // как DrawText). Помощники для csqc_builtins.c (см. docs/ezquake_csqc_client_layerd_2d_plan.md).
 void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int b, float alpha);
-void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, float alpha);
-void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha);
+void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha);
+void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *name, float srcx, float srcy, float srcw, float srch, int r, int g, int b, float alpha);
+void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, int r, int g, int b, float alpha);
-float CSQC_Client_StringWidth (const char *text, qbool usecolours);
+float CSQC_Client_StringWidth (const char *text, qbool usecolours, float fontsize_x);
 qbool CSQC_Client_PrecachePic (const char *name);
 
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
