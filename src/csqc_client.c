@@ -33,9 +33,12 @@ typedef struct csqc_client_state_s
 	qbool		seen[2048];		// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
+	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			global_time;	// смещение глобала time (или -1)
 	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
+	// input_* глобалы для CSQC_Input_Frame (или -1, если модуль их не объявил).
+	int			in_timelength, in_angles, in_movevalues, in_buttons, in_impulse;
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -53,6 +56,11 @@ typedef struct csqc_client_state_s
 } csqc_client_state_t;
 
 static csqc_client_state_t s_csqc;
+
+// Диагностический переключатель модуля CSQC_Input_Frame (читается модулем через
+// builtin cvar #45). Регистрируется один раз в CSQC_Client_ConnectCheck.
+static cvar_t csqc_inputdebug = {"csqc_inputdebug", "0", 0};
+static qbool csqc_inputdebug_registered;
 
 // Клиентская арена edicts (ADR 0017, P1/D2): прямая карта entnum -> слот.
 // entity-значение PR1 = N*edict_size; слот 0 — world. edict_size = entityfields*4
@@ -414,9 +422,12 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_input = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
+	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
+	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
@@ -457,20 +468,31 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_Parse_Event");
 	if (f)
 		s_csqc.func_parseevent = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Input_Frame");
+	if (f)
+		s_csqc.func_input = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 	// P2/D3: self-глобал и поле .entnum (движок пишет их при entity-вызовах).
 	s_csqc.global_self = PR1VM_FindGlobal (vm, "self");
 	s_csqc.field_entnum = CSQC_Client_FindField (vm, "entnum");
 
+	// input_* глобалы для CSQC_Input_Frame (csdefs.qc: input_timelength/angles/
+	// movevalues/buttons/impulse). Резолвим только объявленные модулем.
+	s_csqc.in_timelength = PR1VM_FindGlobal (vm, "input_timelength");
+	s_csqc.in_angles = PR1VM_FindGlobal (vm, "input_angles");
+	s_csqc.in_movevalues = PR1VM_FindGlobal (vm, "input_movevalues");
+	s_csqc.in_buttons = PR1VM_FindGlobal (vm, "input_buttons");
+	s_csqc.in_impulse = PR1VM_FindGlobal (vm, "input_impulse");
+
 	s_csqc.loaded = true;
 
 	Con_Printf ("CSQC: loaded %s (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
-		"c=%d s=%d eu=%d er=%d pe=%d time=%d\n",
+		"c=%d s=%d eu=%d er=%d pe=%d if=%d time=%d\n",
 		path, vm->progs->numstatements, (unsigned int)vm->progs->crc, s_csqc.func_init,
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
-		s_csqc.global_time);
+		s_csqc.func_input, s_csqc.global_time);
 	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d\n",
 		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size);
 
@@ -503,6 +525,13 @@ void CSQC_Client_ConnectCheck (void)
 	unsigned crc;
 	int sizep;
 	char path[MAX_QPATH];
+
+	// csqc_inputdebug (см. выше) — регистрируем один раз.
+	if (!csqc_inputdebug_registered)
+	{
+		Cvar_Register (&csqc_inputdebug);
+		csqc_inputdebug_registered = true;
+	}
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
 	// модуль не грузится, клиент ведёт себя как раньше.
@@ -742,6 +771,82 @@ void CSQC_Client_ParseEvent (void)
 
 /*
 =================
+CSQC_Client_InputFrame
+
+CSQC_Input_Frame: вызывается перед отправкой каждого usercmd (CL_SendCmd,
+cl_input.c). Механика FTE (pr_csqc.c:9418 CSQC_Input_Frame + cs_set/get_input_state,
+:3875-4010) на подмножестве input_*-глобалов, объявленных модулем (csdefs.qc:
+input_timelength/angles/movevalues/buttons/impulse): движок заполняет их из cmd,
+исполняет CSQC_Input_Frame, затем пишет изменения обратно в cmd.
+
+Отличия от FTE:
+- usercmd.angles в ezquake — float-градусы (не short), конвертацию делает
+  MSG_WriteAngle16 в MSG_WriteDeltaUsercmd (com_msg.c:237) — здесь копируем напрямую;
+- input_timelength = msec/1000 (cl.gamespeed в ezquake QW нет — FTE множит на него).
+=================
+*/
+void CSQC_Client_InputFrame (usercmd_t *cmd)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.func_input <= 0)
+		return;
+
+	CSQC_Client_SetTime ();
+
+	// cmd -> input_* глобалы (только объявленные модулем).
+	if (s_csqc.in_timelength >= 0)
+		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f;
+	if (s_csqc.in_angles >= 0)
+	{
+		vm->globals[s_csqc.in_angles + 0] = cmd->angles[0];
+		vm->globals[s_csqc.in_angles + 1] = cmd->angles[1];
+		vm->globals[s_csqc.in_angles + 2] = cmd->angles[2];
+	}
+	if (s_csqc.in_movevalues >= 0)
+	{
+		vm->globals[s_csqc.in_movevalues + 0] = cmd->forwardmove;
+		vm->globals[s_csqc.in_movevalues + 1] = cmd->sidemove;
+		vm->globals[s_csqc.in_movevalues + 2] = cmd->upmove;
+	}
+	if (s_csqc.in_buttons >= 0)
+		vm->globals[s_csqc.in_buttons] = cmd->buttons;
+	if (s_csqc.in_impulse >= 0)
+		vm->globals[s_csqc.in_impulse] = cmd->impulse;
+
+	if (!CSQC_Client_Exec (s_csqc.func_input))
+		return;		// errored — кадры отключены, cmd не трогаем
+
+	// input_* глобалы -> cmd (записываем только то, что изменил модуль).
+	if (s_csqc.in_timelength >= 0)
+	{
+		int msec = (int)(vm->globals[s_csqc.in_timelength] * 1000.0f);
+		if (msec < 1)
+			msec = 1;
+		else if (msec > 255)
+			msec = 255;
+		cmd->msec = (byte)msec;
+	}
+	if (s_csqc.in_angles >= 0)
+	{
+		cmd->angles[0] = vm->globals[s_csqc.in_angles + 0];
+		cmd->angles[1] = vm->globals[s_csqc.in_angles + 1];
+		cmd->angles[2] = vm->globals[s_csqc.in_angles + 2];
+	}
+	if (s_csqc.in_movevalues >= 0)
+	{
+		cmd->forwardmove = (short)vm->globals[s_csqc.in_movevalues + 0];
+		cmd->sidemove = (short)vm->globals[s_csqc.in_movevalues + 1];
+		cmd->upmove = (short)vm->globals[s_csqc.in_movevalues + 2];
+	}
+	if (s_csqc.in_buttons >= 0)
+		cmd->buttons = (byte)vm->globals[s_csqc.in_buttons];
+	if (s_csqc.in_impulse >= 0)
+		cmd->impulse = (byte)vm->globals[s_csqc.in_impulse];
+}
+
+/*
+=================
 CSQC_Client_Disconnect
 =================
 */
@@ -761,9 +866,12 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_input = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
+	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
+	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 }
 
 #endif // !CLIENTONLY

@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "input.h"
 #include "pmove.h"		// PM_FLY etc
 #include "rulesets.h"
+#include "csqc_client.h"	// CSQC_Client_InputFrame
 
 static void IN_AttackUp_CommonHide(void);
 
@@ -1111,6 +1112,11 @@ void CL_SendCmd(void)
 		cls.netchan.outgoing_sequence++;
 		return;
 	}
+
+	// CSQC_Input_Frame: дать модулю прочитать/изменить отправляемый usercmd
+	// (input_* глобалы). Только живой (не MVD) путь и только текущий кадр;
+	// два бэкап-кадра ниже не трогаем.
+	CSQC_Client_InputFrame(cmd);
 
 	SZ_Init(&buf, data, sizeof(data));
 

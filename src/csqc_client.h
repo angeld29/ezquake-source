@@ -10,6 +10,8 @@ csqc_client.h -- клиентская обвязка PR1VM (наш csprogs.dat),
 #ifndef CSQC_CLIENT_H
 #define CSQC_CLIENT_H
 
+struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); без зависимостей в шапке
+
 // Доступ к клиентскому состоянию/выводу (реализация в csqc_client.c):
 float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы
 void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 32..127 (CL_SetStat)
@@ -22,6 +24,11 @@ int CSQC_Client_Active (void);			// модуль загружен и не в о�
 void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: load + CSQC_Init
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + выгрузка + снятие команд
 void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once + UpdateView
+
+// CSQC_Input_Frame: перед отправкой каждого usercmd (CL_SendCmd, cl_input.c).
+// Движок заполняет input_* глобалы из cmd, исполняет модуль и пишет обратно
+// изменения (см. csqc_client.c; механика FTE pr_csqc.c:9418).
+void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
 // как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом

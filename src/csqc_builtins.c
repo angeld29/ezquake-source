@@ -70,6 +70,19 @@ static void csqc_registercommand (void)
 }
 
 /*
+float(string varname) cvar = #45
+
+Возвращает значение cvar движка по имени (нет такого cvar — 0). Нужно модулю
+для диагностических переключателей (напр. csqc_inputdebug) и конфига.
+*/
+static void csqc_cvar (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	vm->globals[OFS_RETURN] = (vm && name && name[0]) ? Cvar_Value (name) : 0;
+}
+
+/*
 float(string s) tokenize = #441
 */
 static void csqc_tokenize (void)
@@ -548,6 +561,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
+	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
