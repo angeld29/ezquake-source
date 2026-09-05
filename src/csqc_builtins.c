@@ -881,6 +881,19 @@ frags/ping/userid/spectator — форматированием; name/team/topcol
 Пустой слот / вне [0, MAX_CLIENTS) -> "" (пустая строка). Отклонение: pnum<0
 (scoreboard-индекс fragsort) не поддержан -> "" (roadmap A6).
 */
+/*
+void(float sens) setsensitivityscaler = #346
+Временный множитель чувствительности мыши (зум-аналог FTE PF_cs_setsensitivityscaler,
+in_sensitivityscale). Значение применяет in_sdl2.c к sensitivity в игровом ветвлении.
+*/
+static void csqc_setsensitivityscaler (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_SetSensitivityScale (vm->globals[OFS_PARM0]);
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -981,6 +994,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 344, (builtin_t)csqc_getmousepos);
 	// #348 getplayerkeyvalue (A6).
 	PR1VM_RegisterBuiltin (vm, 348, (builtin_t)csqc_getplayerkeyvalue);
+	// C1.1 — #346 setsensitivityscaler.
+	PR1VM_RegisterBuiltin (vm, 346, (builtin_t)csqc_setsensitivityscaler);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);

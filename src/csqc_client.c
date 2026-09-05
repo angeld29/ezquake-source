@@ -65,6 +65,10 @@ static qbool csqc_inputdebug_registered;
 // модулем через cvar #45). Регистрируется так же.
 static cvar_t csqc_d2d = {"csqc_d2d", "0", 0};
 
+// C1.1 — #346 setsensitivityscaler: временный множитель чувствительности мыши
+// (зум-аналог FTE in_sensitivityscale). Хранит модуль; применяет in_sdl2.c.
+static float s_sens_scale = 1;
+
 // Слой D шаг 3 — #343 setcursormode (A3.1): состояние курсора модуля. Пока
 // usecursor=1 и модуль активен в игре (CSQC_Client_CSQCCursor), мышь свободна
 // (vid_sdl2 не отдаёт её OS-курсору), а SCR_DrawCursor рисует курсор модуля.
@@ -270,6 +274,20 @@ void CSQC_Client_GetCursorPos (float *x, float *y)
 		*x = (float)cursor_x;
 	if (y)
 		*y = (float)cursor_y;
+}
+
+void CSQC_Client_SetSensitivityScale (float scale)
+{
+	// C1.1 #346: множитель чувствительности (может быть 0); дефолт 1.
+	s_sens_scale = scale;
+}
+
+float CSQC_Client_SensitivityScale (void)
+{
+	// Неактивный модуль — без влияния (default 1).
+	if (!s_csqc.loaded || s_csqc.errored)
+		return 1;
+	return s_sens_scale;
 }
 
 void CSQC_Client_DrawCursor (void)
@@ -1055,6 +1073,8 @@ void CSQC_Client_Disconnect (void)
 	s_cursormode.usecursor = false;
 	s_cursormode.cursorimage[0] = 0;
 	s_cursormode.scale = 0;
+	// C1.1 #346: чувствительность в дефолт.
+	s_sens_scale = 1;
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =

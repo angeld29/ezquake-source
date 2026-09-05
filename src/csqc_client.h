@@ -50,6 +50,8 @@ void CSQC_Client_SetCursorMode (qbool usecursor, const char *image,
 qbool CSQC_Client_CSQCCursor (void);		// usecursor=1 && модуль загружен && в игре
 void CSQC_Client_DrawCursor (void);			// отрисовка курсора модуля (SCR_DrawCursor)
 void CSQC_Client_GetCursorPos (float *x, float *y);	// позиция указателя (#344, A3.2)
+void CSQC_Client_SetSensitivityScale (float scale);	// #346 setsensitivityscaler (C1.1)
+float CSQC_Client_SensitivityScale (void);	// множитель чувствительности (неактивен → 1)
 
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
 // как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом

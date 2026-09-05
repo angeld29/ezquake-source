@@ -23,6 +23,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "cvar.h"
 #include "quakedef.h"
 #include "input.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"	// CSQC_Client_SensitivityScale (C1.1 #346)
+#endif
 #include "keys.h"
 #include "movie.h"
 
@@ -103,7 +106,9 @@ void IN_MouseMove (usercmd_t *cmd)
 		old_mouse_y = my;
 
 		if (m_accel.value > 0.0f) {
-			float accelsens = sensitivity.value;
+			// C1.1 #346: CSQC-модуль может временно масштабировать чувствительность
+			// (sensitivity * scale; неактивен — scale=1, как FTE in_sensitivityscale).
+			float accelsens = sensitivity.value * CSQC_Client_SensitivityScale ();
 			float mousespeed = (sqrt (mx * mx + my * my)) / (1000.0f * (float) cls.trueframetime);
 
 			mousespeed -= m_accel_offset.value;
@@ -122,8 +127,9 @@ void IN_MouseMove (usercmd_t *cmd)
 			mouse_x *= accelsens;
 			mouse_y *= accelsens;
 		} else {
-			mouse_x *= sensitivity.value;
-			mouse_y *= sensitivity.value;
+			float sens = sensitivity.value * CSQC_Client_SensitivityScale ();
+			mouse_x *= sens;
+			mouse_y *= sens;
 		}
 
 		// add mouse X/Y movement to cmd
