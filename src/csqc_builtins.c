@@ -767,7 +767,8 @@ FTE (pr_clcmd.c PF_cl_setcursormode): освобождает/хватает мы
 ezquake (A3.1): полная реализация — пока usecursor=1 и модуль активен в игре, мышь
 не отдаётся OS-курсору и SCR_DrawCursor рисует курсор модуля (image/hotspot/scale);
 при 0 мышь возвращается движку. Клики/InputEvent-канал модуля — C1.
-ABI i*3: usecursor w0, cursorimage w3, hotspot w6..8, scale w9.
+ABI/scale — как FTE: hotspot — вектор (w6..8), масштаб читается из hotspot.z (w8),
+отдельный float-арг (w9) игнорируется; scale <= 0 -> нативный размер курсора.
 */
 static void csqc_setcursormode (void)
 {
@@ -780,7 +781,7 @@ static void csqc_setcursormode (void)
 		vm->argc > 1 ? PR1VM_GetString (vm, *(int *)&g[OFS_PARM1]) : NULL,
 		vm->argc > 2 ? g[OFS_PARM2]     : 0,
 		vm->argc > 2 ? g[OFS_PARM2 + 1] : 0,
-		vm->argc > 3 ? g[OFS_PARM0 + 9] : 0);
+		vm->argc > 2 ? g[OFS_PARM2 + 2] : 0);
 }
 
 /*
