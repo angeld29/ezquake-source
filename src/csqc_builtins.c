@@ -14,6 +14,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
+#include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -1360,6 +1361,28 @@ static void csqc_te_lavasplash (void)
 		R_BlobExplosion (&vm->globals[OFS_PARM0]);
 }
 
+/*
+C3.3b — beams #428-431 (te_lightning1/2/3, te_beam): CL_CreateBeam(type, ent, start, end)
+(cl_tent.c:439). own-entity -> entnum (handle/edict_size, guard). Аппроксимация.
+*/
+static void csqc_te_beam_type (int type)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	int entnum;
+	if (!vm)
+		return;
+	g = vm->globals;
+	entnum = (int)g[OFS_PARM0];
+	if (vm->edict_size > 0)
+		entnum /= vm->edict_size;
+	CL_CreateBeam (type, entnum, &g[OFS_PARM0 + 3], &g[OFS_PARM0 + 6]);
+}
+static void csqc_te_lightning1 (void) { csqc_te_beam_type (1); }
+static void csqc_te_lightning2 (void) { csqc_te_beam_type (2); }
+static void csqc_te_lightning3 (void) { csqc_te_beam_type (3); }
+static void csqc_te_beam (void) { csqc_te_beam_type (4); }
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1509,6 +1532,11 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 424, (builtin_t)csqc_te_knightspike);
 	PR1VM_RegisterBuiltin (vm, 425, (builtin_t)csqc_te_lavasplash);
 	PR1VM_RegisterBuiltin (vm, 427, (builtin_t)csqc_te_explosion2);
+	// C3.3b — beams #428-431.
+	PR1VM_RegisterBuiltin (vm, 428, (builtin_t)csqc_te_lightning1);
+	PR1VM_RegisterBuiltin (vm, 429, (builtin_t)csqc_te_lightning2);
+	PR1VM_RegisterBuiltin (vm, 430, (builtin_t)csqc_te_lightning3);
+	PR1VM_RegisterBuiltin (vm, 431, (builtin_t)csqc_te_beam);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
