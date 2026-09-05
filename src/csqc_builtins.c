@@ -783,6 +783,25 @@ static void csqc_setcursormode (void)
 		vm->argc > 3 ? g[OFS_PARM0 + 9] : 0);
 }
 
+/*
+vector() getmousepos = #344
+Позиция CSQC-курсора в координатах 2D-оверлея ezquake (см. GetCursorPos); z = 0.
+FTE (pr_menu.c PF_cl_getmousepos): при абсолютном курсоре — позиция, иначе дельты
+со сбросом. Отклонение (roadmap A3.2): всегда позиция (модуль в абсолютном режиме;
+дельты/InputEvent-канал — C1).
+*/
+static void csqc_getmousepos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float x = 0, y = 0;
+	if (!vm)
+		return;
+	CSQC_Client_GetCursorPos (&x, &y);
+	vm->globals[OFS_RETURN] = x;
+	vm->globals[OFS_RETURN + 1] = y;
+	vm->globals[OFS_RETURN + 2] = 0;
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
@@ -797,6 +816,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 354, (builtin_t)csqc_serverkey);
 	// #343 setcursormode (A3.1: полная — курсор модуля в CSQC-оверлее).
 	PR1VM_RegisterBuiltin (vm, 343, (builtin_t)csqc_setcursormode);
+	// #344 getmousepos (A3.2: read-путь позиции CSQC-курсора).
+	PR1VM_RegisterBuiltin (vm, 344, (builtin_t)csqc_getmousepos);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
