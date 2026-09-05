@@ -33,6 +33,7 @@ void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 // C1.3 #345: локальная история отправленных usercmd (QW без ack движения).
 void CSQC_Client_RecordInput (struct usercmd_s *cmd);	// запись из CL_SendCmd
 int CSQC_Client_ApplyInput (unsigned int seq);			// заполнить input_* по seq; 0/1
+void CSQC_Client_RunPlayerPhysics (int entnum);			// #347 runstandardplayerphysics (C1.4)
 
 // Слой D, шаг 1 — 2D-графика (draw.h/r_draw*; координаты — сырые пиксели видео,
 // как DrawText). Помощники для csqc_builtins.c (см. docs/ezquake_csqc_client_layerd_2d_plan.md).

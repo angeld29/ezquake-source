@@ -910,6 +910,23 @@ static void csqc_getinputstate (void)
 	vm->globals[OFS_RETURN] = CSQC_Client_ApplyInput (seq);
 }
 
+/*
+void(entity ent) runstandardplayerphysics = #347
+Гоняет клиентскую стандартную физику игрока на сущности из её полей + последнего
+usercmd (C1.4, минимум-паритет по cl_pred-пути). Полная предикция — C5.
+*/
+static void csqc_runstandardplayerphysics (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int entnum;
+	if (!vm)
+		return;
+	entnum = (int)vm->globals[OFS_PARM0];
+	if (vm->edict_size > 0)
+		entnum /= vm->edict_size;
+	CSQC_Client_RunPlayerPhysics (entnum);
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1014,6 +1031,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 346, (builtin_t)csqc_setsensitivityscaler);
 	// C1.3 — #345 getinputstate.
 	PR1VM_RegisterBuiltin (vm, 345, (builtin_t)csqc_getinputstate);
+	// C1.4 — #347 runstandardplayerphysics.
+	PR1VM_RegisterBuiltin (vm, 347, (builtin_t)csqc_runstandardplayerphysics);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
