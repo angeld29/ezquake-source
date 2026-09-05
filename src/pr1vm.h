@@ -20,6 +20,16 @@ xstatement) живёт в pr1vm_t. «Модульные» глобалы (progs/
 #define PR1VM_MAX_STACK	32
 #define PR1VM_LOCALSTACK	2048
 
+// Кольцо per-instance temp-строк клиентского инстанса (число слотов и размер —
+// как серверные MAX_PR_STRINGS/MAX_PR_STRING_SIZE в pr_cmds.c). Результаты
+// строковых builtins deep-копируются в слоты кольца (PR1VM_SetString), поэтому
+// у каждого вызова свой буфер: нет алиасинга/самопересечения (ср. FTE
+// PR_AllocTempString). Строка живёт, пока её слот не перезаписан следующими
+// вызовами; кросс-кадровые текстовые глобалы QC не гарантированы (позже:
+// FTE-механизм — пул temp + GC, см. PR1VM_SetString).
+#define PR1VM_TEMP_STRINGS		64
+#define PR1VM_TEMP_STRING_SIZE	2048
+
 typedef struct pr1vm_s pr1vm_t;
 
 typedef struct
@@ -70,6 +80,11 @@ struct pr1vm_s
 	char			*strtbl[MAX_PRSTR];
 	char			*newstrtbl[MAX_PRSTR];
 	int				numstr;
+
+	// Кольцо temp-строк (см. PR1VM_TEMP_* выше): deep-copy буферы для
+	// результатов строковых builtins клиентского инстанса + индекс записи.
+	char			tmpstr[PR1VM_TEMP_STRINGS][PR1VM_TEMP_STRING_SIZE];
+	int				tmpstr_cur;
 
 	// Host-интерфейс (S4): колбэки получают готовую строку.
 	void (*host_error)(pr1vm_t *vm, const char *msg);

@@ -1340,24 +1340,38 @@ void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
 	if (!vm->strings)
 		return;
 
-	if (s - vm->strings < 0 || s - vm->strings > INT_MAX)
+	// Модульная строковая область [strings, strings+numstrings) постоянна
+	// (время жизни = загрузка модуля) — храним смещение как раньше.
+	if (s >= vm->strings && s < vm->strings + vm->progs->numstrings)
 	{
+		*address = (int)(s - vm->strings);
+		return;
+	}
+
+	// Временная строка: deep-copy в следующий слот кольца per-instance
+	// (PR1VM_TEMP_STRINGS слотов, см. pr1vm.h). Каждый вызов получает свой
+	// буфер — результат builtin не алиасится ни с источником, ни с прошлыми
+	// результатами (аналог FTE PR_AllocTempString, initlib.c:1398; без GC
+	// строка живёт, пока её слот не перезаписан следующими вызовами).
+	// Адреса слотов стабильны на время жизни инстанса → индекс в strtbl
+	// (записей <= PR1VM_TEMP_STRINGS, тихий отказ по MAX_PRSTR не достижим).
+	{
+		char *dst = vm->tmpstr[vm->tmpstr_cur];
+		vm->tmpstr_cur = (vm->tmpstr_cur + 1) % PR1VM_TEMP_STRINGS;
+		strlcpy (dst, s, PR1VM_TEMP_STRING_SIZE);
+
 		for (i = 0; i < vm->numstr; i++)
 		{
-			if (vm->strtbl[i] == s)
+			if (vm->strtbl[i] == dst)
 			{
 				*address = -i;
 				return;
 			}
 		}
 		if (vm->numstr + 1 >= MAX_PRSTR)
-			return;	// клиент: без фатала (S4; расширится с builtins в S5)
-		vm->strtbl[++vm->numstr] = s;
+			return;	// клиент: без фатала
+		vm->strtbl[++vm->numstr] = dst;
 		*address = -vm->numstr;
-	}
-	else
-	{
-		*address = (int)(s - vm->strings);
 	}
 }
 

@@ -102,7 +102,7 @@ string(string s1, optional string s2, ...) strcat = #115
 static void csqc_strcat (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	static char buf[2048];
+	char buf[2048];
 	int n, i, len = 0;
 
 	if (!vm)
@@ -254,7 +254,7 @@ string(string fmt, ...) sprintf = #627
 static void csqc_sprintf (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	static char buf[2048];
+	char buf[2048];
 	char tmp[512];
 	const char *fmt, *p;
 	int pn = 1;		// номер аргумента (после fmt); base = OFS_PARM0 + pn*3
