@@ -663,15 +663,6 @@ void CSQC_Client_ParseEntities (qbool sized)
 	pr1vm_t *vm = &s_csqc.vm;
 	unsigned int entnum;
 	qbool removeflag;
-	static int dbg_upd = 0, dbg_rem = 0, dbg_bad = 0;
-	static int dbg_early = 0;
-
-	// [DEBUG Bug 2] временный след ранних выходов (76 пришёл, а разбор нет).
-	if (dbg_early == 0 || dbg_early == 50 || dbg_early == 500)
-		Con_Printf ("CSQC: ParseEntities entered (loaded=%d inited=%d errored=%d "
-			"eu=%d er=%d read=%d)\n", s_csqc.loaded, s_csqc.inited,
-			s_csqc.errored, s_csqc.func_entupdate, s_csqc.func_entremove, msg_readcount);
-	dbg_early++;
 
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
 		return;
@@ -684,14 +675,7 @@ void CSQC_Client_ParseEntities (qbool sized)
 		removeflag = !!(entnum & 0x8000);
 		entnum &= ~0x8000u;
 		if ((!entnum && !removeflag) || msg_badread)
-		{
-			if (msg_badread && !dbg_bad)
-			{
-				dbg_bad = 1;
-				Con_Printf ("CSQC: csqcentities badread\n");
-			}
 			break;
-		}
 		if (entnum >= (unsigned int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
 			break;
 
@@ -699,11 +683,6 @@ void CSQC_Client_ParseEntities (qbool sized)
 		{
 			if (s_csqc.func_entremove > 0)
 			{
-				if (!dbg_rem)
-				{
-					dbg_rem = 1;
-					Con_Printf ("CSQC: first entity remove entnum=%u\n", entnum);
-				}
 				// P2/D3: контекст сущности (self/.entnum), без builtin-стрима.
 				CSQC_Client_SetEntityContext (vm, entnum);
 				CSQC_Client_Exec (s_csqc.func_entremove);
@@ -717,12 +696,6 @@ void CSQC_Client_ParseEntities (qbool sized)
 			int payload_start;
 			int payload_len = -1;
 
-			if (!dbg_upd)
-			{
-				dbg_upd = 1;
-				Con_Printf ("CSQC: first entity update entnum=%u isnew=%d\n",
-					entnum, s_csqc.seen[entnum] ? 0 : 1);
-			}
 			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
 			s_csqc.seen[entnum] = true;
 
@@ -747,12 +720,6 @@ void CSQC_Client_ParseEntities (qbool sized)
 			}
 		}
 	}
-
-	// [DEBUG Bug 2] временный след конца разбора (срабатывает, если цикл шёл,
-	// но обновлений/remove не было — пустой 76 или только терминатор).
-	if (dbg_early == 0 || dbg_early == 50 || dbg_early == 500)
-		Con_Printf ("CSQC: ParseEntities end (read=%d badread=%d)\n",
-			msg_readcount, msg_badread);
 }
 
 /*

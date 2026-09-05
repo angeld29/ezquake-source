@@ -3460,15 +3460,6 @@ void CL_SetStat (int stat, int value)
 	if (stat >= MAX_CL_STATS)
 	{
 #ifndef CLIENTONLY
-		// [DEBUG Bug 2] след приёма ext-статов 32..127 (канал данными игрока:
-		// 35=current_weapon, 36=currentammo, 40=tick, 50/51/52=ps тест-статика).
-		if (stat == 35 || stat == 36 || stat == 40 || (stat >= 50 && stat <= 54))
-		{
-			static int dbg_es = 0;
-			if (dbg_es < 60 || (dbg_es % 500) == 0)
-				Con_Printf ("CSQC: extstat %d = %d\n", stat, value);
-			dbg_es++;
-		}
 		CSQC_Client_SetStat (stat, value);
 #endif
 		return;
@@ -4126,12 +4117,6 @@ void CL_ParseServerMessage (void)
 			case svc_fte_csqcentities:
 				{
 					// CSQC-сущности (76): модуль читает payload через read*.
-					// [DEBUG Bug 2] временный след сырого прихода 76.
-					static int dbg_svc76 = 0;
-					if (dbg_svc76 == 0 || dbg_svc76 == 200 || dbg_svc76 == 2000)
-						Con_Printf ("CSQC: svc 76 raw received (count=%d read=%d)\n",
-							dbg_svc76, msg_readcount);
-					dbg_svc76++;
 					CSQC_Client_ParseEntities (false);
 					break;
 				}
