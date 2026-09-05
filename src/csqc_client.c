@@ -36,6 +36,14 @@ typedef struct csqc_client_state_s
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			global_time;	// смещение глобала time (или -1)
+	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
+	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
+	// появления валидного файла (см. CSQC_Client_Update).
+	qbool		csprogs_dl_pending;
+	double		csprogs_dl_start;
+	unsigned	csprogs_crc;	// *csprogs (md4 Com_BlockChecksum) / 0 если нет
+	int			csprogs_size;	// *csprogssize
+	char		csprogs_dl_path[MAX_QPATH];	// локальный файл после скачивания
 	int			numcmds;
 	char		cmds[16][64];
 } csqc_client_state_t;
@@ -230,25 +238,92 @@ int CSQC_Client_Active (void)
 
 /*
 =================
-CSQC_Client_Load
+CSQC_Client_ValidateFile
 
-Пытается загрузить csprogs.dat (локальный файл из gamedir; download — вне
-скоупа мини-каркаса) в клиентский инстанс и вызвать CSQC_Init. Возвращает
-true при успехе. При неудаче печатает причину и допускает повторную попытку
-(файл может появиться позже: download / путь к gamedir ещё не в FS).
+Проверяет локальный файл csprogs по серверным ключам: размер == *csprogssize
+и (если задан *csprogs) Com_BlockChecksum == crc (тот же md4, что у mvdsv
+Com_BlockChecksum, md4.c). Аналог FTE CSQC_ValidateMainCSProgs (pr_csqc.c).
 =================
 */
-static qbool CSQC_Client_Load (void)
+static qbool CSQC_Client_ValidateFile (const char *path, int size, unsigned crc)
+{
+	byte *data;
+	int filesize;
+
+	if (!path || !path[0])
+		return false;
+	data = (byte *)FS_LoadHunkFile ((char *)path, &filesize);
+	if (!data)
+		return false;
+	if (size > 0 && filesize != size)
+		return false;
+	if (crc && Com_BlockChecksum (data, filesize) != crc)
+		return false;
+	return true;
+}
+
+/*
+=================
+CSQC_Client_StartDownload
+
+Запрашивает у сервера скачивание csprogs. Сервер отдаёт файл под *csprogsname
+(mvdsv SV_LoadCSQC), но мы сохраняем его в отдельную папку-кэш
+csprogsvers/<crc>.dat (как ftew, cl_parse.c:1640-1641), чтобы разные серверы не
+перезатирали друг друга. ezquake CL_CheckOrDownloadFile не умеет разделять
+remote/local имя — повторяем его стартовые шаги с другим локальным путём.
+=================
+*/
+static void CSQC_Client_StartDownload (const char *remote, const char *localrel)
+{
+	extern void Sys_mkdir (const char *path);
+	char dir[MAX_OSPATH];
+	char *slash;
+
+	if (cls.state < ca_connected || cls.demoplayback)
+		return;
+
+	snprintf (cls.downloadname, sizeof (cls.downloadname), "%s/%s", cls.gamedir, localrel);
+	cls.downloadmethod = DL_QW;
+	cls.downloadstarttime = Sys_DoubleTime ();
+	COM_StripExtension (cls.downloadname, cls.downloadtempname, sizeof (cls.downloadtempname));
+	strlcat (cls.downloadtempname, ".tmp", sizeof (cls.downloadtempname));
+
+	// каталог назначения (напр. csprogsvers/) должен существовать
+	strlcpy (dir, cls.downloadname, sizeof (dir));
+	slash = strrchr (dir, '/');
+	if (slash && slash != dir)
+	{
+		*slash = 0;
+		Sys_mkdir (dir);
+	}
+
+	Com_Printf ("CSQC: downloading %s -> %s\n", remote, localrel);
+	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+	MSG_WriteString (&cls.netchan.message, va ("download \"%s\"", remote));
+	cls.downloadnumber++;
+	s_csqc.csprogs_dl_start = Sys_DoubleTime ();
+}
+
+/*
+=================
+CSQC_Client_Load
+
+Загружает csprogs (path из gamedir; локальный файл или только что скачанный
+csprogsvers/<crc>.dat) в клиентский инстанс и вызывает CSQC_Init. Возвращает
+true при успехе. При неудаче печатает причину.
+=================
+*/
+static qbool CSQC_Client_Load (const char *path)
 {
 	byte *data;
 	int filesize;
 	pr1vm_t *vm;
 	dfunction_t *f;
 
-	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
+	data = (byte *)FS_LoadHunkFile ((char *)path, &filesize);
 	if (!data)
 	{
-		Con_Printf ("CSQC: server offers csprogs but csprogs.dat not found locally\n");
+		Con_Printf ("CSQC: server offers csprogs but %s not found locally\n", path);
 		return false;
 	}
 
@@ -264,7 +339,7 @@ static qbool CSQC_Client_Load (void)
 
 	if (!PR1VM_LoadClientV7 (vm, data, filesize))
 	{
-		Con_Printf ("CSQC: csprogs.dat load failed (v7)\n");
+		Con_Printf ("CSQC: %s load failed (v7)\n", path);
 		return false;
 	}
 
@@ -299,9 +374,9 @@ static qbool CSQC_Client_Load (void)
 
 	s_csqc.loaded = true;
 
-	Con_Printf ("CSQC: loaded csprogs.dat (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
+	Con_Printf ("CSQC: loaded %s (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
 		"c=%d s=%d eu=%d er=%d pe=%d time=%d\n",
-		vm->progs->numstatements, (unsigned int)vm->progs->crc, s_csqc.func_init,
+		path, vm->progs->numstatements, (unsigned int)vm->progs->crc, s_csqc.func_init,
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.global_time);
@@ -331,7 +406,10 @@ CSQC_Client_ConnectCheck
 void CSQC_Client_ConnectCheck (void)
 {
 	extern cvar_t cl_pext_csqc;
+	const char *name, *crcs;
+	unsigned crc;
 	int sizep;
+	char path[MAX_QPATH];
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
 	// модуль не грузится, клиент ведёт себя как раньше.
@@ -342,24 +420,57 @@ void CSQC_Client_ConnectCheck (void)
 	if (sizep <= 0)
 		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
 
+	crcs = Info_ValueForKey (cl.serverinfo, "*csprogs");
+	crc = (unsigned)strtoul (crcs, NULL, 0);
+	name = Info_ValueForKey (cl.serverinfo, "*csprogsname");
+	if (!name || !name[0])
+		name = "csprogs.dat";
+
 	// Модуль загружается «с нуля» на КАЖДЫЙ вход в мир (первый коннект и каждая
 	// смена карты): выгрузка происходит при выходе из мира (CL_ClearState, до
-	// Host_ClearMemory), здесь — загрузка свежего csprogs.dat. Защитный unload
-	// на случай путей без CL_ClearState (двойной вызов безопасен — no-op).
+	// Host_ClearMemory), здесь — загрузка свежего csprogs. Защитный unload на
+	// случай путей без CL_ClearState (двойной вызов безопасен — no-op).
 	if (s_csqc.loaded)
 		CSQC_Client_Disconnect ();
 
-	if (!CSQC_Client_Load ())
-		return;
-	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
-		return;
+	// Локальные кандидаты (валидация размер+crc как FTE CSQC_FindMainProgs):
+	// 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname (csprogs.dat).
+	path[0] = 0;
+	if (crc)
+	{
+		snprintf (path, sizeof (path), "csprogsvers/%x.dat", crc);
+		if (!CSQC_Client_ValidateFile (path, sizep, crc))
+			path[0] = 0;
+	}
+	if (!path[0] && CSQC_Client_ValidateFile (name, sizep, crc))
+		snprintf (path, sizeof (path), "%s", name);
 
-	// Вход в новую карту: per-карта состояние чистое (WorldLoaded/enablecsqc
-	// будут этой карты; модуль уже новый).
-	memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
-	s_csqc.remove_pending = false;
-	s_csqc.world_done = false;
-	s_csqc.enable_sent = false;
+	if (path[0])
+	{
+		if (!CSQC_Client_Load (path))
+			return;
+		if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+			return;
+		// Вход в новую карту: per-карта состояние чистое (WorldLoaded/enablecsqc
+		// будут этой карты; модуль уже новый).
+		memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
+		s_csqc.remove_pending = false;
+		s_csqc.world_done = false;
+		s_csqc.enable_sent = false;
+		return;
+	}
+
+	// Валидного локального нет — качаем с сервера: сервер отдаёт *csprogsname,
+	// сохраняем в отдельную папку csprogsvers/<crc>.dat (не перезатираем чужие).
+	// Загрузка модуля произойдёт в CSQC_Client_Update, когда файл появится.
+	s_csqc.csprogs_crc = crc;
+	s_csqc.csprogs_size = sizep;
+	if (crc)
+		snprintf (s_csqc.csprogs_dl_path, sizeof (s_csqc.csprogs_dl_path), "csprogsvers/%x.dat", crc);
+	else
+		snprintf (s_csqc.csprogs_dl_path, sizeof (s_csqc.csprogs_dl_path), "%s", name);
+	CSQC_Client_StartDownload (name, s_csqc.csprogs_dl_path);
+	s_csqc.csprogs_dl_pending = true;
 }
 
 /*
@@ -368,15 +479,50 @@ CSQC_Client_Update
 
 Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
 после входа в мир; далее CSQC_UpdateView(vid.width, vid.height, menushown).
+Если модуль ждёт скачивания csprogs — при появлении валидного файла грузит
+его и продолжает как при входе в мир.
 =================
 */
 void CSQC_Client_Update (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 
-	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
-		return;
 	if (cls.state != ca_active)
+		return;
+
+	// Ожидание скачанного csprogs (валидный файл появился -> грузим).
+	if (s_csqc.csprogs_dl_pending)
+	{
+		char path[MAX_QPATH];
+
+		if (CSQC_Client_ValidateFile (s_csqc.csprogs_dl_path,
+			s_csqc.csprogs_size, s_csqc.csprogs_crc))
+		{
+			strlcpy (path, s_csqc.csprogs_dl_path, sizeof (path));
+			s_csqc.csprogs_dl_pending = false;
+			if (!CSQC_Client_Load (path))
+				return;
+			if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+				return;
+			// как при входе в мир: per-карта состояние чистое
+			memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
+			s_csqc.remove_pending = false;
+			s_csqc.world_done = false;
+			s_csqc.enable_sent = false;
+		}
+		else
+		{
+			// файла всё ещё нет: если скачивание не идёт и прошло >20 c — сдаёмся
+			if (Sys_DoubleTime () - s_csqc.csprogs_dl_start > 20)
+			{
+				s_csqc.csprogs_dl_pending = false;
+				Con_Printf ("CSQC: csprogs download failed/timed out\n");
+			}
+			return;
+		}
+	}
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
 		return;
 
 	if (!s_csqc.world_done)
