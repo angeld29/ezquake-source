@@ -13,6 +13,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "qwsvdef.h"
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
+#include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -1062,6 +1063,59 @@ static void csqc_bufstr_free (void)
 		CSQC_Client_BufFree (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1));
 }
 
+/*
+C3.1.
+void(string soundname, optional float channel, optional float volume) localsound = #177
+FTE PF_cl_localsound (pr_clcmd.c:1059) = S_LocalSound2(name, chan, vol): local-звук.
+ezquake: S_LocalSoundWithVol (snd_main.c:1085, precache по имени, канал local −1).
+Отклонение: channel игнорируется; vol 0..1 (default 1).
+*/
+static void csqc_localsound (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	char *name;
+	float vol;
+	if (!vm)
+		return;
+	g = vm->globals;
+	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0]);
+	vol = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 1;
+	if (name && name[0])
+		S_LocalSoundWithVol (name, vol);
+}
+
+/*
+float(vector org, float radius, vector lightcolours, optional float style, ...)
+dynamiclight_add = #305
+ezquake: CL_AllocDlight + поля (lt_custom, color=lightcolours*255, radius, 0.1s).
+style/cubemap/pflags — нет аналога (вне скоупа, документировано). Возврат — индекс слота.
+*/
+static void csqc_dynamiclight_add (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	dlight_t *dl;
+	if (!vm)
+		return;
+	g = vm->globals;
+	dl = CL_AllocDlight (0);
+	if (!dl)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	VectorCopy (&g[OFS_PARM0], dl->origin);
+	dl->radius = g[OFS_PARM0 + 3];
+	dl->die = cl.time + 0.1f;
+	dl->type = lt_custom;
+	dl->bubble = 0;
+	dl->color[0] = (byte)bound (0, g[OFS_PARM0 + 6] * 255.0f, 255);
+	dl->color[1] = (byte)bound (0, g[OFS_PARM0 + 7] * 255.0f, 255);
+	dl->color[2] = (byte)bound (0, g[OFS_PARM0 + 8] * 255.0f, 255);
+	vm->globals[OFS_RETURN] = (float)(int)(dl - cl_dlights) + 1;
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1181,6 +1235,9 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 467, (builtin_t)csqc_bufstr_set);
 	PR1VM_RegisterBuiltin (vm, 468, (builtin_t)csqc_bufstr_add);
 	PR1VM_RegisterBuiltin (vm, 469, (builtin_t)csqc_bufstr_free);
+	// C3.1 — #177 localsound, #305 dynamiclight_add.
+	PR1VM_RegisterBuiltin (vm, 177, (builtin_t)csqc_localsound);
+	PR1VM_RegisterBuiltin (vm, 305, (builtin_t)csqc_dynamiclight_add);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
