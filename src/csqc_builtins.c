@@ -468,6 +468,17 @@ static void csqc_readbyte (void)
 		vm->globals[OFS_RETURN] = MSG_ReadByte ();
 }
 
+/*
+float() readchar = #361
+(S2) Байт со знаком из текущего сетевого сообщения.
+*/
+static void csqc_readchar (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadChar ();
+}
+
 static void csqc_readshort (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -494,6 +505,17 @@ static void csqc_readcoord (void)
 		vm->globals[OFS_RETURN] = MSG_ReadCoord ();
 }
 
+/*
+float() readangle = #365
+(S2) Угол из текущего сетевого сообщения.
+*/
+static void csqc_readangle (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadAngle ();
+}
+
 static void csqc_readstring (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -502,6 +524,17 @@ static void csqc_readstring (void)
 		return;
 	s = MSG_ReadString ();
 	PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
+}
+
+/*
+float() readfloat = #367
+(S2) Полный float из текущего сетевого сообщения.
+*/
+static void csqc_readfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadFloat ();
 }
 
 static void csqc_readentitynum (void)
@@ -538,14 +571,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);
 	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf);
 
-	// S1 read*-минимум (полный набор — S2).
+	// S1 read*-минимум (полный набор #360–368 — S2).
 	PR1VM_RegisterBuiltin (vm, 360, (builtin_t)csqc_readbyte);
+	PR1VM_RegisterBuiltin (vm, 361, (builtin_t)csqc_readchar);
 	PR1VM_RegisterBuiltin (vm, 362, (builtin_t)csqc_readshort);
 	PR1VM_RegisterBuiltin (vm, 363, (builtin_t)csqc_readlong);
-	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
-	// E1/S2: readcoord/readstring (cgamepacket-echo, типизированный payload).
 	PR1VM_RegisterBuiltin (vm, 364, (builtin_t)csqc_readcoord);
+	PR1VM_RegisterBuiltin (vm, 365, (builtin_t)csqc_readangle);
 	PR1VM_RegisterBuiltin (vm, 366, (builtin_t)csqc_readstring);
+	PR1VM_RegisterBuiltin (vm, 367, (builtin_t)csqc_readfloat);
+	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
 }
 
 #endif // !CLIENTONLY
