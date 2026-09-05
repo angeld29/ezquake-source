@@ -1208,6 +1208,158 @@ static void csqc_pointparticles (void)
 	R_RunParticleEffect (&g[OFS_PARM0 + 3], dir, e->color, bound (1, count, 4096));
 }
 
+/*
+C3.3a — te_* аппроксимируемая группа (частицы/взрывы/spikes #405-427, кроме #426).
+Аппроксимация: R_RunParticleEffect/R_ParticleExplosion/R_BlobExplosion/CL_ExplosionSprite
+(палитровые цвета, bbox/направления приближённо). Не-мапящиеся (#426 и др.) не регистрируются.
+*/
+static unsigned int s_te_rnd = 1;
+static float csqc_te_rand01 (void)
+{
+	s_te_rnd = s_te_rnd * 1103515245u + 12345u;
+	return (float)((s_te_rnd >> 8) & 0xffff) / 65535.0f;
+}
+
+static void csqc_te_bbox_effect (float *mn, float *mx, float *vel, int how, int color)
+{
+	int i;
+	for (i = 0; i < how && i < 512; i++)
+	{
+		vec3_t p;
+		p[0] = mn[0] + (mx[0] - mn[0]) * csqc_te_rand01 ();
+		p[1] = mn[1] + (mx[1] - mn[1]) * csqc_te_rand01 ();
+		p[2] = mn[2] + (mx[2] - mn[2]) * csqc_te_rand01 ();
+		R_RunParticleEffect (p, vel, color, 1);
+	}
+}
+
+// #405 te_blood
+static void csqc_te_blood (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	R_RunParticleEffect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], 73,
+		bound (1, (int)g[OFS_PARM0 + 6], 4096));
+}
+// #406 te_bloodshower
+static void csqc_te_bloodshower (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	vec3_t vel = { 0, 0, -100 };
+	if (!vm)
+		return;
+	g = vm->globals;
+	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], vel,
+		bound (1, (int)g[OFS_PARM0 + 7], 4096), 73);
+}
+// #407 te_explosionrgb
+static void csqc_te_explosionrgb (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		R_ParticleExplosion (&vm->globals[OFS_PARM0]);
+}
+// #408 te_particlecube
+static void csqc_te_particlecube (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], &g[OFS_PARM0 + 6],
+		bound (1, (int)g[OFS_PARM0 + 9], 4096), (int)g[OFS_PARM0 + 12]);
+}
+// #409/#410 rain/snow
+static void csqc_te_rain (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], &g[OFS_PARM0 + 6],
+		bound (1, (int)g[OFS_PARM0 + 9], 4096), (int)g[OFS_PARM0 + 12]);
+}
+// #411 te_spark
+static void csqc_te_spark (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	R_RunParticleEffect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], 0,
+		bound (1, (int)g[OFS_PARM0 + 6], 4096));
+}
+// #412-415 quad-эффекты (org в w0) — белые частицы
+static void csqc_te_quad (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	R_RunParticleEffect (&vm->globals[OFS_PARM0], vec3_origin, 255, 12);
+}
+// #416/#417 flash
+static void csqc_te_smallflash (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CL_ExplosionSprite (&vm->globals[OFS_PARM0]);
+}
+static void csqc_te_customflash (void)
+{
+	csqc_te_smallflash ();
+}
+// #418 te_gunshot
+static void csqc_te_gunshot (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	int count;
+	if (!vm)
+		return;
+	g = vm->globals;
+	count = (vm->argc > 1) ? (int)g[OFS_PARM0 + 3] : 20;
+	R_RunParticleEffect (&g[OFS_PARM0], vec3_origin, 0, bound (1, count, 4096));
+}
+// #419/420/423/424 spikes — цветные частицы
+static void csqc_te_spike_color (int color)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		R_RunParticleEffect (&vm->globals[OFS_PARM0], vec3_origin, color, 10);
+}
+static void csqc_te_spike (void) { csqc_te_spike_color (255); }
+static void csqc_te_superspike (void) { csqc_te_spike_color (255); }
+static void csqc_te_wizspike (void) { csqc_te_spike_color (0); }
+static void csqc_te_knightspike (void) { csqc_te_spike_color (0); }
+// #421/#427 explosion
+static void csqc_te_explosion (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		R_ParticleExplosion (&vm->globals[OFS_PARM0]);
+}
+static void csqc_te_explosion2 (void) { csqc_te_explosion (); }
+// #422 tarexplosion / #425 lavasplash
+static void csqc_te_tarexplosion (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CL_ExplosionSprite (&vm->globals[OFS_PARM0]);
+}
+static void csqc_te_lavasplash (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		R_BlobExplosion (&vm->globals[OFS_PARM0]);
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1334,6 +1486,29 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 335, (builtin_t)csqc_particleeffectnum);
 	PR1VM_RegisterBuiltin (vm, 336, (builtin_t)csqc_trailparticles);
 	PR1VM_RegisterBuiltin (vm, 337, (builtin_t)csqc_pointparticles);
+	// C3.3a — te_* аппроксимируемая группа (#405-427, кроме #426).
+	PR1VM_RegisterBuiltin (vm, 405, (builtin_t)csqc_te_blood);
+	PR1VM_RegisterBuiltin (vm, 406, (builtin_t)csqc_te_bloodshower);
+	PR1VM_RegisterBuiltin (vm, 407, (builtin_t)csqc_te_explosionrgb);
+	PR1VM_RegisterBuiltin (vm, 408, (builtin_t)csqc_te_particlecube);
+	PR1VM_RegisterBuiltin (vm, 409, (builtin_t)csqc_te_rain);
+	PR1VM_RegisterBuiltin (vm, 410, (builtin_t)csqc_te_rain);	// snow = rain-аппроксимация
+	PR1VM_RegisterBuiltin (vm, 411, (builtin_t)csqc_te_spark);
+	PR1VM_RegisterBuiltin (vm, 412, (builtin_t)csqc_te_quad);
+	PR1VM_RegisterBuiltin (vm, 413, (builtin_t)csqc_te_quad);
+	PR1VM_RegisterBuiltin (vm, 414, (builtin_t)csqc_te_quad);
+	PR1VM_RegisterBuiltin (vm, 415, (builtin_t)csqc_te_quad);
+	PR1VM_RegisterBuiltin (vm, 416, (builtin_t)csqc_te_smallflash);
+	PR1VM_RegisterBuiltin (vm, 417, (builtin_t)csqc_te_customflash);
+	PR1VM_RegisterBuiltin (vm, 418, (builtin_t)csqc_te_gunshot);
+	PR1VM_RegisterBuiltin (vm, 419, (builtin_t)csqc_te_spike);
+	PR1VM_RegisterBuiltin (vm, 420, (builtin_t)csqc_te_superspike);
+	PR1VM_RegisterBuiltin (vm, 421, (builtin_t)csqc_te_explosion);
+	PR1VM_RegisterBuiltin (vm, 422, (builtin_t)csqc_te_tarexplosion);
+	PR1VM_RegisterBuiltin (vm, 423, (builtin_t)csqc_te_wizspike);
+	PR1VM_RegisterBuiltin (vm, 424, (builtin_t)csqc_te_knightspike);
+	PR1VM_RegisterBuiltin (vm, 425, (builtin_t)csqc_te_lavasplash);
+	PR1VM_RegisterBuiltin (vm, 427, (builtin_t)csqc_te_explosion2);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
