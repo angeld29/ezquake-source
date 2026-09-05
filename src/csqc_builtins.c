@@ -894,6 +894,22 @@ static void csqc_setsensitivityscaler (void)
 	CSQC_Client_SetSensitivityScale (vm->globals[OFS_PARM0]);
 }
 
+/*
+float(float inputsequencenum) getinputstate = #345
+Заполняет input_* глобалы из локальной истории отправленных usercmd (C1.3).
+Отличие от FTE: QW не эхает подтверждение движения — история локальная
+(последние CSQC_INHIST команд от CL_SendCmd); возврат 0, если seq вне истории.
+*/
+static void csqc_getinputstate (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	unsigned int seq;
+	if (!vm)
+		return;
+	seq = (unsigned int)vm->globals[OFS_PARM0];
+	vm->globals[OFS_RETURN] = CSQC_Client_ApplyInput (seq);
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -996,6 +1012,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 348, (builtin_t)csqc_getplayerkeyvalue);
 	// C1.1 — #346 setsensitivityscaler.
 	PR1VM_RegisterBuiltin (vm, 346, (builtin_t)csqc_setsensitivityscaler);
+	// C1.3 — #345 getinputstate.
+	PR1VM_RegisterBuiltin (vm, 345, (builtin_t)csqc_getinputstate);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);

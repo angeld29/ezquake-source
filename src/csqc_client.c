@@ -40,6 +40,7 @@ typedef struct csqc_client_state_s
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
 	// input_* глобалы для CSQC_Input_Frame (или -1, если модуль их не объявил).
 	int			in_timelength, in_angles, in_movevalues, in_buttons, in_impulse;
+	int			in_sequence;	// input_sequence (C1.3 #345) или -1
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -57,6 +58,13 @@ typedef struct csqc_client_state_s
 } csqc_client_state_t;
 
 static csqc_client_state_t s_csqc;
+
+// C1.3 #345: кольцевой буфер отправленных usercmd (запись из CL_SendCmd).
+// QW-протокол не эхает подтверждение движения — seq локальный (отличие от FTE).
+#define CSQC_INHIST	16
+typedef struct { unsigned int seq; usercmd_t cmd; } csqc_inrec_t;
+static csqc_inrec_t s_inhist[CSQC_INHIST];
+static unsigned int s_inlast_seq;
 
 // Диагностический переключатель модуля CSQC_Input_Frame (читается модулем через
 // builtin cvar #45). Регистрируется один раз в CSQC_Client_ConnectCheck.
@@ -637,6 +645,8 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.field_entnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
+	s_csqc.in_sequence = -1;
+	s_inlast_seq = 0;
 
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
@@ -696,6 +706,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.in_movevalues = PR1VM_FindGlobal (vm, "input_movevalues");
 	s_csqc.in_buttons = PR1VM_FindGlobal (vm, "input_buttons");
 	s_csqc.in_impulse = PR1VM_FindGlobal (vm, "input_impulse");
+	s_csqc.in_sequence = PR1VM_FindGlobal (vm, "input_sequence");
 
 	s_csqc.loaded = true;
 
@@ -1082,6 +1093,70 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 
 /*
 =================
+CSQC_Client_RecordInput / CSQC_Client_ApplyInput
+
+C1.3 #345: локальная история отправленных usercmd. CL_SendCmd записывает каждый
+отправленный cmd (CSQC_Client_RecordInput); builtin #345(seq) запрашивает его и
+заполняет input_* глобалы (CSQC_Client_ApplyInput). seq локальный — QW не эхает
+подтверждение движения (отличие от FTE).
+=================
+*/
+void CSQC_Client_RecordInput (usercmd_t *cmd)
+{
+	s_inlast_seq++;
+	s_inhist[s_inlast_seq % CSQC_INHIST].seq = s_inlast_seq;
+	s_inhist[s_inlast_seq % CSQC_INHIST].cmd = *cmd;
+	if (s_csqc.loaded && !s_csqc.errored && s_csqc.in_sequence >= 0)
+		s_csqc.vm.globals[s_csqc.in_sequence] = s_inlast_seq;
+}
+
+static void CSQC_Client_FillInputFromCmd (usercmd_t *cmd)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (s_csqc.in_timelength >= 0)
+		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f;
+	if (s_csqc.in_angles >= 0)
+	{
+		vm->globals[s_csqc.in_angles + 0] = cmd->angles[0];
+		vm->globals[s_csqc.in_angles + 1] = cmd->angles[1];
+		vm->globals[s_csqc.in_angles + 2] = cmd->angles[2];
+	}
+	if (s_csqc.in_movevalues >= 0)
+	{
+		vm->globals[s_csqc.in_movevalues + 0] = cmd->forwardmove;
+		vm->globals[s_csqc.in_movevalues + 1] = cmd->sidemove;
+		vm->globals[s_csqc.in_movevalues + 2] = cmd->upmove;
+	}
+	if (s_csqc.in_buttons >= 0)
+		vm->globals[s_csqc.in_buttons] = cmd->buttons;
+	if (s_csqc.in_impulse >= 0)
+		vm->globals[s_csqc.in_impulse] = cmd->impulse;
+}
+
+int CSQC_Client_ApplyInput (unsigned int seq)
+{
+	unsigned int i;
+	csqc_inrec_t *r;
+
+	if (!s_csqc.loaded || s_csqc.errored)
+		return 0;
+	for (i = 0; i < CSQC_INHIST; i++)
+	{
+		r = &s_inhist[i];
+		if (r->seq == seq && seq)
+		{
+			CSQC_Client_FillInputFromCmd (&r->cmd);
+			if (s_csqc.in_sequence >= 0)
+				s_csqc.vm.globals[s_csqc.in_sequence] = seq;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/*
+=================
 CSQC_Client_HasInputEvent / CSQC_Client_InputEvent
 
 C1.2: доставка событий ввода модулю (CSQC_InputEvent, csdefs.qc:159). Вызывается
@@ -1146,6 +1221,8 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.field_entnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
+	s_csqc.in_sequence = -1;
+	s_inlast_seq = 0;
 }
 
 #endif // !CLIENTONLY

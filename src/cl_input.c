@@ -1117,6 +1117,9 @@ void CL_SendCmd(void)
 	// (input_* глобалы). Только живой (не MVD) путь и только текущий кадр;
 	// два бэкап-кадра ниже не трогаем.
 	CSQC_Client_InputFrame(cmd);
+	// C1.3 #345: записать отправляемый cmd в историю модуля (после возможных
+	// изменений Input_Frame).
+	CSQC_Client_RecordInput(cmd);
 
 	SZ_Init(&buf, data, sizeof(data));
 
