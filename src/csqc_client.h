@@ -53,6 +53,21 @@ void CSQC_Client_GetCursorPos (float *x, float *y);	// позиция указа
 void CSQC_Client_SetSensitivityScale (float scale);	// #346 setsensitivityscaler (C1.1)
 float CSQC_Client_SensitivityScale (void);	// множитель чувствительности (неактивен → 1)
 
+// C1.2 — события ввода модулю (CSQC_InputEvent): клавиши/мышь/колесо.
+qbool CSQC_Client_HasInputEvent (void);		// модуль определил CSQC_InputEvent
+int CSQC_Client_InputEvent (int evtype, float a, float b, float c);	// возврат handled
+
+// Типы событий (паритет csdefs.qc IE_*, FTE CSIE_*).
+#ifndef IE_KEYDOWN
+#define IE_KEYDOWN	0
+#define IE_KEYUP	1
+#define IE_MOUSEDELTA	2
+#define IE_MOUSEABS	3
+#define IE_ACCELEROMETER 4
+#define IE_FOCUS		5
+#define IE_JOYAXIS		6
+#endif
+
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
 // как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом
 // клиентского сообщения (см. csqc_builtins.c csqc_sendevent).

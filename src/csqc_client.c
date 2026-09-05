@@ -34,6 +34,7 @@ typedef struct csqc_client_state_s
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			func_input;		// CSQC_Input_Frame (или -1)
+	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
 	int			global_time;	// смещение глобала time (или -1)
 	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
@@ -630,6 +631,7 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_input = -1;
+	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
@@ -678,6 +680,9 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_Input_Frame");
 	if (f)
 		s_csqc.func_input = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_InputEvent");
+	if (f)
+		s_csqc.func_inputevent = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 	// P2/D3: self-глобал и поле .entnum (движок пишет их при entity-вызовах).
@@ -695,11 +700,11 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.loaded = true;
 
 	Con_Printf ("CSQC: loaded %s (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
-		"c=%d s=%d eu=%d er=%d pe=%d if=%d time=%d\n",
+		"c=%d s=%d eu=%d er=%d pe=%d if=%d ie=%d time=%d\n",
 		path, vm->progs->numstatements, (unsigned int)vm->progs->crc, s_csqc.func_init,
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
-		s_csqc.func_input, s_csqc.global_time);
+		s_csqc.func_input, s_csqc.func_inputevent, s_csqc.global_time);
 	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d\n",
 		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size);
 
@@ -880,6 +885,28 @@ void CSQC_Client_Update (void)
 		vm->globals[OFS_PARM2] = (key_dest == key_menu) ? 1 : 0;
 		CSQC_Client_Exec (s_csqc.func_update);
 	}
+
+	// C1.2: при активном CSQC-курсоре — абсолютная позиция мыши модулю, только
+	// когда она изменилась с прошлого кадра (как FTE: события на перемещение).
+	{
+		static float ie_abs_lastx = -1, ie_abs_lasty = -1;
+		float cmx = 0, cmy = 0;
+
+		CSQC_Client_GetCursorPos (&cmx, &cmy);
+		if (CSQC_Client_CSQCCursor ())
+		{
+			if (cmx != ie_abs_lastx || cmy != ie_abs_lasty)
+			{
+				ie_abs_lastx = cmx;
+				ie_abs_lasty = cmy;
+				CSQC_Client_InputEvent (IE_MOUSEABS, cmx, cmy, 0);
+			}
+		}
+		else
+		{
+			ie_abs_lastx = ie_abs_lasty = -1;	// курсор снят — сброс
+		}
+	}
 }
 
 /*
@@ -1055,6 +1082,38 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 
 /*
 =================
+CSQC_Client_HasInputEvent / CSQC_Client_InputEvent
+
+C1.2: доставка событий ввода модулю (CSQC_InputEvent, csdefs.qc:159). Вызывается
+из keys.c (клавиши/клики/колесо при key_dest == key_game) и in_sdl2.c (мышь:
+MOUSEDELTA в обычном режиме; MOUSEABS — из CSQC_Client_Update при CSQCCursor).
+Возврат модуля != 0 означает «событие обработано» (движок не применяет его).
+=================
+*/
+qbool CSQC_Client_HasInputEvent (void)
+{
+	return s_csqc.loaded && s_csqc.inited && !s_csqc.errored
+		&& s_csqc.func_inputevent > 0;
+}
+
+int CSQC_Client_InputEvent (int evtype, float a, float b, float c)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (!CSQC_Client_HasInputEvent ())
+		return 0;
+	// Параметры модульной функции (4 float) — как CSQC_UpdateView.
+	vm->globals[OFS_PARM0] = evtype;
+	vm->globals[OFS_PARM1] = a;
+	vm->globals[OFS_PARM2] = b;
+	vm->globals[OFS_PARM3] = c;
+	if (!CSQC_Client_Exec (s_csqc.func_inputevent))
+		return 0;
+	return (int)vm->globals[OFS_RETURN];
+}
+
+/*
+=================
 CSQC_Client_Disconnect
 =================
 */
@@ -1081,6 +1140,7 @@ void CSQC_Client_Disconnect (void)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_input = -1;
+	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;

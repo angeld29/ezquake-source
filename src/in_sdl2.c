@@ -132,6 +132,22 @@ void IN_MouseMove (usercmd_t *cmd)
 			mouse_y *= sens;
 		}
 
+#ifndef CLIENTONLY
+		// C1.2: дельты мыши модулю (обычный режим; cursor-режим обрабатывает
+		// MOUSEABS в CSQC_Client_Update). Только когда модуль «в фокусе» —
+		// key_dest == key_game (консоль/меню не шлём, как для клавиш).
+		// handled -> не применяем к look/strafe.
+		if (key_dest == key_game && CSQC_Client_HasInputEvent ()
+			&& !CSQC_Client_CSQCCursor ())
+		{
+			if (CSQC_Client_InputEvent (IE_MOUSEDELTA, mx, my, 0))
+			{
+				mouse_x = 0;
+				mouse_y = 0;
+			}
+		}
+#endif
+
 		// add mouse X/Y movement to cmd
 		if ((in_strafe.state & 1) || (lookstrafe.value && mlook_active))
 			cmd->sidemove += m_side.value * mouse_x;

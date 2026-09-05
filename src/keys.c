@@ -26,6 +26,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "menu.h"
 #include "keys.h"
 #include "input.h"
+#ifndef CLIENTONLY
+#include "csqc_client.h"	// CSQC_Client_InputEvent (C1.2)
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -2367,6 +2370,17 @@ void Key_Event (int key, qbool down)
 	unichar = keydown[K_SHIFT] ? keyshift[key] : key;
 	if (unichar < 32 || unichar > 127)
 		unichar = 0;
+
+#ifndef CLIENTONLY
+	// C1.2: при игре (key_dest == key_game) и наличии CSQC_InputEvent модуля —
+	// отдаём клавишу/клик/колесо модулю; возврат != 0 -> модуль обработал
+	// (обычную обработку пропускаем). Аналог FTE `!Key_Dest_Has(~kdm_game)`.
+	if (key_dest == key_game && CSQC_Client_HasInputEvent ())
+	{
+		if (CSQC_Client_InputEvent (down ? IE_KEYDOWN : IE_KEYUP, key, unichar, 0))
+			return;
+	}
+#endif
 
 	Key_EventEx (key, unichar, down);
 
