@@ -379,7 +379,7 @@ static void CSQC_Client_SetEntityContext (pr1vm_t *vm, unsigned entnum)
 		*(int *)&vm->globals[s_csqc.global_self] = (int)entnum * vm->edict_size;
 	if (s_csqc.field_entnum >= 0 && entnum < CSQC_MAX_EDICTS)
 	{
-		slot = (float *)(vm->game_edicts + (size_t)entnum * vm->edict_size + s_csqc.field_entnum * 4);
+		slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size + s_csqc.field_entnum * 4);
 		slot[0] = (float)entnum;
 	}
 }
