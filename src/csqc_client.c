@@ -70,6 +70,17 @@ typedef struct { unsigned int seq; usercmd_t cmd; } csqc_inrec_t;
 static csqc_inrec_t s_inhist[CSQC_INHIST];
 static unsigned int s_inlast_seq;
 
+// C2.2 #460-469: пул string-buffers (DP). Строки deep-copy (переживают кадры).
+#define CSQC_MAX_BUFS	64
+typedef struct
+{
+	qbool	inuse;
+	int		num;
+	int		cap;
+	char	**str;
+} csqc_buf_t;
+static csqc_buf_t s_bufs[CSQC_MAX_BUFS];
+
 // Диагностический переключатель модуля CSQC_Input_Frame (читается модулем через
 // builtin cvar #45). Регистрируется один раз в CSQC_Client_ConnectCheck.
 static cvar_t csqc_inputdebug = {"csqc_inputdebug", "0", 0};
@@ -637,6 +648,8 @@ static qbool CSQC_Client_Load (const char *path)
 
 	// Защита от повторного Load (арена из прошлой загрузки) до memset.
 	CSQC_Client_FreeArena ();
+	// C2.2: string-buffers чистить при новой загрузке модуля.
+	CSQC_Client_BufReset ();
 
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
@@ -1294,6 +1307,216 @@ void CSQC_Client_RunPlayerPhysics (int entnum)
 
 /*
 =================
+C2.2 — string-buffers (#460-469). Хранилище — s_bufs (handle = idx+1).
+=================
+*/
+static csqc_buf_t *CSQC_Client_BufAt (int handle)
+{
+	if (handle < 1 || handle > CSQC_MAX_BUFS || !s_bufs[handle - 1].inuse)
+		return NULL;
+	return &s_bufs[handle - 1];
+}
+
+static void CSQC_Client_BufClear (csqc_buf_t *b)
+{
+	int i;
+	for (i = 0; i < b->num; i++)
+	{
+		if (b->str[i])
+			Q_free (b->str[i]);
+	}
+	Q_free (b->str);
+	b->str = NULL;
+	b->num = b->cap = 0;
+}
+
+int CSQC_Client_BufCreate (void)
+{
+	int i;
+	for (i = 0; i < CSQC_MAX_BUFS; i++)
+	{
+		if (!s_bufs[i].inuse)
+		{
+			memset (&s_bufs[i], 0, sizeof (s_bufs[i]));
+			s_bufs[i].inuse = true;
+			return i + 1;
+		}
+	}
+	return 0;
+}
+
+void CSQC_Client_BufDel (int handle)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	if (b)
+	{
+		CSQC_Client_BufClear (b);
+		b->inuse = false;
+	}
+}
+
+int CSQC_Client_BufGetSize (int handle)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	return b ? b->num : 0;
+}
+
+static int CSQC_Client_BufPush (csqc_buf_t *b, const char *s)
+{
+	char **ns;
+	if (b->num >= b->cap)
+	{
+		int ncap = b->cap ? b->cap * 2 : 8;
+		ns = (char **)Q_realloc (b->str, sizeof (char *) * ncap);
+		if (!ns)
+			return -1;
+		b->str = ns;
+		b->cap = ncap;
+	}
+	b->str[b->num] = Q_strdup (s ? s : "");
+	return b->num;
+}
+
+int CSQC_Client_BufAdd (int handle, const char *s, int order)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	int idx, i;
+	if (!b)
+		return -1;
+	idx = CSQC_Client_BufPush (b, s);
+	if (idx < 0)
+		return -1;
+	// order > 0 — вставка на позицию (не дальше конца списка).
+	if (order > 0 && order < idx)
+	{
+		char *tmp = b->str[idx];
+		for (i = idx; i > order; i--)
+			b->str[i] = b->str[i - 1];
+		b->str[order] = tmp;
+	}
+	return idx;
+}
+
+int CSQC_Client_BufGet (int handle, int idx, char *out, size_t max)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	if (!b || idx < 0 || idx >= b->num || !out || max < 1)
+		return 0;
+	strlcpy (out, b->str[idx], max);
+	return 1;
+}
+
+int CSQC_Client_BufSet (int handle, int idx, const char *s)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	char *c;
+	if (!b || idx < 0 || idx >= b->num)
+		return 0;
+	c = Q_strdup (s ? s : "");
+	if (!c)
+		return 0;
+	Q_free (b->str[idx]);
+	b->str[idx] = c;
+	return 1;
+}
+
+int CSQC_Client_BufFree (int handle, int idx)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	int i;
+	if (!b || idx < 0 || idx >= b->num)
+		return 0;
+	Q_free (b->str[idx]);
+	for (i = idx; i < b->num - 1; i++)
+		b->str[i] = b->str[i + 1];
+	b->num--;
+	return 1;
+}
+
+int CSQC_Client_BufCopy (int from, int to)
+{
+	csqc_buf_t *f = CSQC_Client_BufAt (from);
+	csqc_buf_t *t = CSQC_Client_BufAt (to);
+	int i;
+	if (!f || !t)
+		return 0;
+	CSQC_Client_BufClear (t);
+	for (i = 0; i < f->num; i++)
+		CSQC_Client_BufPush (t, f->str[i]);
+	return 1;
+}
+
+int CSQC_Client_BufSort (int handle, int prefixlen, int backward)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	int i, j;
+	if (!b)
+		return 0;
+	(void)prefixlen;	// сортировка по всей строке (prefix-семантику не эмулируем)
+	for (i = 0; i < b->num; i++)
+	{
+		for (j = i + 1; j < b->num; j++)
+		{
+			int cmp = strcmp (b->str[i], b->str[j]);
+			if ((!backward && cmp > 0) || (backward && cmp < 0))
+			{
+				char *t = b->str[i];
+				b->str[i] = b->str[j];
+				b->str[j] = t;
+			}
+		}
+	}
+	return 1;
+}
+
+int CSQC_Client_BufImplode (int handle, const char *glue, char *out, size_t max)
+{
+	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	size_t o = 0;
+	int i;
+	if (!b || !out || max < 1)
+		return 0;
+	out[0] = 0;
+	for (i = 0; i < b->num && o + 1 < max; i++)
+	{
+		if (i && glue)
+		{
+			size_t gl = strlen (glue);
+			if (o + gl < max - 1)
+			{
+				memcpy (out + o, glue, gl);
+				o += gl;
+				out[o] = 0;
+			}
+		}
+		{
+			size_t l = strlen (b->str[i]);
+			if (o + l >= max)
+				l = max - 1 - o;
+			memcpy (out + o, b->str[i], l);
+			o += l;
+			out[o] = 0;
+		}
+	}
+	return 1;
+}
+
+void CSQC_Client_BufReset (void)
+{
+	int i;
+	for (i = 0; i < CSQC_MAX_BUFS; i++)
+	{
+		if (s_bufs[i].inuse)
+		{
+			CSQC_Client_BufClear (&s_bufs[i]);
+			s_bufs[i].inuse = false;
+		}
+	}
+}
+
+
+/*
+=================
 CSQC_Client_Disconnect
 =================
 */
@@ -1314,6 +1537,8 @@ void CSQC_Client_Disconnect (void)
 	s_cursormode.scale = 0;
 	// C1.1 #346: чувствительность в дефолт.
 	s_sens_scale = 1;
+	// C2.2: string-buffers очистить (deep-copy строки).
+	CSQC_Client_BufReset ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =

@@ -10,6 +10,7 @@ csqc_client.h -- клиентская обвязка PR1VM (наш csprogs.dat),
 #ifndef CSQC_CLIENT_H
 #define CSQC_CLIENT_H
 
+#include <stddef.h>	// size_t (buf API)
 struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); без зависимостей в шапке
 
 // Доступ к клиентскому состоянию/выводу (реализация в csqc_client.c):
@@ -34,6 +35,19 @@ void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 void CSQC_Client_RecordInput (struct usercmd_s *cmd);	// запись из CL_SendCmd
 int CSQC_Client_ApplyInput (unsigned int seq);			// заполнить input_* по seq; 0/1
 void CSQC_Client_RunPlayerPhysics (int entnum);			// #347 runstandardplayerphysics (C1.4)
+
+// C2.2 #460-469 — string-buffers (DP). handle = 1-based; строки deep-copy.
+int CSQC_Client_BufCreate (void);
+void CSQC_Client_BufDel (int handle);
+int CSQC_Client_BufGetSize (int handle);
+int CSQC_Client_BufAdd (int handle, const char *s, int order);
+int CSQC_Client_BufGet (int handle, int idx, char *out, size_t max);
+int CSQC_Client_BufSet (int handle, int idx, const char *s);
+int CSQC_Client_BufFree (int handle, int idx);
+int CSQC_Client_BufCopy (int from, int to);
+int CSQC_Client_BufSort (int handle, int prefixlen, int backward);
+int CSQC_Client_BufImplode (int handle, const char *glue, char *out, size_t max);
+void CSQC_Client_BufReset (void);
 
 // Слой D, шаг 1 — 2D-графика (draw.h/r_draw*; координаты — сырые пиксели видео,
 // как DrawText). Помощники для csqc_builtins.c (см. docs/ezquake_csqc_client_layerd_2d_plan.md).

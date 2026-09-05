@@ -947,6 +947,121 @@ static void csqc_edict_num (void)
 	vm->globals[OFS_RETURN] = entnum * vm->edict_size;
 }
 
+/*
+C2.2 — string-buffers #460-469 (DP). Хранилище в csqc_client (deep-copy);
+builtins — тонкие обёртки (ABI i*3, возвраты строк через CSQCVM_SetRetStr).
+*/
+static int CSQCVM_ArgInt (int idx)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	return (vm && vm->argc > idx) ? (int)vm->globals[OFS_PARM0 + idx * 3] : 0;
+}
+
+static char *CSQCVM_ArgStr (int idx)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm || vm->argc <= idx)
+		return NULL;
+	return PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + idx * 3]);
+}
+
+// strbuf() buf_create = #460
+static void csqc_buf_create (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = CSQC_Client_BufCreate ();
+}
+
+// void(strbuf bufhandle) buf_del = #461
+static void csqc_buf_del (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CSQC_Client_BufDel (CSQCVM_ArgInt (0));
+}
+
+// float(strbuf bufhandle) buf_getsize = #462
+static void csqc_buf_getsize (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = CSQC_Client_BufGetSize (CSQCVM_ArgInt (0));
+}
+
+// void(strbuf bufhandle_from, strbuf bufhandle_to) buf_copy = #463
+static void csqc_buf_copy (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CSQC_Client_BufCopy (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1));
+}
+
+// void(strbuf bufhandle, float sortprefixlen, float backward) buf_sort = #464
+static void csqc_buf_sort (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CSQC_Client_BufSort (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1), CSQCVM_ArgInt (2) != 0);
+}
+
+// string(strbuf bufhandle, string glue) buf_implode = #465
+static void csqc_buf_implode (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[8192];
+	char *glue;
+	if (!vm)
+		return;
+	glue = CSQCVM_ArgStr (1);
+	if (!CSQC_Client_BufImplode (CSQCVM_ArgInt (0), glue ? glue : "", buf, sizeof (buf)))
+		buf[0] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+
+// string(strbuf bufhandle, float string_index) bufstr_get = #466
+static void csqc_bufstr_get (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[2048];
+	if (!vm)
+		return;
+	if (!CSQC_Client_BufGet (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1), buf, sizeof (buf)))
+		buf[0] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+
+// void(strbuf bufhandle, float string_index, string str) bufstr_set = #467
+static void csqc_bufstr_set (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s;
+	if (!vm)
+		return;
+	s = CSQCVM_ArgStr (2);
+	CSQC_Client_BufSet (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1), s ? s : "");
+}
+
+// float(strbuf bufhandle, string str, float order) bufstr_add = #468
+static void csqc_bufstr_add (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s;
+	if (!vm)
+		return;
+	s = CSQCVM_ArgStr (1);
+	vm->globals[OFS_RETURN] = CSQC_Client_BufAdd (CSQCVM_ArgInt (0), s ? s : "",
+		CSQCVM_ArgInt (2));
+}
+
+// void(strbuf bufhandle, float string_index) bufstr_free = #469
+static void csqc_bufstr_free (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		CSQC_Client_BufFree (CSQCVM_ArgInt (0), CSQCVM_ArgInt (1));
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1055,6 +1170,17 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 347, (builtin_t)csqc_runstandardplayerphysics);
 	// C2.1 — #459 edict_num.
 	PR1VM_RegisterBuiltin (vm, 459, (builtin_t)csqc_edict_num);
+	// C2.2 — #460-469 string-buffers.
+	PR1VM_RegisterBuiltin (vm, 460, (builtin_t)csqc_buf_create);
+	PR1VM_RegisterBuiltin (vm, 461, (builtin_t)csqc_buf_del);
+	PR1VM_RegisterBuiltin (vm, 462, (builtin_t)csqc_buf_getsize);
+	PR1VM_RegisterBuiltin (vm, 463, (builtin_t)csqc_buf_copy);
+	PR1VM_RegisterBuiltin (vm, 464, (builtin_t)csqc_buf_sort);
+	PR1VM_RegisterBuiltin (vm, 465, (builtin_t)csqc_buf_implode);
+	PR1VM_RegisterBuiltin (vm, 466, (builtin_t)csqc_bufstr_get);
+	PR1VM_RegisterBuiltin (vm, 467, (builtin_t)csqc_bufstr_set);
+	PR1VM_RegisterBuiltin (vm, 468, (builtin_t)csqc_bufstr_add);
+	PR1VM_RegisterBuiltin (vm, 469, (builtin_t)csqc_bufstr_free);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
