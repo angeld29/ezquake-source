@@ -36,7 +36,6 @@ typedef struct csqc_client_state_s
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			global_time;	// смещение глобала time (или -1)
-	int			loaded_crc;		// CRC загруженного csprogs (сверка с *csprogs)
 	int			numcmds;
 	char		cmds[16][64];
 } csqc_client_state_t;
@@ -133,8 +132,11 @@ void CSQC_Client_RegisterCommand (const char *cmd)
 	if (s_csqc.numcmds >= (int)(sizeof (s_csqc.cmds) / sizeof (s_csqc.cmds[0])))
 		return;
 	strlcpy (s_csqc.cmds[s_csqc.numcmds], cmd, sizeof (s_csqc.cmds[0]));
-	s_csqc.numcmds++;
-	Cmd_AddCommand (s_csqc.cmds[s_csqc.numcmds - 1], CSQC_Client_ConsoleCommand_f);
+	// Cmd_AddRemCommand копирует имя в Q_malloc-блок (в отличие от
+	// Cmd_AddCommand, который держит указатель на имя и аллоцит узел в hunk).
+	// Узел/имя переживают Host_ClearMemory и корректно удаляются RemoveCommand.
+	if (Cmd_AddRemCommand (s_csqc.cmds[s_csqc.numcmds], CSQC_Client_ConsoleCommand_f))
+		s_csqc.numcmds++;
 }
 
 /*
@@ -296,11 +298,10 @@ static qbool CSQC_Client_Load (void)
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 
 	s_csqc.loaded = true;
-	s_csqc.loaded_crc = vm->progs->crc;
 
 	Con_Printf ("CSQC: loaded csprogs.dat (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
 		"c=%d s=%d eu=%d er=%d pe=%d time=%d\n",
-		vm->progs->numstatements, (unsigned int)s_csqc.loaded_crc, s_csqc.func_init,
+		vm->progs->numstatements, (unsigned int)vm->progs->crc, s_csqc.func_init,
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.global_time);
@@ -330,7 +331,6 @@ CSQC_Client_ConnectCheck
 void CSQC_Client_ConnectCheck (void)
 {
 	extern cvar_t cl_pext_csqc;
-	unsigned int serv_crc;
 	int sizep;
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
@@ -342,23 +342,20 @@ void CSQC_Client_ConnectCheck (void)
 	if (sizep <= 0)
 		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
 
-	serv_crc = (unsigned int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogs"), NULL, 0);
+	// Модуль загружается «с нуля» на КАЖДЫЙ вход в мир (первый коннект и каждая
+	// смена карты): выгрузка происходит при выходе из мира (CL_ClearState, до
+	// Host_ClearMemory), здесь — загрузка свежего csprogs.dat. Защитный unload
+	// на случай путей без CL_ClearState (двойной вызов безопасен — no-op).
+	if (s_csqc.loaded)
+		CSQC_Client_Disconnect ();
 
-	// Загрузка/перезагрузка модуля на каждом входе в мир: csprogs может
-	// меняться между картами — сверяем CRC с серверным *csprogs.
-	if (!s_csqc.loaded || (serv_crc && serv_crc != (unsigned int)s_csqc.loaded_crc))
-	{
-		if (s_csqc.loaded)
-			Con_Printf ("CSQC: csprogs crc changed (0x%x -> 0x%x), reload\n",
-				(unsigned int)s_csqc.loaded_crc, serv_crc);
-		CSQC_Client_Disconnect ();	// полный сброс инстанса/команд перед перезагрузкой
-		CSQC_Client_Load ();
-		if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
-			return;
-	}
+	if (!CSQC_Client_Load ())
+		return;
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
 
-	// Вход в новую карту (первый коннект или map-change): сброс per-карта
-	// состояния — seen[]/remove, WorldLoaded и enablecsqc для этой карты.
+	// Вход в новую карту: per-карта состояние чистое (WorldLoaded/enablecsqc
+	// будут этой карты; модуль уже новый).
 	memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
 	s_csqc.remove_pending = false;
 	s_csqc.world_done = false;
@@ -427,6 +424,14 @@ void CSQC_Client_ParseEntities (void)
 	unsigned int entnum;
 	qbool removeflag;
 	static int dbg_upd = 0, dbg_rem = 0, dbg_bad = 0;
+	static int dbg_early = 0;
+
+	// [DEBUG Bug 2] временный след ранних выходов (76 пришёл, а разбор нет).
+	if (dbg_early == 0 || dbg_early == 50 || dbg_early == 500)
+		Con_Printf ("CSQC: ParseEntities entered (loaded=%d inited=%d errored=%d "
+			"eu=%d er=%d read=%d)\n", s_csqc.loaded, s_csqc.inited,
+			s_csqc.errored, s_csqc.func_entupdate, s_csqc.func_entremove, msg_readcount);
+	dbg_early++;
 
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
 		return;
@@ -481,6 +486,30 @@ void CSQC_Client_ParseEntities (void)
 				return;
 		}
 	}
+
+	// [DEBUG Bug 2] временный след конца разбора (срабатывает, если цикл шёл,
+	// но обновлений/remove не было — пустой 76 или только терминатор).
+	if (dbg_early == 0 || dbg_early == 50 || dbg_early == 500)
+		Con_Printf ("CSQC: ParseEntities end (read=%d badread=%d)\n",
+			msg_readcount, msg_badread);
+}
+
+/*
+=================
+CSQC_Client_ParseEvent
+
+Парсинг svc_fte_cgamepacket(83) (E1): имя события и payload читает сам модуль
+(CSQC_Parse_Event) через read*-builtins из текущего сообщения. Guard как в
+ParseEntities — без модуля чужой CSQC-multicast (echo) не роняет клиент.
+=================
+*/
+void CSQC_Client_ParseEvent (void)
+{
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.func_parseevent <= 0)
+		return;
+	CSQC_Client_Exec (s_csqc.func_parseevent);
 }
 
 /*

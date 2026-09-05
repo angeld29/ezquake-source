@@ -25,6 +25,8 @@ void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once 
 
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — отдельно E3).
 void CSQC_Client_ParseEntities (void);
+// Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.
+void CSQC_Client_ParseEvent (void);
 // Временный Remove: entnum передаётся builtin-стримом (не edict/self.entnum).
 void CSQC_Client_SetRemoveEnt (int entnum);
 int CSQC_Client_ReadEntityNum (void);	// remove-pending ? entnum (и потребляет) : -1

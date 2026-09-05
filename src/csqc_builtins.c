@@ -410,6 +410,28 @@ static void csqc_readlong (void)
 		vm->globals[OFS_RETURN] = MSG_ReadLong ();
 }
 
+/*
+float() readcoord = #364 / string() readstring = #366
+(E1/S2) Координата/строка из текущего сетевого сообщения (нужны cgamepacket-echo
+и типизированному 76-payload).
+*/
+static void csqc_readcoord (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadCoord ();
+}
+
+static void csqc_readstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s;
+	if (!vm)
+		return;
+	s = MSG_ReadString ();
+	PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
+}
+
 static void csqc_readentitynum (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -449,6 +471,9 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 362, (builtin_t)csqc_readshort);
 	PR1VM_RegisterBuiltin (vm, 363, (builtin_t)csqc_readlong);
 	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
+	// E1/S2: readcoord/readstring (cgamepacket-echo, типизированный payload).
+	PR1VM_RegisterBuiltin (vm, 364, (builtin_t)csqc_readcoord);
+	PR1VM_RegisterBuiltin (vm, 366, (builtin_t)csqc_readstring);
 }
 
 #endif // !CLIENTONLY
