@@ -761,6 +761,53 @@ static void csqc_serverkey (void)
 }
 
 /*
+string(float playernum, string keyname) getplayerkeyvalue = #348
+Значения scoreboard/userinfo игрока (cl.players[pnum]). Числовые ключи
+frags/ping/userid/spectator — форматированием; name/team/topcolor/bottomcolor и
+прочие — из userinfo (как FTE PF_cs_getplayerkey_internal, pr_csqc.c:4344).
+Пустой слот / вне [0, MAX_CLIENTS) -> "" (пустая строка). Отклонение: pnum<0
+(scoreboard-индекс fragsort) не поддержан -> "" (roadmap A6).
+*/
+static void csqc_getplayerkeyvalue (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int pnum;
+	char *key;
+	char buf[32];
+	player_info_t *pi;
+	char *v = NULL;
+
+	if (!vm)
+		return;
+	pnum = (int)vm->globals[OFS_PARM0];
+	key = CSQCVM_Str (OFS_PARM1);
+	if (pnum < 0 || pnum >= MAX_CLIENTS || !key || !key[0])
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	pi = &cl.players[pnum];
+	if (!pi->name[0])
+	{
+		CSQCVM_SetRetStr ("");	// пустой слот — игрока нет
+		return;
+	}
+	if (!strcmp (key, "frags"))
+		snprintf (buf, sizeof (buf), "%d", pi->frags), v = buf;
+	else if (!strcmp (key, "ping"))
+		snprintf (buf, sizeof (buf), "%d", pi->ping), v = buf;
+	else if (!strcmp (key, "userid"))
+		snprintf (buf, sizeof (buf), "%d", pi->userid), v = buf;
+	else if (!strcmp (key, "spectator"))
+		snprintf (buf, sizeof (buf), "%d", (int)pi->spectator), v = buf;
+	else if (!strcmp (key, "name"))
+		v = pi->name;
+	else
+		v = Info_ValueForKey (pi->userinfo, key);	// team/topcolor/bottomcolor/...
+	CSQCVM_SetRetStr (v ? v : "");
+}
+
+/*
 void(float usecursor, optional string cursorimage, optional vector hotspot,
      optional float scale) setcursormode = #343
 FTE (pr_clcmd.c PF_cl_setcursormode): освобождает/хватает мышь и настраивает курсор.
@@ -819,6 +866,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 343, (builtin_t)csqc_setcursormode);
 	// #344 getmousepos (A3.2: read-путь позиции CSQC-курсора).
 	PR1VM_RegisterBuiltin (vm, 344, (builtin_t)csqc_getmousepos);
+	// #348 getplayerkeyvalue (A6).
+	PR1VM_RegisterBuiltin (vm, 348, (builtin_t)csqc_getplayerkeyvalue);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
