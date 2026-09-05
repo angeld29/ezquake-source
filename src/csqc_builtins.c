@@ -12,6 +12,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
+#include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -701,11 +702,47 @@ static void csqc_readentitynum (void)
 		vm->globals[OFS_RETURN] = MSG_ReadShort ();
 }
 
+/*
+Слой D шаг 3 — ввод/интерфейс builtins. Отклонение от FTE: #340/#341 работают во
+внутреннем keynum-домене ezquake (K_*), без MP_Translate QC<->внутренние коды —
+модуль делает round-trip по именам клавиш, домен консистентен.
+
+string(float keynum) keynumtostring = #340
+Возвращает имя клавиши для внутреннего keynum-домена ezquake (как bind/unbind).
+Key_KeynumToString возвращает статический буфер или имя из таблицы — CSQCVM_SetRetStr
+глубоко копирует в temp-ring инстанса.
+*/
+static void csqc_keynumtostring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (Key_KeynumToString ((int)vm->globals[OFS_PARM0]));
+}
+
+/*
+float(string keyname) stringtokeynum = #341
+Возвращает keynum по имени клавиши; пустая строка/нет такого имени -> -1
+(Key_StringToKeynum и так возвращает -1).
+*/
+static void csqc_stringtokeynum (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = name ? Key_StringToKeynum (name) : -1;
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
 	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar);
+
+	// Слой D шаг 3 — ввод/интерфейс: #340 keynumtostring, #341 stringtokeynum.
+	PR1VM_RegisterBuiltin (vm, 340, (builtin_t)csqc_keynumtostring);
+	PR1VM_RegisterBuiltin (vm, 341, (builtin_t)csqc_stringtokeynum);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
