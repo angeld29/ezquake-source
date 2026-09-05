@@ -258,6 +258,117 @@ static void csqc_getstatf (void)
 	vm->globals[OFS_RETURN] = csqc_getstat_value (vm, (int)vm->globals[OFS_PARM0]);
 }
 
+// ---------------------------------------------------------------- Слой D, шаг 1
+// 2D-графика. Раскладка параметров — 3-словные ячейки от OFS_PARM0 (см.
+// docs/ezquake_csqc_client_layerd_2d_plan.md §ABI). Возвраты draw*/drawcharacter = 0.
+
+/*
+float(vector position, float character, vector size, vector rgb, float alpha,
+     optional float drawflag) drawcharacter = #320
+*/
+static void csqc_drawcharacter (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	CSQC_Client_DrawCharacter (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], (int)g[OFS_PARM0 + 3],
+		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
+		g[OFS_PARM0 + 12]);
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
+float(vector position, string pic, vector size, vector rgb, float alpha,
+     optional float drawflag) drawpic = #322
+*/
+static void csqc_drawpic (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	char *name;
+	if (!vm)
+		return;
+	g = vm->globals;
+	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	if (name)
+		CSQC_Client_DrawPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
+			g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name, g[OFS_PARM0 + 12]);
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
+float(vector position, vector size, vector rgb, float alpha,
+     optional float drawflag) drawfill = #323
+*/
+static void csqc_drawfill (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	CSQC_Client_DrawFill (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
+		g[OFS_PARM0 + 3], g[OFS_PARM0 + 4],
+		(int)(bound (0, g[OFS_PARM0 + 6], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 7], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 8], 1) * 255.0f + 0.5f),
+		g[OFS_PARM0 + 9]);
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
+void(float width, vector pos1, vector pos2, vector rgb, float alpha,
+     optional float drawflag) drawline = #315
+*/
+static void csqc_drawline (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	if (!vm)
+		return;
+	g = vm->globals;
+	CSQC_Client_DrawLine (g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], g[OFS_PARM0 + 6], g[OFS_PARM0 + 7],
+		g[OFS_PARM0 + 0],
+		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
+		g[OFS_PARM0 + 12]);
+}
+
+/*
+float(string text, float usecolours, optional vector fontsize) stringwidth = #327
+*/
+static void csqc_stringwidth (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *text;
+	if (!vm)
+		return;
+	text = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	vm->globals[OFS_RETURN] = CSQC_Client_StringWidth (text ? text : "", vm->globals[OFS_PARM0 + 3] != 0);
+}
+
+/*
+string(string name, optional float trywad) precache_pic = #317
+Возвращает name, если пикча загрузилась (trywad игнорируется), иначе "".
+*/
+static void csqc_precache_pic (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	if (name && CSQC_Client_PrecachePic (name))
+		CSQCVM_SetRetStr (name);
+	else
+		CSQCVM_SetRetStr ("");
+}
+
 /*
 string(string fmt, ...) sprintf = #627
 Мини-форматтер (QC): %d/%i (int), %s (string), %f/%g (+ %.Nprec), %v (vector),
@@ -575,6 +686,12 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 304, (builtin_t)csqc_renderscene);
 	PR1VM_RegisterBuiltin (vm, 309, (builtin_t)csqc_getproperty);
 	PR1VM_RegisterBuiltin (vm, 326, (builtin_t)csqc_drawstring);
+	PR1VM_RegisterBuiltin (vm, 315, (builtin_t)csqc_drawline);
+	PR1VM_RegisterBuiltin (vm, 317, (builtin_t)csqc_precache_pic);
+	PR1VM_RegisterBuiltin (vm, 320, (builtin_t)csqc_drawcharacter);
+	PR1VM_RegisterBuiltin (vm, 322, (builtin_t)csqc_drawpic);
+	PR1VM_RegisterBuiltin (vm, 323, (builtin_t)csqc_drawfill);
+	PR1VM_RegisterBuiltin (vm, 327, (builtin_t)csqc_stringwidth);
 	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati);
 	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);

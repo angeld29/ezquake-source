@@ -61,6 +61,9 @@ static csqc_client_state_t s_csqc;
 // builtin cvar #45). Регистрируется один раз в CSQC_Client_ConnectCheck.
 static cvar_t csqc_inputdebug = {"csqc_inputdebug", "0", 0};
 static qbool csqc_inputdebug_registered;
+// Слой D шаг 1: демо-оверлей 2D-графики модуля (drawfill/drawpic/...; читается
+// модулем через cvar #45). Регистрируется так же.
+static cvar_t csqc_d2d = {"csqc_d2d", "0", 0};
 
 // Клиентская арена edicts (ADR 0017, P1/D2): прямая карта entnum -> слот.
 // entity-значение PR1 = N*edict_size; слот 0 — world. edict_size = entityfields*4
@@ -118,6 +121,82 @@ void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int
 		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, text);
 	Draw_SColoredStringBasic (x, y, buf, 0, 1, true);
 	Cvar_SetValue (&scr_coloredText, saved);
+}
+
+// Цвет для draw-помощников Слоя D (rgb 0..255 байты, alpha 0..1).
+static color_t CSQC_Client_Color (int r, int g, int b, float alpha)
+{
+	return RGBA_TO_COLOR ((byte)bound (0, r, 255), (byte)bound (0, g, 255),
+		(byte)bound (0, b, 255), (byte)bound (0, (int)(alpha * 255.0f + 0.5f), 255));
+}
+
+/*
+=================
+Слой D, шаг 1 — 2D-графика (docs/ezquake_csqc_client_layerd_2d_plan.md).
+Координаты/размеры — сырые пиксели видео (как DrawText). drawpic: rgb-tint
+игнорируется (только alpha; решение R2), масштаб = size / нативный размер.
+=================
+*/
+void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int b, float alpha)
+{
+	if (w <= 0 || h <= 0)
+		return;
+	Draw_AlphaRectangleRGB (x, y, w, h, 1, true, CSQC_Client_Color (r, g, b, alpha));
+}
+
+void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, float alpha)
+{
+	mpic_t *pic;
+	float sx, sy;
+	if (!name || !name[0] || w < 0 || h < 0)
+		return;
+	pic = Draw_CachePicSafe (name, false, false);
+	if (!pic)
+		return;
+	sx = (w > 0) ? w / (float)pic->width : 1;
+	sy = (h > 0) ? h / (float)pic->height : 1;
+	Draw_SAlphaSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy, bound (0, alpha, 1));
+}
+
+void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha)
+{
+	extern cvar_t scr_coloredText;
+	static char buf[8];
+	float saved;
+	int c = ch & 0xff;
+	if (c <= 0)
+		return;
+	// Один символ default-шрифта с цветом &cRGB (как DrawText; scale 1).
+	saved = scr_coloredText.value;
+	Cvar_SetValue (&scr_coloredText, 1);
+	snprintf (buf, sizeof (buf), "&c%X%X%X%c",
+		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, c);
+	Draw_SColoredStringBasic (x, y, buf, 0, 1, true);
+	Cvar_SetValue (&scr_coloredText, saved);
+}
+
+void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, int r, int g, int b, float alpha)
+{
+	if (width <= 0)
+		return;
+	Draw_AlphaLineRGB (x1, y1, x2, y2, width, CSQC_Client_Color (r, g, b, alpha));
+}
+
+float CSQC_Client_StringWidth (const char *text, qbool usecolours)
+{
+	if (!text)
+		return 0;
+	// Та же метрика, что рисует drawstring (scale 1, proportional):
+	// r_draw_charset.c Draw_StringLength/Colors.
+	return usecolours ? Draw_StringLengthColors (text, -1, 1, true)
+		: Draw_StringLength (text, -1, 1, true);
+}
+
+qbool CSQC_Client_PrecachePic (const char *name)
+{
+	if (!name || !name[0])
+		return false;
+	return Draw_CachePicSafe (name, false, false) != NULL;
 }
 
 static void CSQC_Client_ConsoleCommand_f (void);
@@ -530,6 +609,7 @@ void CSQC_Client_ConnectCheck (void)
 	if (!csqc_inputdebug_registered)
 	{
 		Cvar_Register (&csqc_inputdebug);
+		Cvar_Register (&csqc_d2d);
 		csqc_inputdebug_registered = true;
 	}
 

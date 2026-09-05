@@ -30,6 +30,15 @@ void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once 
 // изменения (см. csqc_client.c; механика FTE pr_csqc.c:9418).
 void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 
+// Слой D, шаг 1 — 2D-графика (draw.h/r_draw*; координаты — сырые пиксели видео,
+// как DrawText). Помощники для csqc_builtins.c (см. docs/ezquake_csqc_client_layerd_2d_plan.md).
+void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int b, float alpha);
+void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, float alpha);
+void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha);
+void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, int r, int g, int b, float alpha);
+float CSQC_Client_StringWidth (const char *text, qbool usecolours);
+qbool CSQC_Client_PrecachePic (const char *name);
+
 // Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
 // как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом
 // клиентского сообщения (см. csqc_builtins.c csqc_sendevent).
