@@ -1116,6 +1116,98 @@ static void csqc_dynamiclight_add (void)
 	vm->globals[OFS_RETURN] = (float)(int)(dl - cl_dlights) + 1;
 }
 
+/*
+C3.2 — частицы #335-337. В ezquake нет реестра имён эффектов — свой мини-реестр
+(имя -> палитровый цвет/базовое кол-во). #335 возвращает handle эффекта (idx+1,
+нет -> -1); #336/#337 спавнят R_RunParticleEffect (аппроксимация; FTE-реестр не
+портируем — документировано).
+*/
+typedef struct { const char *name; int color; int count; } csqc_peffect_t;
+static const csqc_peffect_t s_peffects[] = {
+	{ "blood",		73, 24 },
+	{ "explosion",	226, 32 },
+	{ "spark",		0,  10 },
+	{ "gunshot",	0,  16 },
+	{ "smoke",		0,  8 },
+};
+#define CSQC_NPEFFECTS	((int)(sizeof (s_peffects) / sizeof (s_peffects[0])))
+
+// float(string effectname) particleeffectnum = #335
+static void csqc_particleeffectnum (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name;
+	int i;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	for (i = 0; name && i < CSQC_NPEFFECTS; i++)
+		if (!strcmp (name, s_peffects[i].name))
+		{
+			vm->globals[OFS_RETURN] = i + 1;
+			return;
+		}
+	vm->globals[OFS_RETURN] = -1;
+}
+
+static const csqc_peffect_t *csqc_peffect_byhandle (int h)
+{
+	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[h - 1] : NULL;
+}
+
+// void(float effectnum, entity ent, vector start, vector end) trailparticles = #336
+static void csqc_trailparticles (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	const csqc_peffect_t *e;
+	vec3_t d;
+	float len, step;
+	int i, n;
+	if (!vm)
+		return;
+	g = vm->globals;
+	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
+	if (!e)
+		return;
+	d[0] = g[OFS_PARM0 + 9] - g[OFS_PARM0 + 6];
+	d[1] = g[OFS_PARM0 + 10] - g[OFS_PARM0 + 7];
+	d[2] = g[OFS_PARM0 + 11] - g[OFS_PARM0 + 8];
+	len = sqrt (d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+	n = (len > 8) ? bound (1, (int)(len / 8.0f), 40) : 1;
+	for (i = 0; i <= n; i++)
+	{
+		vec3_t p;
+		step = (n) ? (float)i / n : 0;
+		p[0] = g[OFS_PARM0 + 6] + d[0] * step;
+		p[1] = g[OFS_PARM0 + 7] + d[1] * step;
+		p[2] = g[OFS_PARM0 + 8] + d[2] * step;
+		R_RunParticleEffect (p, vec3_origin, e->color, 1);
+	}
+}
+
+// void(float effectnum, vector origin, optional vector dir, optional float count)
+// pointparticles = #337
+static void csqc_pointparticles (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	const csqc_peffect_t *e;
+	int count;
+	vec3_t dir;
+	if (!vm)
+		return;
+	g = vm->globals;
+	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
+	if (!e)
+		return;
+	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
+	dir[0] = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 0;
+	dir[1] = (vm->argc > 2) ? g[OFS_PARM0 + 7] : 0;
+	dir[2] = (vm->argc > 2) ? g[OFS_PARM0 + 8] : 0;
+	R_RunParticleEffect (&g[OFS_PARM0 + 3], dir, e->color, bound (1, count, 4096));
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1238,6 +1330,10 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	// C3.1 — #177 localsound, #305 dynamiclight_add.
 	PR1VM_RegisterBuiltin (vm, 177, (builtin_t)csqc_localsound);
 	PR1VM_RegisterBuiltin (vm, 305, (builtin_t)csqc_dynamiclight_add);
+	// C3.2 — #335-337 частицы (мини-реестр).
+	PR1VM_RegisterBuiltin (vm, 335, (builtin_t)csqc_particleeffectnum);
+	PR1VM_RegisterBuiltin (vm, 336, (builtin_t)csqc_trailparticles);
+	PR1VM_RegisterBuiltin (vm, 337, (builtin_t)csqc_pointparticles);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
