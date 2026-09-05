@@ -30,12 +30,12 @@ typedef struct csqc_client_state_s
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
 	qbool		enable_sent;	// enablecsqc уже отправлен серверу
-	qbool		remove_pending;	// временный Remove: entnum для readentitynum
-	int			remove_ent;
 	qbool		seen[2048];		// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			global_time;	// смещение глобала time (или -1)
+	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
+	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -83,30 +83,6 @@ void CSQC_Client_SetStat (int idx, int value)
 {
 	if (idx >= 32 && idx < 128)
 		s_csqc_stat[idx] = value;
-}
-
-/*
-=================
-CSQC_Client_SetRemoveEnt / ReadEntityNum
-
-Временный путь Remove (без edict-модели): entnum передаётся builtin-стримом —
-readentitynum() в модуле вернёт отложенный номер (и снимет pending).
-=================
-*/
-void CSQC_Client_SetRemoveEnt (int entnum)
-{
-	s_csqc.remove_pending = true;
-	s_csqc.remove_ent = entnum;
-}
-
-int CSQC_Client_ReadEntityNum (void)
-{
-	if (s_csqc.remove_pending)
-	{
-		s_csqc.remove_pending = false;
-		return s_csqc.remove_ent;
-	}
-	return -1;
 }
 
 void CSQC_Client_GetScreenSize (int *w, int *h)
@@ -356,6 +332,56 @@ static void CSQC_Client_AllocArena (pr1vm_t *vm)
 	vm->num_edicts = CSQC_MAX_EDICTS;
 	vm->max_edicts = CSQC_MAX_EDICTS;
 	vm->state = 0;	// клиентский инстанс; OP_ADDRESS-гард «world» не активен (world не пишем)
+	vm->fieldofs_patch = NULL;	// FTE csprogs: raw field-оффсеты (ADR 0017 P2)
+}
+
+/*
+=================
+CSQC_Client_FindField
+
+Ищет поле модуля по имени в fielddefs (см. PR1VM_FindFunction). Возвращает
+смещение поля в float-словах от начала entvars (ddef_t.ofs) или -1.
+=================
+*/
+static int CSQC_Client_FindField (pr1vm_t *vm, const char *name)
+{
+	int i;
+
+	if (!vm || !vm->fielddefs || !name)
+		return -1;
+	for (i = 0; i < vm->progs->numfielddefs; i++)
+	{
+		const char *s = PR1VM_GetString (vm, vm->fielddefs[i].s_name);
+		if (s && s[0] && !strcmp (s, name))
+			return vm->fielddefs[i].ofs;
+	}
+	return -1;
+}
+
+/*
+=================
+CSQC_Client_SetEntityContext
+
+Ставит контекст сущности для CSQC_Ent_Update/Remove (ADR 0017 P2/D3):
+self = entnum*edict_size (entity-значение PR1) и пишет float entnum в поле
+.entnum (слот 7) арены. Модуль дальше читает self.entnum.
+=================
+*/
+static void CSQC_Client_SetEntityContext (pr1vm_t *vm, unsigned entnum)
+{
+	float *slot;
+
+	if (!vm || !vm->game_edicts)
+		return;
+	// entity-значение PR1 хранится в глобале как raw int (биты), НЕ как float:
+	// self = entnum*edict_size (байт-смещение), иначе float-биты дают OOB.
+	if (s_csqc.global_self >= 0)
+		*(int *)&vm->globals[s_csqc.global_self] = (int)entnum * vm->edict_size;
+	if (s_csqc.field_entnum >= 0 && entnum < CSQC_MAX_EDICTS)
+	{
+		slot = (float *)(vm->game_edicts + (size_t)entnum * vm->edict_size + s_csqc.field_entnum * 4);
+		slot[0] = (float)entnum;
+	}
 }
 
 /*
@@ -389,6 +415,8 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.global_time = -1;
+	s_csqc.global_self = -1;
+	s_csqc.field_entnum = -1;
 
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
@@ -431,6 +459,9 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_parseevent = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
+	// P2/D3: self-глобал и поле .entnum (движок пишет их при entity-вызовах).
+	s_csqc.global_self = PR1VM_FindGlobal (vm, "self");
+	s_csqc.field_entnum = CSQC_Client_FindField (vm, "entnum");
 
 	s_csqc.loaded = true;
 
@@ -440,6 +471,8 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.global_time);
+	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d\n",
+		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size);
 
 	// CSQC_Init(apiver, enginename, enginever) — сигнатура нашего модуля.
 	if (s_csqc.func_init > 0)
@@ -514,7 +547,6 @@ void CSQC_Client_ConnectCheck (void)
 		// Вход в новую карту: per-карта состояние чистое (WorldLoaded/enablecsqc
 		// будут этой карты; модуль уже новый).
 		memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
-		s_csqc.remove_pending = false;
 		s_csqc.world_done = false;
 		s_csqc.enable_sent = false;
 		return;
@@ -566,7 +598,6 @@ void CSQC_Client_Update (void)
 				return;
 			// как при входе в мир: per-карта состояние чистое
 			memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
-			s_csqc.remove_pending = false;
 			s_csqc.world_done = false;
 			s_csqc.enable_sent = false;
 		}
@@ -618,20 +649,11 @@ void CSQC_Client_Update (void)
 =================
 CSQC_Client_ParseEntities
 
-Парсинг svc_fte_csqcentities(76), простая версия (S1):
-для каждой сущности — short entnum, бит 0x8000 = remove, 0 = конец.
-Update: CSQC_Ent_Update(isnew) — модуль читает payload из текущего сообщения
-(read*). Remove: временно entnum через builtin-стрим (SetRemoveEnt), без edict.
-=================
-*/
-/*
-=================
-CSQC_Client_ParseEntities
-
 Парсинг svc_fte_csqcentities(76)/sized(92):
 для каждой сущности — short entnum, бит 0x8000 = remove, 0 = конец.
 Update: CSQC_Ent_Update(isnew) — модуль читает payload из текущего сообщения
-(read*). Remove: временно entnum через builtin-стрим (SetRemoveEnt), без edict.
+(read*); контекст сущности (self/.entnum) движок ставит перед вызовом
+(ADR 0017 P2/D3). Remove: CSQC_Ent_Remove с self/.entnum (без builtin-стрима).
 Sized (92, только mvdsv под sv_csqcdebug): перед payload каждой update-сущности
 идёт short-длина — skip-защита от рассинхрона (E3).
 =================
@@ -682,7 +704,8 @@ void CSQC_Client_ParseEntities (qbool sized)
 					dbg_rem = 1;
 					Con_Printf ("CSQC: first entity remove entnum=%u\n", entnum);
 				}
-				CSQC_Client_SetRemoveEnt ((int)entnum);
+				// P2/D3: контекст сущности (self/.entnum), без builtin-стрима.
+				CSQC_Client_SetEntityContext (vm, entnum);
 				CSQC_Client_Exec (s_csqc.func_entremove);
 			}
 			s_csqc.seen[entnum] = false;
@@ -702,6 +725,9 @@ void CSQC_Client_ParseEntities (qbool sized)
 			}
 			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
 			s_csqc.seen[entnum] = true;
+
+			// P2/D3: контекст сущности перед вызовом модуля.
+			CSQC_Client_SetEntityContext (vm, entnum);
 
 			// Sized: перед payload — short-длина (mvdsv sv_ents.c:700).
 			payload_start = msg_readcount;
@@ -769,6 +795,8 @@ void CSQC_Client_Disconnect (void)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.global_time = -1;
+	s_csqc.global_self = -1;
+	s_csqc.field_entnum = -1;
 }
 
 #endif // !CLIENTONLY

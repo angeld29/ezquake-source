@@ -59,6 +59,11 @@ struct pr1vm_s
 	int				state;
 	void			*game_edicts;	// entvars-база для STOREP_*/EDICT_TO_PROG
 
+	// Поле-оффсетная карта диалекта модуля (ADR 0017 P2): NULL = raw/identity
+	// (classic QW, FTE CSQC csprogs), иначе — таблица ремапа (NQ progs).
+	// Зависит только от типа инстанса/модуля; ставится при (пере)загрузке.
+	const int		*fieldofs_patch;
+
 	// Состояние исполнения (перенесено из глобалов pr_exec.c).
 	pr1vm_stack_t	stack[PR1VM_MAX_STACK];
 	int				depth;

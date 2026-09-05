@@ -393,6 +393,14 @@ static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
 	return &vm->edicts[e / vm->edict_size];
 }
 
+// Поле-оффсетная карта диалекта модуля (ADR 0017 P2, per-instance):
+// NULL => raw/identity (classic QW, FTE CSQC); иначе NQ-ремап. Не используем
+// глобальный PR_FIELDOFS — он не инициализируется в этом билде (нули).
+static int PR1VM_FieldOfs (pr1vm_t *vm, int i)
+{
+	return (i >= 0 && i <= 105 && vm->fieldofs_patch) ? vm->fieldofs_patch[i] : i;
+}
+
 /*
 ====================
 PR1VM_EnterFunction
@@ -679,7 +687,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 #endif
 			if (ed == vm->edicts && vm->state == ss_active)
 				PR_RunError ("assignment to world entity");
-			c->_int = (byte *)((int *)ed->v + PR_FIELDOFS(b->_int)) - (byte *)vm->game_edicts;
+			c->_int = (byte *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int)) - (byte *)vm->game_edicts;
 			break;
 
 		case OP_LOAD_F:
@@ -692,9 +700,11 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
 			//need for checking 'cmd mmode player N', if N >= 0x10000000 =(signed)=> negative
+			// Field offset — через карту диалекта инстанса (PR1VM_FieldOfs):
+			// FTE/classic raw, NQ — ремап (ADR 0017 P2).
 			if (b->_int >= 0)
 			{
-				a = (eval_t *)((int *)ed->v + PR_FIELDOFS(b->_int));
+				a = (eval_t *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int));
 				c->_int = a->_int;
 			}
 			else
@@ -706,7 +716,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 #ifdef PARANOID
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
-			a = (eval_t *)((int *)ed->v + PR_FIELDOFS(b->_int));
+			a = (eval_t *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int));
 			c->vector[0] = a->vector[0];
 			c->vector[1] = a->vector[1];
 			c->vector[2] = a->vector[2];

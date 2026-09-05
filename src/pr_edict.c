@@ -1110,6 +1110,22 @@ PR1_LoadProgs
 void PF_clear_strtbl(void);
 
 #ifdef WITH_NQPROGS
+// NQ-ремап field-оффсетов (0..105; >105 — identity). Значения — NQ-ветка
+// формулы PR_InitPatchTables. Используется инстансом серверного PR1 при NQ.
+static const int fieldofs_nq[106] = {
+	  0,  1,  2,  3,  4,  5,  6,  7,  9, 10,
+	 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+	 21, 22, 23, 24, 25,102,103,104, 26, 27,
+	 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+	 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+	 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+	 58, 59, 60, 61, 62, 63, 64, 65, 66, 67,
+	 68, 69, 70,105, 71, 72, 73, 74, 75, 76,
+	 77, 78, 79, 80, 81, 82, 83, 84, 85, 86,
+	 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+	 97, 98, 99,100,101,  8,
+};
+
 void PR_InitPatchTables (void)
 {
 	int i;
@@ -1564,6 +1580,14 @@ void PR1_LoadProgs (void)
 		for (i = 0; i < vm->progs->numfielddefs; i++)
 			if (vm->fielddefs[i].type & DEF_SAVEGLOBAL)
 				SV_Error ("PR1_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
+
+		// Поле-оффсетная карта по диалекту модуля: классика — raw (NULL),
+		// NQ — NQ-ремап (ADR 0017 P2, per-instance).
+#ifdef WITH_NQPROGS
+		vm->fieldofs_patch = pr_nqprogs ? fieldofs_nq : NULL;
+#else
+		vm->fieldofs_patch = NULL;
+#endif
 
 		PR1VM_CommitServer(vm);
 	}

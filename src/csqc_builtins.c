@@ -458,8 +458,8 @@ static void csqc_sendevent (void)
 }
 
 /*
-S1 read*-минимум: читают из текущего сетевого сообщения (как FTE), для Remove
-entnum подставляется через CSQC_Client_ReadEntityNum (временный путь).
+S1 read*-минимум: читают из текущего сетевого сообщения (как FTE). Remove
+больше не через стрим — identity модуль берёт из self.entnum (ADR 0017 P2).
 */
 static void csqc_readbyte (void)
 {
@@ -540,13 +540,8 @@ static void csqc_readfloat (void)
 static void csqc_readentitynum (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	int e;
-	if (!vm)
-		return;
-	e = CSQC_Client_ReadEntityNum ();
-	if (e < 0)
-		e = MSG_ReadShort ();
-	vm->globals[OFS_RETURN] = e;
+	if (vm)
+		vm->globals[OFS_RETURN] = MSG_ReadShort ();
 }
 
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
