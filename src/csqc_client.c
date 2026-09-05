@@ -46,9 +46,18 @@ typedef struct csqc_client_state_s
 	char		csprogs_dl_path[MAX_QPATH];	// локальный файл после скачивания
 	int			numcmds;
 	char		cmds[16][64];
+	// Арена edicts клиентского инстанса (ADR 0017 P1/D2). Q_malloc, free в
+	// Disconnect/Load-start; bind в vm->edicts/game_edicts (entity-опкоды).
+	edict_t		*edicts;
+	byte		*game_edicts;
 } csqc_client_state_t;
 
 static csqc_client_state_t s_csqc;
+
+// Клиентская арена edicts (ADR 0017, P1/D2): прямая карта entnum -> слот.
+// entity-значение PR1 = N*edict_size; слот 0 — world. edict_size = entityfields*4
+// (у нас 432). Только Q_malloc (не hunk — урок Bug1).
+#define CSQC_MAX_EDICTS	2048	// макс. edict из сетевого потока (sv max_net_ents)
 
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
@@ -306,6 +315,51 @@ static void CSQC_Client_StartDownload (const char *remote, const char *localrel)
 
 /*
 =================
+CSQC_Client_FreeArena / AllocArena
+
+Клиентская арена edicts (ADR 0017 P1/D2): прямая карта entnum -> слот
+(entity-значение PR1 = N*edict_size). Q_malloc (не hunk — урок Bug1);
+free в Disconnect и в начале Load (защита от повторного вызова).
+=================
+*/
+static void CSQC_Client_FreeArena (void)
+{
+	if (s_csqc.edicts)
+	{
+		Q_free (s_csqc.edicts);
+		s_csqc.edicts = NULL;
+	}
+	if (s_csqc.game_edicts)
+	{
+		Q_free (s_csqc.game_edicts);
+		s_csqc.game_edicts = NULL;
+	}
+}
+
+static void CSQC_Client_AllocArena (pr1vm_t *vm)
+{
+	int i;
+
+	CSQC_Client_FreeArena ();
+	if (!vm || vm->edict_size <= 0)
+		return;
+
+	s_csqc.game_edicts = (byte *)Q_malloc ((size_t)CSQC_MAX_EDICTS * vm->edict_size);
+	s_csqc.edicts = (edict_t *)Q_malloc (sizeof (edict_t) * CSQC_MAX_EDICTS);
+	memset (s_csqc.game_edicts, 0, (size_t)CSQC_MAX_EDICTS * vm->edict_size);
+	memset (s_csqc.edicts, 0, sizeof (edict_t) * CSQC_MAX_EDICTS);
+	for (i = 0; i < CSQC_MAX_EDICTS; i++)
+		s_csqc.edicts[i].v = (entvars_t *)(s_csqc.game_edicts + (size_t)i * vm->edict_size);
+
+	vm->edicts = s_csqc.edicts;
+	vm->game_edicts = s_csqc.game_edicts;
+	vm->num_edicts = CSQC_MAX_EDICTS;
+	vm->max_edicts = CSQC_MAX_EDICTS;
+	vm->state = 0;	// клиентский инстанс; OP_ADDRESS-гард «world» не активен (world не пишем)
+}
+
+/*
+=================
 CSQC_Client_Load
 
 Загружает csprogs (path из gamedir; локальный файл или только что скачанный
@@ -327,6 +381,9 @@ static qbool CSQC_Client_Load (const char *path)
 		return false;
 	}
 
+	// Защита от повторного Load (арена из прошлой загрузки) до memset.
+	CSQC_Client_FreeArena ();
+
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
@@ -344,6 +401,9 @@ static qbool CSQC_Client_Load (const char *path)
 	}
 
 	CSQCVM_RegisterBuiltins (vm);
+
+	// P1/D2: арена edicts клиентского инстанса (edict_size известен после load).
+	CSQC_Client_AllocArena (vm);
 
 	f = PR1VM_FindFunction (vm, "CSQC_Init");
 	if (f)
@@ -701,6 +761,8 @@ void CSQC_Client_Disconnect (void)
 		PR1VM_UnLoad (&s_csqc.vm);
 	}
 	CSQC_Client_ClearCommands ();
+	// P1/D2: арена edicts до memset (указатели ещё на месте).
+	CSQC_Client_FreeArena ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
