@@ -169,26 +169,139 @@ static void csqc_strstrofs (void)
 
 /*
 float(float property, ...) getproperty = #309
-(VF_SCREENVSIZE=204 → vector (vid.width, vid.height, 0); остальные → 0.)
+
+Полный read-паритет FTE (PF_R_GetViewFlag, pr_csqc.c): чтение текущего состояния
+рендера движка (r_refdef/cl/vid), а не «значения, поставленные модулем #303».
+Числа VF_* — из TF2003-qvm/csqc/csdefs.qc (346-375). set-флаги (DRAWWORLD и пр.)
+в getter-списке FTE отсутствуют → default 0; у нас тоже 0. 3D-сцена (#303/#304) —
+вне скоупа (ADR 0018).
 */
-#define CSQC_VF_SCREENVSIZE 204
+#define CSQC_VF_MIN		1	// viewport top-left (x,y)
+#define CSQC_VF_MIN_X		2
+#define CSQC_VF_MIN_Y		3
+#define CSQC_VF_SIZE		4	// viewport width/height
+#define CSQC_VF_SIZE_X		5
+#define CSQC_VF_SIZE_Y		6
+#define CSQC_VF_VIEWPORT	7	// (width, height)
+#define CSQC_VF_FOV		8	// (fov_x, fov_y)
+#define CSQC_VF_FOV_X		9
+#define CSQC_VF_FOV_Y		10
+#define CSQC_VF_ORIGIN		11
+#define CSQC_VF_ORIGIN_X	12
+#define CSQC_VF_ORIGIN_Y	13
+#define CSQC_VF_ORIGIN_Z	14
+#define CSQC_VF_ANGLES		15
+#define CSQC_VF_ANGLES_X	16
+#define CSQC_VF_ANGLES_Y	17
+#define CSQC_VF_ANGLES_Z	18
+#define CSQC_VF_CL_VIEWANGLES	33
+#define CSQC_VF_CL_VIEWANGLES_X	34
+#define CSQC_VF_CL_VIEWANGLES_Y	35
+#define CSQC_VF_CL_VIEWANGLES_Z	36
+#define CSQC_VF_AFOV		203
+#define CSQC_VF_SCREENVSIZE	204
+#define CSQC_VF_SCREENPSIZE	205
 
 static void csqc_getproperty (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	float prop;
+	float *r;
+
 	if (!vm)
 		return;
 	prop = vm->globals[OFS_PARM0];
-	vm->globals[OFS_RETURN] = 0;
-	vm->globals[OFS_RETURN + 1] = 0;
-	vm->globals[OFS_RETURN + 2] = 0;
-	if ((int)prop == CSQC_VF_SCREENVSIZE)
+	r = &vm->globals[OFS_RETURN];
+	r[0] = r[1] = r[2] = 0;
+	if (cls.state != ca_active)
+		return;
+
+	switch ((int)prop)
 	{
-		int w = 0, h = 0;
-		CSQC_Client_GetScreenSize (&w, &h);
-		vm->globals[OFS_RETURN] = w;
-		vm->globals[OFS_RETURN + 1] = h;
+	case CSQC_VF_SCREENVSIZE:
+	case CSQC_VF_SCREENPSIZE:
+		// «виртуальный»/«физический» размер; в ezquake без OS-скейла — одно и то же.
+		r[0] = vid.width;
+		r[1] = vid.height;
+		break;
+	case CSQC_VF_FOV:
+		r[0] = r_refdef.fov_x;
+		r[1] = r_refdef.fov_y;
+		break;
+	case CSQC_VF_FOV_X:
+		r[0] = r_refdef.fov_x;
+		break;
+	case CSQC_VF_FOV_Y:
+		r[0] = r_refdef.fov_y;
+		break;
+	case CSQC_VF_AFOV:
+		// FTE: r_refdef.afov; в ezquake его нет — приближённо cvar fov.
+		r[0] = Cvar_Value ("fov");
+		break;
+	case CSQC_VF_ORIGIN:
+		VectorCopy (r_refdef.vieworg, r);
+		break;
+	case CSQC_VF_ORIGIN_X:
+		r[0] = r_refdef.vieworg[0];
+		break;
+	case CSQC_VF_ORIGIN_Y:
+		r[0] = r_refdef.vieworg[1];
+		break;
+	case CSQC_VF_ORIGIN_Z:
+		r[0] = r_refdef.vieworg[2];
+		break;
+	case CSQC_VF_ANGLES:
+		VectorCopy (r_refdef.viewangles, r);
+		break;
+	case CSQC_VF_ANGLES_X:
+		r[0] = r_refdef.viewangles[0];
+		break;
+	case CSQC_VF_ANGLES_Y:
+		r[0] = r_refdef.viewangles[1];
+		break;
+	case CSQC_VF_ANGLES_Z:
+		r[0] = r_refdef.viewangles[2];
+		break;
+	case CSQC_VF_CL_VIEWANGLES:
+		VectorCopy (cl.viewangles, r);
+		break;
+	case CSQC_VF_CL_VIEWANGLES_X:
+		r[0] = cl.viewangles[0];
+		break;
+	case CSQC_VF_CL_VIEWANGLES_Y:
+		r[0] = cl.viewangles[1];
+		break;
+	case CSQC_VF_CL_VIEWANGLES_Z:
+		r[0] = cl.viewangles[2];
+		break;
+	case CSQC_VF_VIEWPORT:	// FTE: grect.width/height
+		r[0] = r_refdef.vrect.width;
+		r[1] = r_refdef.vrect.height;
+		break;
+	case CSQC_VF_MIN:
+		r[0] = r_refdef.vrect.x;
+		r[1] = r_refdef.vrect.y;
+		break;
+	case CSQC_VF_MIN_X:
+		r[0] = r_refdef.vrect.x;
+		break;
+	case CSQC_VF_MIN_Y:
+		r[0] = r_refdef.vrect.y;
+		break;
+	case CSQC_VF_SIZE:
+		r[0] = r_refdef.vrect.width;
+		r[1] = r_refdef.vrect.height;
+		break;
+	case CSQC_VF_SIZE_X:
+		r[0] = r_refdef.vrect.width;
+		break;
+	case CSQC_VF_SIZE_Y:
+		r[0] = r_refdef.vrect.height;
+		break;
+	default:
+		// set-флаги (DRAWWORLD/PERSPECTIVE/...) и без аналога/DP-legacy — 0
+		// (в FTE getter-списка нет, default возвращает 0).
+		break;
 	}
 }
 
