@@ -927,6 +927,26 @@ static void csqc_runstandardplayerphysics (void)
 	CSQC_Client_RunPlayerPhysics (entnum);
 }
 
+/*
+entity(float entnum) edict_num = #459
+C2.1: entity-значение по номеру (N*edict_size), как self в SetEntityContext.
+Вне диапазона арены -> 0 (world).
+*/
+static void csqc_edict_num (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int entnum;
+	if (!vm)
+		return;
+	entnum = (int)vm->globals[OFS_PARM0];
+	if (entnum < 0 || vm->max_edicts <= 0 || entnum >= vm->max_edicts)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	vm->globals[OFS_RETURN] = entnum * vm->edict_size;
+}
+
 static void csqc_getplayerkeyvalue (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1033,6 +1053,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 345, (builtin_t)csqc_getinputstate);
 	// C1.4 — #347 runstandardplayerphysics.
 	PR1VM_RegisterBuiltin (vm, 347, (builtin_t)csqc_runstandardplayerphysics);
+	// C2.1 — #459 edict_num.
+	PR1VM_RegisterBuiltin (vm, 459, (builtin_t)csqc_edict_num);
 	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
 	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
