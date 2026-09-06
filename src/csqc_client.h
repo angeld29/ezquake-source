@@ -12,6 +12,7 @@ csqc_client.h -- клиентская обвязка PR1VM (наш csprogs.dat),
 
 #include <stddef.h>	// size_t (buf API)
 struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); без зависимостей в шапке
+struct pr1vm_s;		// PR1 инстанс (pr1vm.h); здесь — только opaque-указатель
 
 // Доступ к клиентскому состоянию/выводу (реализация в csqc_client.c):
 float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы
@@ -19,6 +20,16 @@ void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 3
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
+
+// P1d C0-A — модульные сущности (builtin spawn/remove): верхний резерв арены.
+// entnum — индекс слота; entity-значение PR1 = entnum*edict_size.
+int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// первый свободный слот резерва / 0
+void CSQC_Client_EntFree (struct pr1vm_s *vm, int entnum);	// освободить (вне резерва — игнор)
+// P1d C1 — обход/диагностика резерва и полей модуля.
+qbool CSQC_Client_EntUsed (int entnum);			// слот резерва занят модульной сущностью
+int CSQC_Client_EntSpawnBase (void);			// нижняя граница резерва
+int CSQC_Client_EntUsedCount (void);			// число занятых модульных слотов
+int CSQC_Client_FindField (struct pr1vm_s *vm, const char *name);	// offset поля в float-словах / -1
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке

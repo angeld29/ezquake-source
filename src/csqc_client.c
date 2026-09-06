@@ -104,6 +104,13 @@ static csqc_cursormode_t s_cursormode;
 // (у нас 432). Только Q_malloc (не hunk — урок Bug1).
 #define CSQC_MAX_EDICTS	2048	// макс. edict из сетевого потока (sv max_net_ents)
 
+// P1d C0-A: резерв верхних слотов арены под модульные сущности (builtin spawn/
+// remove). Сетевые номера обычно ниже базы; до перехода на FTE-пул (слот≠номер)
+// это ограничение документировано (см. план P1d / parity).
+#define CSQC_MAX_SPAWNS	128
+#define CSQC_SPAWN_BASE	(CSQC_MAX_EDICTS - CSQC_MAX_SPAWNS)
+static qbool s_spawn_used[CSQC_MAX_SPAWNS];
+
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
 // (см. CSQC_Client_GetStat/SetStat).
@@ -553,6 +560,9 @@ static void CSQC_Client_AllocArena (pr1vm_t *vm)
 	if (!vm || vm->edict_size <= 0)
 		return;
 
+	// P1d C0-A: сброс занятости модульного резерва (spawn/remove).
+	memset (s_spawn_used, 0, sizeof (s_spawn_used));
+
 	s_csqc.game_edicts = (byte *)Q_malloc ((size_t)CSQC_MAX_EDICTS * vm->edict_size);
 	s_csqc.edicts = (edict_t *)Q_malloc (sizeof (edict_t) * CSQC_MAX_EDICTS);
 	memset (s_csqc.game_edicts, 0, (size_t)CSQC_MAX_EDICTS * vm->edict_size);
@@ -576,7 +586,7 @@ CSQC_Client_FindField
 смещение поля в float-словах от начала entvars (ddef_t.ofs) или -1.
 =================
 */
-static int CSQC_Client_FindField (pr1vm_t *vm, const char *name)
+int CSQC_Client_FindField (pr1vm_t *vm, const char *name)
 {
 	int i;
 
@@ -615,6 +625,80 @@ static void CSQC_Client_SetEntityContext (pr1vm_t *vm, unsigned entnum)
 		slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size + s_csqc.field_entnum * 4);
 		slot[0] = (float)entnum;
 	}
+}
+
+/*
+=================
+CSQC_Client_EntAlloc / EntFree
+
+P1d C0-A: модульные сущности в верхнем резерве арены
+[CSQC_SPAWN_BASE, CSQC_MAX_EDICTS). Возвращают/принимают entnum (индекс слота);
+entity-значение PR1 = entnum*edict_size (как в SetEntityContext). Слот обнуляется,
+.entnum пишется тем же путём, что у сетевых сущностей. remove вне резерва (сетевая
+сущность) — игнор (ADR 0017: сетевой путь не трогаем).
+=================
+*/
+int CSQC_Client_EntAlloc (pr1vm_t *vm)
+{
+	int i, entnum;
+	float *slot;
+
+	if (!vm || !vm->game_edicts || vm->edict_size <= 0)
+		return 0;
+	for (i = 0; i < CSQC_MAX_SPAWNS; i++)
+	{
+		if (s_spawn_used[i])
+			continue;
+		s_spawn_used[i] = true;
+		entnum = CSQC_SPAWN_BASE + i;
+		slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
+		memset (slot, 0, vm->edict_size);
+		if (s_csqc.field_entnum >= 0)
+			slot[s_csqc.field_entnum] = (float)entnum;
+		return entnum;
+	}
+	Con_Printf ("CSQC_Client_EntAlloc: no free spawn slots (%d used)\n", CSQC_MAX_SPAWNS);
+	return 0;
+}
+
+void CSQC_Client_EntFree (pr1vm_t *vm, int entnum)
+{
+	int i;
+	float *slot;
+
+	if (!vm || !vm->game_edicts || entnum < CSQC_SPAWN_BASE || entnum >= CSQC_MAX_EDICTS)
+		return;	// вне резерва — сетевая сущность, не трогаем
+	i = entnum - CSQC_SPAWN_BASE;
+	if (!s_spawn_used[i])
+		return;
+	s_spawn_used[i] = false;
+	slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
+	if (s_csqc.field_entnum >= 0)
+		slot[s_csqc.field_entnum] = 0;
+	memset (slot, 0, vm->edict_size);
+}
+
+// Занятость/доступ к резерву (P1d C1: nextent/find/findradius/eprint/coredump).
+qbool CSQC_Client_EntUsed (int entnum)
+{
+	int i = entnum - CSQC_SPAWN_BASE;
+	if (i < 0 || i >= CSQC_MAX_SPAWNS)
+		return false;
+	return s_spawn_used[i];
+}
+
+int CSQC_Client_EntSpawnBase (void)
+{
+	return CSQC_SPAWN_BASE;
+}
+
+int CSQC_Client_EntUsedCount (void)
+{
+	int i, n = 0;
+	for (i = 0; i < CSQC_MAX_SPAWNS; i++)
+		if (s_spawn_used[i])
+			n++;
+	return n;
 }
 
 /*

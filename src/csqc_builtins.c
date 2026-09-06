@@ -1993,6 +1993,291 @@ static void csqc_setpause (void)
 	/* no-op (документировано) */
 }
 
+/*
+Phase 1 L1 P1d C1 — базовые entity на арене ADR 0017 (модульный резерв C0-A).
+entity-значение PR1 = entnum*edict_size (int-биты). Типы полей (eprint): код 1 =
+ev_string, 2 = ev_float, 3 = ev_vector, 4 = ev_entity (pr_comp.h etype_t).
+*/
+
+static int csqc_ent_of (pr1vm_t *vm, int parmofs)
+{
+	int v;
+	if (!vm || vm->edict_size <= 0)
+		return -1;
+	v = *(int *)&vm->globals[parmofs];
+	return v / vm->edict_size;
+}
+
+static float *csqc_ent_slot (pr1vm_t *vm, int entnum)
+{
+	if (!vm || !vm->game_edicts)
+		return NULL;
+	if (entnum < 0 || entnum >= vm->num_edicts)
+		return NULL;
+	return (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
+}
+
+static float *csqc_ent_field (pr1vm_t *vm, int entnum, const char *name)
+{
+	int ofs;
+	float *slot;
+	if ((ofs = CSQC_Client_FindField (vm, name)) < 0)
+		return NULL;
+	slot = csqc_ent_slot (vm, entnum);
+	return slot ? &slot[ofs] : NULL;
+}
+
+static void csqc_ret_entity (pr1vm_t *vm, int entnum)
+{
+	*(int *)&vm->globals[OFS_RETURN] = entnum * vm->edict_size;
+}
+
+/* entity() spawn = #14 */
+static void csqc_spawn (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	csqc_ret_entity (vm, CSQC_Client_EntAlloc (vm));
+}
+
+/* void(entity e) remove = #15 (вне резерва — игнор, ADR 0017) */
+static void csqc_remove (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_EntFree (vm, csqc_ent_of (vm, OFS_PARM0));
+}
+
+/* void(entity e, vector org) setorigin = #2 */
+static void csqc_setorigin (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *f, *o;
+	int e;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	f = csqc_ent_field (vm, e, "origin");
+	if (!f)
+		return;
+	o = &vm->globals[OFS_PARM0 + 3];
+	f[0] = o[0]; f[1] = o[1]; f[2] = o[2];
+}
+
+/* void(entity e, string m) setmodel = #3 */
+static void csqc_setmodel (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s;
+	int e, ofs;
+	float *slot;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	s = CSQCVM_Str (OFS_PARM0 + 3);
+	ofs = CSQC_Client_FindField (vm, "model");
+	if (ofs < 0 || !s)
+		return;
+	slot = csqc_ent_slot (vm, e);
+	if (!slot)
+		return;
+	PR1VM_SetString (vm, (string_t *)&slot[ofs], s);
+}
+
+/* void(entity e, vector min, vector max) setsize = #4 */
+static void csqc_setsize (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *fmin, *fmax, *mn, *mx;
+	int e;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	fmin = csqc_ent_field (vm, e, "mins");
+	fmax = csqc_ent_field (vm, e, "maxs");
+	if (!fmin || !fmax)
+		return;
+	mn = &vm->globals[OFS_PARM0 + 3];
+	mx = &vm->globals[OFS_PARM0 + 6];
+	fmin[0] = mn[0]; fmin[1] = mn[1]; fmin[2] = mn[2];
+	fmax[0] = mx[0]; fmax[1] = mx[1]; fmax[2] = mx[2];
+}
+
+/* entity(entity e) nextent = #47 — модульный резерв (сетевые не «used») */
+static void csqc_nextent (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int e;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	if (e < 0)
+		e = 0;
+	for (e++; e < vm->num_edicts; e++)
+		if (CSQC_Client_EntUsed (e))
+		{
+			csqc_ret_entity (vm, e);
+			return;
+		}
+	csqc_ret_entity (vm, 0);
+}
+
+/* entity(entity start, .string fld, string match) find = #18 (резерв; string-поля) */
+static void csqc_find (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int e, f;
+	char *s, *t;
+	float *slot;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	f = *(int *)&vm->globals[OFS_PARM0 + 3];
+	s = CSQCVM_Str (OFS_PARM0 + 6);
+	if (e < 0)
+		e = 0;
+	if (s)
+		for (e++; e < vm->num_edicts; e++)
+		{
+			if (!CSQC_Client_EntUsed (e))
+				continue;
+			slot = csqc_ent_slot (vm, e);
+			if (!slot)
+				continue;
+			t = PR1VM_GetString (vm, *(int *)&slot[f]);
+			if (t && !strcmp (t, s))
+			{
+				csqc_ret_entity (vm, e);
+				return;
+			}
+		}
+	csqc_ret_entity (vm, 0);
+}
+
+/* entity(vector org, float rad) findradius = #22 — резерв; chain если поле есть */
+static void csqc_findradius (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *org, *o, rad, d;
+	float *chslot;
+	int e, chain_ofs, first, prev;
+	if (!vm)
+		return;
+	org = &vm->globals[OFS_PARM0];
+	rad = vm->globals[OFS_PARM0 + 3];
+	chain_ofs = CSQC_Client_FindField (vm, "chain");
+	first = 0;
+	prev = 0;
+	for (e = CSQC_Client_EntSpawnBase (); e < vm->num_edicts; e++)
+	{
+		if (!CSQC_Client_EntUsed (e))
+			continue;
+		o = csqc_ent_field (vm, e, "origin");
+		if (!o)
+			continue;
+		d = (o[0]-org[0])*(o[0]-org[0]) + (o[1]-org[1])*(o[1]-org[1]) + (o[2]-org[2])*(o[2]-org[2]);
+		if (d > rad * rad)
+			continue;
+		if (chain_ofs >= 0)
+		{
+			chslot = csqc_ent_slot (vm, e);
+			if (chslot)
+				*(int *)&chslot[chain_ofs] = prev * vm->edict_size;
+			prev = e;
+		}
+		if (!first)
+			first = e;
+	}
+	if (first && chain_ofs < 0)
+		first = prev;	// без поля chain — возврат только последнего совпадения
+	csqc_ret_entity (vm, first);
+}
+
+/* void() changeyaw = #49 — no-op (отклонение; без серверной физики) */
+static void csqc_changeyaw (void)
+{
+	/* no-op (документировано) */
+}
+
+/* void(entity e) makestatic = #69 — no-op (отклонение; клиент статик-энтов не ведёт) */
+static void csqc_makestatic (void)
+{
+	/* no-op (документировано) */
+}
+
+/* string(entity e, string key) infokey = #80 — serverinfo (клиент без per-ent userinfo) */
+static void csqc_infokey (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *key = CSQCVM_Str (OFS_PARM0 + 3);
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (Info_ValueForKey (cl.serverinfo, key ? key : ""));
+}
+
+/* float(entity e) checkbottom = #40 — 0 (отклонение: нет серверного пола) */
+static void csqc_checkbottom (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/* void(entity e) eprint = #31 — печать полей слота в консоль (по fielddefs) */
+static void csqc_eprint (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int e, i, ofs;
+	float *slot;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	slot = csqc_ent_slot (vm, e);
+	if (!slot)
+	{
+		Con_Printf ("eprint: bad entity %d\n", e);
+		return;
+	}
+	Con_Printf ("eprint entity %d\n", e);
+	for (i = 0; i < vm->progs->numfielddefs; i++)
+	{
+		char *fn = PR1VM_GetString (vm, vm->fielddefs[i].s_name);
+		ofs = vm->fielddefs[i].ofs;
+		if (!fn)
+			continue;
+		switch (vm->fielddefs[i].type)
+		{
+		case 1:	/* ev_string */
+			Con_Printf ("  .%s = \"%s\"\n", fn,
+				PR1VM_GetString (vm, *(int *)&slot[ofs]) ? PR1VM_GetString (vm, *(int *)&slot[ofs]) : "");
+			break;
+		case 2:	/* ev_float */
+			Con_Printf ("  .%s = %g\n", fn, slot[ofs]);
+			break;
+		case 3:	/* ev_vector */
+			Con_Printf ("  .%s = '%g %g %g'\n", fn, slot[ofs], slot[ofs + 1], slot[ofs + 2]);
+			break;
+		case 4:	/* ev_entity */
+			Con_Printf ("  .%s = ent %d\n", fn, (int)slot[ofs]);
+			break;
+		}
+	}
+}
+
+/* void() coredump = #28 — шапка модуля + занятость резерва */
+static void csqc_coredump (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	Con_Printf ("coredump (CSQC): funcs %d globals %d fields %d spawn_used %d (резерв от %d)\n",
+		vm->progs->numfunctions, vm->progs->numglobals, vm->progs->numfielddefs,
+		CSQC_Client_EntUsedCount (), CSQC_Client_EntSpawnBase ());
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -2055,6 +2340,22 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 76,  (builtin_t)csqc_precache_sound);
 	PR1VM_RegisterBuiltin (vm, 77,  (builtin_t)csqc_precache_file);
 	PR1VM_RegisterBuiltin (vm, 531, (builtin_t)csqc_setpause);
+
+	// Phase 1 L1 P1d C1 — базовые entity на арене (резерв C0-A).
+	PR1VM_RegisterBuiltin (vm, 2,   (builtin_t)csqc_setorigin);
+	PR1VM_RegisterBuiltin (vm, 3,   (builtin_t)csqc_setmodel);
+	PR1VM_RegisterBuiltin (vm, 4,   (builtin_t)csqc_setsize);
+	PR1VM_RegisterBuiltin (vm, 14,  (builtin_t)csqc_spawn);
+	PR1VM_RegisterBuiltin (vm, 15,  (builtin_t)csqc_remove);
+	PR1VM_RegisterBuiltin (vm, 18,  (builtin_t)csqc_find);
+	PR1VM_RegisterBuiltin (vm, 22,  (builtin_t)csqc_findradius);
+	PR1VM_RegisterBuiltin (vm, 28,  (builtin_t)csqc_coredump);
+	PR1VM_RegisterBuiltin (vm, 31,  (builtin_t)csqc_eprint);
+	PR1VM_RegisterBuiltin (vm, 40,  (builtin_t)csqc_checkbottom);
+	PR1VM_RegisterBuiltin (vm, 47,  (builtin_t)csqc_nextent);
+	PR1VM_RegisterBuiltin (vm, 49,  (builtin_t)csqc_changeyaw);
+	PR1VM_RegisterBuiltin (vm, 69,  (builtin_t)csqc_makestatic);
+	PR1VM_RegisterBuiltin (vm, 80,  (builtin_t)csqc_infokey);
 
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
