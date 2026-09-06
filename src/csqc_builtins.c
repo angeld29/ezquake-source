@@ -2278,6 +2278,203 @@ static void csqc_coredump (void)
 		CSQC_Client_EntUsedCount (), CSQC_Client_EntSpawnBase ());
 }
 
+/*
+Phase 1 L1 P1d C2 — мировые трассы/физика (мир-only, без глобального pmove).
+Отклонения: без игроков/bbox-сущностей; tracebox — hull[1] с offset по mins/maxs;
+движение — своя трасса, без полного PM_PlayerMove. trace_* глобалы пишутся по
+именам (PR1VM_FindGlobal), ent всегда = world (0).
+*/
+
+static trace_t csqc_trace_fallback (vec3_t end)
+{
+	trace_t tr;
+	memset (&tr, 0, sizeof (tr));
+	tr.fraction = 1;
+	VectorCopy (end, tr.endpos);
+	return tr;
+}
+
+static trace_t csqc_world_trace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end)
+{
+	cmodel_t *clip;
+	hull_t *hull;
+	trace_t tr;
+	vec3_t offset, sl, el;
+	qbool box = (mins != NULL && maxs != NULL);
+
+	clip = cl.clipmodels[1];	// мировая clip-модель (hull'ы BSP)
+	if (!clip)
+		return csqc_trace_fallback (end);
+
+	if (!box || (mins[0] == 0 && mins[1] == 0 && mins[2] == 0 &&
+		maxs[0] == 0 && maxs[1] == 0 && maxs[2] == 0))
+	{
+		hull = &clip->hulls[0];
+		return CM_HullTrace (hull, start, end);
+	}
+
+	/* box: hull[1] (player-clip) с offset по переданным mins/maxs */
+	hull = &clip->hulls[1];
+	VectorSubtract (hull->clip_mins, mins, offset);
+	VectorSubtract (start, offset, sl);
+	VectorSubtract (end, offset, el);
+	tr = CM_HullTrace (hull, sl, el);
+	VectorAdd (tr.endpos, offset, tr.endpos);
+	return tr;
+}
+
+static void csqc_store_trace (pr1vm_t *vm, trace_t *tr)
+{
+	int o;
+	if ((o = PR1VM_FindGlobal (vm, "trace_fraction")) >= 0)
+		vm->globals[o] = tr->fraction;
+	if ((o = PR1VM_FindGlobal (vm, "trace_allsolid")) >= 0)
+		vm->globals[o] = tr->allsolid;
+	if ((o = PR1VM_FindGlobal (vm, "trace_startsolid")) >= 0)
+		vm->globals[o] = tr->startsolid;
+	if ((o = PR1VM_FindGlobal (vm, "trace_inopen")) >= 0)
+		vm->globals[o] = tr->inopen;
+	if ((o = PR1VM_FindGlobal (vm, "trace_inwater")) >= 0)
+		vm->globals[o] = tr->inwater;
+	if ((o = PR1VM_FindGlobal (vm, "trace_plane_dist")) >= 0)
+		vm->globals[o] = tr->plane.dist;
+	if ((o = PR1VM_FindGlobal (vm, "trace_endpos")) >= 0)
+	{
+		vm->globals[o] = tr->endpos[0];
+		vm->globals[o + 1] = tr->endpos[1];
+		vm->globals[o + 2] = tr->endpos[2];
+	}
+	if ((o = PR1VM_FindGlobal (vm, "trace_plane_normal")) >= 0)
+	{
+		vm->globals[o] = tr->plane.normal[0];
+		vm->globals[o + 1] = tr->plane.normal[1];
+		vm->globals[o + 2] = tr->plane.normal[2];
+	}
+	if ((o = PR1VM_FindGlobal (vm, "trace_ent")) >= 0)
+		*(int *)&vm->globals[o] = 0;	// world
+}
+
+/* void(vector v1, vector v2, float nomonsters, entity forent) traceline = #16 */
+static void csqc_traceline (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	trace_t tr;
+	if (!vm)
+		return;
+	tr = csqc_world_trace (&vm->globals[OFS_PARM0], NULL, NULL,
+		&vm->globals[OFS_PARM0 + 3]);
+	csqc_store_trace (vm, &tr);
+}
+
+/* void(vector v1, vector mins, vector maxs, vector v2, ...) tracebox = #90 */
+static void csqc_tracebox (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	trace_t tr;
+	if (!vm)
+		return;
+	tr = csqc_world_trace (&vm->globals[OFS_PARM0],
+		&vm->globals[OFS_PARM0 + 3], &vm->globals[OFS_PARM0 + 6],
+		&vm->globals[OFS_PARM0 + 9]);
+	csqc_store_trace (vm, &tr);
+}
+
+/* float(vector org) pointcontents = #41 */
+static void csqc_pointcontents (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	hull_t *hull;
+	if (!vm)
+		return;
+	if (!cl.clipmodels[1])
+	{
+		vm->globals[OFS_RETURN] = CONTENTS_EMPTY;
+		return;
+	}
+	hull = &cl.clipmodels[1]->hulls[0];
+	vm->globals[OFS_RETURN] = CM_HullPointContents (hull, hull->firstclipnode,
+		&vm->globals[OFS_PARM0]);
+}
+/* float(float yaw, float dist) walkmove = #32 (self, своя трасса) */
+static void csqc_walkmove (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float yaw, dist, rad;
+	vec3_t start, end;
+	trace_t tr;
+	float *org = NULL;
+	int ofs, entnum;
+
+	if (!vm)
+		return;
+	yaw = vm->globals[OFS_PARM0];
+	dist = vm->globals[OFS_PARM1];
+	ofs = PR1VM_FindGlobal (vm, "self");
+	if (ofs >= 0)
+	{
+		entnum = *(int *)&vm->globals[ofs] / vm->edict_size;
+		org = csqc_ent_field (vm, entnum, "origin");
+	}
+	if (!org)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	rad = yaw * (M_PI / 180.0);
+	VectorCopy (org, start);
+	end[0] = org[0] + cos (rad) * dist;
+	end[1] = org[1] - sin (rad) * dist;	// QW: yaw 0 = +x, растёт по часовой
+	end[2] = org[2];
+	tr = csqc_world_trace (start, NULL, NULL, end);
+	if (tr.fraction < 1)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	VectorCopy (end, org);
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/* float() droptofloor = #34 (self; трасса вниз до земли) */
+static void csqc_droptofloor (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	vec3_t start, end;
+	trace_t tr;
+	float *org = NULL;
+	int ofs, entnum;
+
+	if (!vm)
+		return;
+	ofs = PR1VM_FindGlobal (vm, "self");
+	if (ofs >= 0)
+	{
+		entnum = *(int *)&vm->globals[ofs] / vm->edict_size;
+		org = csqc_ent_field (vm, entnum, "origin");
+	}
+	if (!org)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	VectorCopy (org, start);
+	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 4096;
+	tr = csqc_world_trace (start, NULL, NULL, end);
+	if (tr.fraction >= 1 || tr.fraction <= 0)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	org[0] = tr.endpos[0]; org[1] = tr.endpos[1]; org[2] = tr.endpos[2];
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/* void(float step) movetogoal = #67 — no-op (у модуля нет поля goalentity) */
+static void csqc_movetogoal (void)
+{
+	/* no-op (документировано; нет .goalentity) */
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -2356,6 +2553,14 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 49,  (builtin_t)csqc_changeyaw);
 	PR1VM_RegisterBuiltin (vm, 69,  (builtin_t)csqc_makestatic);
 	PR1VM_RegisterBuiltin (vm, 80,  (builtin_t)csqc_infokey);
+
+	// Phase 1 L1 P1d C2 — мировые трассы/физика (мир-only).
+	PR1VM_RegisterBuiltin (vm, 16,  (builtin_t)csqc_traceline);
+	PR1VM_RegisterBuiltin (vm, 90,  (builtin_t)csqc_tracebox);
+	PR1VM_RegisterBuiltin (vm, 41,  (builtin_t)csqc_pointcontents);
+	PR1VM_RegisterBuiltin (vm, 32,  (builtin_t)csqc_walkmove);
+	PR1VM_RegisterBuiltin (vm, 34,  (builtin_t)csqc_droptofloor);
+	PR1VM_RegisterBuiltin (vm, 67,  (builtin_t)csqc_movetogoal);
 
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
