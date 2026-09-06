@@ -21,14 +21,18 @@ void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENV
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
 
-// P1d C0-A — модульные сущности (builtin spawn/remove): верхний резерв арены.
-// entnum — индекс слота; entity-значение PR1 = entnum*edict_size.
-int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// первый свободный слот резерва / 0
-void CSQC_Client_EntFree (struct pr1vm_s *vm, int entnum);	// освободить (вне резерва — игнор)
-// P1d C1 — обход/диагностика резерва и полей модуля.
-qbool CSQC_Client_EntUsed (int entnum);			// слот резерва занят модульной сущностью
-int CSQC_Client_EntSpawnBase (void);			// нижняя граница резерва
-int CSQC_Client_EntUsedCount (void);			// число занятых модульных слотов
+// FTE-пул (слот ≠ серверный номер). entnum-функции работают со слотами пула;
+// сетевые номера держатся картой номер→слот (svc 76/92). slot 0 = world.
+int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// первый свободный слот пула (свой) / 0
+void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// освободить свою сущность (сеть не трогаем)
+int CSQC_Client_NetAllocSlot (void);					// слот без s_own (сетевой приём)
+void CSQC_Client_NetFreeSlot (int slot, int number);		// освободить слот + numslot
+int CSQC_Client_NumToSlot (int number);					// карта номер→слот / 0
+int CSQC_Client_MapNumber (int number, int slot);		// запись карты (возврат slot)
+// P1d C1 — обход/диагностика пула и полей модуля.
+qbool CSQC_Client_EntUsed (int slot);			// слот занят (сеть или spawn)
+int CSQC_Client_EntSpawnBase (void);			// первый используемый слот (1)
+int CSQC_Client_EntUsedCount (void);			// число занятых слотов пула
 int CSQC_Client_FindField (struct pr1vm_s *vm, const char *name);	// offset поля в float-словах / -1
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:

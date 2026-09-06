@@ -23,6 +23,13 @@ csprogs.dat.
 #include "csqc_client.h"
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
 
+// FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
+// CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
+// edict-слотов арены (слот 0 = world, не управляется). .entnum (поле модуля) = серверный
+// номер; модульные spawn-сущности номера не имеют (.entnum=0).
+#define CSQC_MAX_NUM	4096
+#define CSQC_MAX_EDICTS	4096
+
 typedef struct csqc_client_state_s
 {
 	pr1vm_t		vm;
@@ -31,7 +38,7 @@ typedef struct csqc_client_state_s
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
 	qbool		enable_sent;	// enablecsqc уже отправлен серверу
-	qbool		seen[2048];		// известные CSQC-сущности (isnew для Ent_Update)
+	qbool		seen[CSQC_MAX_NUM];	// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			func_input;		// CSQC_Input_Frame (или -1)
@@ -99,17 +106,12 @@ typedef struct
 } csqc_cursormode_t;
 static csqc_cursormode_t s_cursormode;
 
-// Клиентская арена edicts (ADR 0017, P1/D2): прямая карта entnum -> слот.
-// entity-значение PR1 = N*edict_size; слот 0 — world. edict_size = entityfields*4
-// (у нас 432). Только Q_malloc (не hunk — урок Bug1).
-#define CSQC_MAX_EDICTS	2048	// макс. edict из сетевого потока (sv max_net_ents)
-
-// P1d C0-A: резерв верхних слотов арены под модульные сущности (builtin spawn/
-// remove). Сетевые номера обычно ниже базы; до перехода на FTE-пул (слот≠номер)
-// это ограничение документировано (см. план P1d / parity).
-#define CSQC_MAX_SPAWNS	128
-#define CSQC_SPAWN_BASE	(CSQC_MAX_EDICTS - CSQC_MAX_SPAWNS)
-static qbool s_spawn_used[CSQC_MAX_SPAWNS];
+// Клиентская арена edicts (ADR 0017 P1/D2 + FTE-пул): пул слотов произвольный,
+// серверный номер хранится в .entnum (карта s_numslot: номер→слот). Слот 0 — world.
+// s_own — сущность создана модулем (spawn); remove разрешён только для своих.
+static qbool s_used[CSQC_MAX_EDICTS];
+static qbool s_own[CSQC_MAX_EDICTS];
+static int s_numslot[CSQC_MAX_NUM];
 
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
@@ -560,8 +562,10 @@ static void CSQC_Client_AllocArena (pr1vm_t *vm)
 	if (!vm || vm->edict_size <= 0)
 		return;
 
-	// P1d C0-A: сброс занятости модульного резерва (spawn/remove).
-	memset (s_spawn_used, 0, sizeof (s_spawn_used));
+	// FTE-пул: сброс занятости/номера-карты при (пере)выделении арены.
+	memset (s_used, 0, sizeof (s_used));
+	memset (s_own, 0, sizeof (s_own));
+	memset (s_numslot, 0, sizeof (s_numslot));
 
 	s_csqc.game_edicts = (byte *)Q_malloc ((size_t)CSQC_MAX_EDICTS * vm->edict_size);
 	s_csqc.edicts = (edict_t *)Q_malloc (sizeof (edict_t) * CSQC_MAX_EDICTS);
@@ -610,95 +614,122 @@ self = entnum*edict_size (entity-значение PR1) и пишет float entnu
 .entnum (слот 7) арены. Модуль дальше читает self.entnum.
 =================
 */
-static void CSQC_Client_SetEntityContext (pr1vm_t *vm, unsigned entnum)
+static void CSQC_Client_SetContextSlot (pr1vm_t *vm, unsigned slot, unsigned number)
 {
-	float *slot;
+	float *s;
 
 	if (!vm || !vm->game_edicts)
 		return;
-	// entity-значение PR1 хранится в глобале как raw int (биты), НЕ как float:
-	// self = entnum*edict_size (байт-смещение), иначе float-биты дают OOB.
+	// self = slot*edict_size (entity-значение PR1, int-биты); .entnum (поле модуля)
+	// = серверный номер (у своих spawn-сущностей номер не пишется — остаётся 0).
 	if (s_csqc.global_self >= 0)
-		*(int *)&vm->globals[s_csqc.global_self] = (int)entnum * vm->edict_size;
-	if (s_csqc.field_entnum >= 0 && entnum < CSQC_MAX_EDICTS)
+		*(int *)&vm->globals[s_csqc.global_self] = (int)slot * vm->edict_size;
+	if (s_csqc.field_entnum >= 0 && slot < CSQC_MAX_EDICTS)
 	{
-		slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size + s_csqc.field_entnum * 4);
-		slot[0] = (float)entnum;
+		s = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size + s_csqc.field_entnum * 4);
+		s[0] = (float)number;
 	}
 }
 
 /*
 =================
-CSQC_Client_EntAlloc / EntFree
+CSQC_Client_EntAlloc / EntFree (FTE-пул)
 
-P1d C0-A: модульные сущности в верхнем резерве арены
-[CSQC_SPAWN_BASE, CSQC_MAX_EDICTS). Возвращают/принимают entnum (индекс слота);
-entity-значение PR1 = entnum*edict_size (как в SetEntityContext). Слот обнуляется,
-.entnum пишется тем же путём, что у сетевых сущностей. remove вне резерва (сетевая
-сущность) — игнор (ADR 0017: сетевой путь не трогаем).
+Модульные сущности (builtin spawn) берут произвольный свободный слот пула
+(первый свободный от 1) и помечаются s_own (remove разрешён только своим).
+Сетевые слоты выделяются тем же пулом (без s_own) и держатся картой
+номер→слот в ParseEntities. entity-значение PR1 = slot*edict_size.
 =================
 */
-int CSQC_Client_EntAlloc (pr1vm_t *vm)
+static int CSQC_Client_AllocSlot (void)
 {
-	int i, entnum;
-	float *slot;
-
-	if (!vm || !vm->game_edicts || vm->edict_size <= 0)
-		return 0;
-	for (i = 0; i < CSQC_MAX_SPAWNS; i++)
-	{
-		if (s_spawn_used[i])
-			continue;
-		s_spawn_used[i] = true;
-		entnum = CSQC_SPAWN_BASE + i;
-		slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
-		memset (slot, 0, vm->edict_size);
-		if (s_csqc.field_entnum >= 0)
-			slot[s_csqc.field_entnum] = (float)entnum;
-		return entnum;
-	}
-	Con_Printf ("CSQC_Client_EntAlloc: no free spawn slots (%d used)\n", CSQC_MAX_SPAWNS);
+	int i;
+	for (i = 1; i < CSQC_MAX_EDICTS; i++)
+		if (!s_used[i])
+		{
+			s_used[i] = true;
+			s_own[i] = false;
+			return i;
+		}
+	Con_Printf ("CSQC_Client_AllocSlot: pool full (%d)\n", CSQC_MAX_EDICTS - 1);
 	return 0;
 }
 
-void CSQC_Client_EntFree (pr1vm_t *vm, int entnum)
+int CSQC_Client_EntAlloc (struct pr1vm_s *v)
 {
-	int i;
-	float *slot;
-
-	if (!vm || !vm->game_edicts || entnum < CSQC_SPAWN_BASE || entnum >= CSQC_MAX_EDICTS)
-		return;	// вне резерва — сетевая сущность, не трогаем
-	i = entnum - CSQC_SPAWN_BASE;
-	if (!s_spawn_used[i])
-		return;
-	s_spawn_used[i] = false;
-	slot = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
-	if (s_csqc.field_entnum >= 0)
-		slot[s_csqc.field_entnum] = 0;
-	memset (slot, 0, vm->edict_size);
+	pr1vm_t *vm = (pr1vm_t *)v;
+	int slot;
+	(void)vm;
+	slot = CSQC_Client_AllocSlot ();
+	if (slot)
+		s_own[slot] = true;	// spawn-сущность: .entnum не пишем (0)
+	return slot;
 }
 
-// Занятость/доступ к резерву (P1d C1: nextent/find/findradius/eprint/coredump).
+void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
+{
+	pr1vm_t *vm = (pr1vm_t *)v;
+	float *s;
+
+	if (!vm || !vm->game_edicts)
+		return;
+	if (entnum <= 0 || entnum >= CSQC_MAX_EDICTS || !s_used[entnum])
+		return;
+	if (!s_own[entnum])
+		return;	// сетевая сущность — не трогаем (ADR 0017)
+	s_used[entnum] = false;
+	s_own[entnum] = false;
+	s = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
+	memset (s, 0, vm->edict_size);
+}
+
+/* внутренний сетевой путь (ParseEntities): слот без s_own */
+int CSQC_Client_NetAllocSlot (void)
+{
+	return CSQC_Client_AllocSlot ();
+}
+
+void CSQC_Client_NetFreeSlot (int slot, int number)
+{
+	if (slot > 0 && slot < CSQC_MAX_EDICTS && s_used[slot])
+	{
+		s_used[slot] = false;
+		s_own[slot] = false;
+	}
+	if (number > 0 && number < CSQC_MAX_NUM && s_numslot[number] == slot)
+		s_numslot[number] = 0;
+}
+
+/* доступ/диагностика (P1d C1): обход пула и полей */
 qbool CSQC_Client_EntUsed (int entnum)
 {
-	int i = entnum - CSQC_SPAWN_BASE;
-	if (i < 0 || i >= CSQC_MAX_SPAWNS)
-		return false;
-	return s_spawn_used[i];
+	return (entnum > 0 && entnum < CSQC_MAX_EDICTS) ? s_used[entnum] : false;
 }
 
 int CSQC_Client_EntSpawnBase (void)
 {
-	return CSQC_SPAWN_BASE;
+	return 1;	// первый используемый слот пула (0 — world)
 }
 
 int CSQC_Client_EntUsedCount (void)
 {
 	int i, n = 0;
-	for (i = 0; i < CSQC_MAX_SPAWNS; i++)
-		if (s_spawn_used[i])
+	for (i = 1; i < CSQC_MAX_EDICTS; i++)
+		if (s_used[i])
 			n++;
 	return n;
+}
+
+int CSQC_Client_NumToSlot (int number)
+{
+	return (number > 0 && number < CSQC_MAX_NUM) ? s_numslot[number] : 0;
+}
+
+int CSQC_Client_MapNumber (int number, int slot)
+{
+	if (number > 0 && number < CSQC_MAX_NUM)
+		s_numslot[number] = slot;
+	return slot;
 }
 
 /*
@@ -1061,9 +1092,16 @@ void CSQC_Client_ParseEntities (qbool sized)
 		{
 			if (s_csqc.func_entremove > 0)
 			{
-				// P2/D3: контекст сущности (self/.entnum), без builtin-стрима.
-				CSQC_Client_SetEntityContext (vm, entnum);
-				CSQC_Client_Exec (s_csqc.func_entremove);
+				// P2/D3: контекст (self=slot, .entnum=номер), без builtin-стрима.
+				{
+					int slot = CSQC_Client_NumToSlot ((int)entnum);
+					if (slot)
+					{
+						CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+						CSQC_Client_Exec (s_csqc.func_entremove);
+						CSQC_Client_NetFreeSlot (slot, (int)entnum);
+					}
+				}
 			}
 			s_csqc.seen[entnum] = false;
 			continue;
@@ -1077,8 +1115,22 @@ void CSQC_Client_ParseEntities (qbool sized)
 			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
 			s_csqc.seen[entnum] = true;
 
-			// P2/D3: контекст сущности перед вызовом модуля.
-			CSQC_Client_SetEntityContext (vm, entnum);
+			// P2/D3 + FTE-пул: номер→слот; новый номер — выделить слот пула,
+			// контекст (self=slot, .entnum=номер).
+			{
+				int slot = CSQC_Client_NumToSlot ((int)entnum);
+				if (!slot)
+				{
+					slot = CSQC_Client_NetAllocSlot ();
+					if (!slot)
+					{
+						Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);
+						break;	// патологично (пул 4095); рассинхрон невозможен при чтении
+					}
+					CSQC_Client_MapNumber ((int)entnum, slot);
+				}
+				CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+			}
 
 			// Sized: перед payload — short-длина (mvdsv sv_ents.c:700).
 			payload_start = msg_readcount;

@@ -2273,9 +2273,9 @@ static void csqc_coredump (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	Con_Printf ("coredump (CSQC): funcs %d globals %d fields %d spawn_used %d (резерв от %d)\n",
+	Con_Printf ("coredump (CSQC): funcs %d globals %d fields %d pool_used %d\n",
 		vm->progs->numfunctions, vm->progs->numglobals, vm->progs->numfielddefs,
-		CSQC_Client_EntUsedCount (), CSQC_Client_EntSpawnBase ());
+		CSQC_Client_EntUsedCount ());
 }
 
 /*
