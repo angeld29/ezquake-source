@@ -24,6 +24,30 @@ static pr1vm_t *CSQCVM_Active (void)
 	return PR1VM_Active ();
 }
 
+// Phase 1 L1 P1a (ADR 0019 / docs/ezquake_csqc_client_corebuiltins_plan.md):
+// реюз чистых float/vector-тел серверных builtins на клиентском инстансе.
+// Тела не трогают строки/edict/sv-состояние, а аргументы/возврат читают через
+// G_* макросы (pr_globals) — attach в PR1VM_ExecuteProgram делает pr_globals
+// указывающим на globals исполняемой (клиентской) VM, поэтому вызов корректен.
+// Нестатические серверные PF_* объявлены в pr_cmds.c; здесь — extern-прототипы.
+extern void PF_random (void);
+extern void PF_normalize (void);
+extern void PF_vlen (void);
+extern void PF_vectoyaw (void);
+extern void PF_vectoangles (void);
+extern void PF_rint (void);
+extern void PF_floor (void);
+extern void PF_ceil (void);
+extern void PF_fabs (void);
+extern void PF_sin (void);
+extern void PF_cos (void);
+extern void PF_sqrt (void);
+extern void PF_min (void);
+extern void PF_max (void);
+extern void PF_bound (void);
+extern void PF_traceon (void);
+extern void PF_traceoff (void);
+
 // ADR 0019 (Этап 0): собственный токен-контекст клиентской VM (#441 tokenize /
 // #442 argv). Серверный PR1 использует свой pr1_tokencontext (pr_cmds.c); здесь —
 // свой, чтобы не разделять глобальный токен-буфер движка (Cmd_TokenizeString),
@@ -1520,10 +1544,64 @@ static void csqc_getmousepos (void)
 	vm->globals[OFS_RETURN + 2] = 0;
 }
 
+/*
+float(float x, float y) pow = #97 (Phase 1 L1 P1a; клиентский обработчик —
+серверная PF_pow статическая; чистая математика)
+*/
+static void csqc_pow (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = pow (vm->globals[OFS_PARM0], vm->globals[OFS_PARM1]);
+}
+
+/*
+vector() randomvec = #91 (Phase 1 L1 P1a; клиентский обработчик, как PF_randomvec)
+*/
+static void csqc_randomvec (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *r;
+	if (!vm)
+		return;
+	r = &vm->globals[OFS_RETURN];
+	do {
+		r[0] = (rand () & 0x7fff) * (2.0 / 0x7fff) - 1.0;
+		r[1] = (rand () & 0x7fff) * (2.0 / 0x7fff) - 1.0;
+		r[2] = (rand () & 0x7fff) * (2.0 / 0x7fff) - 1.0;
+	} while (DotProduct (r, r) >= 1);
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
 	PR1VM_RegisterBuiltin (vm, 1, (builtin_t)csqc_makevectors);
+
+	// Phase 1 L1 P1a — реюз чистых float/vector серверных PF_* (см. extern выше):
+	// attach в PR1VM_ExecuteProgram переключает pr_globals на исполняемую VM.
+	PR1VM_RegisterBuiltin (vm, 7,   (builtin_t)PF_random);
+	PR1VM_RegisterBuiltin (vm, 9,   (builtin_t)PF_normalize);
+	PR1VM_RegisterBuiltin (vm, 12,  (builtin_t)PF_vlen);
+	PR1VM_RegisterBuiltin (vm, 13,  (builtin_t)PF_vectoyaw);
+	PR1VM_RegisterBuiltin (vm, 29,  (builtin_t)PF_traceon);
+	PR1VM_RegisterBuiltin (vm, 30,  (builtin_t)PF_traceoff);
+	PR1VM_RegisterBuiltin (vm, 36,  (builtin_t)PF_rint);
+	PR1VM_RegisterBuiltin (vm, 37,  (builtin_t)PF_floor);
+	PR1VM_RegisterBuiltin (vm, 38,  (builtin_t)PF_ceil);
+	PR1VM_RegisterBuiltin (vm, 43,  (builtin_t)PF_fabs);
+	PR1VM_RegisterBuiltin (vm, 51,  (builtin_t)PF_vectoangles);
+	PR1VM_RegisterBuiltin (vm, 60,  (builtin_t)PF_sin);
+	PR1VM_RegisterBuiltin (vm, 61,  (builtin_t)PF_cos);
+	PR1VM_RegisterBuiltin (vm, 62,  (builtin_t)PF_sqrt);
+	PR1VM_RegisterBuiltin (vm, 94,  (builtin_t)PF_min);
+	PR1VM_RegisterBuiltin (vm, 95,  (builtin_t)PF_max);
+	PR1VM_RegisterBuiltin (vm, 96,  (builtin_t)PF_bound);
+	// #97 pow / #91 randomvec — тела в pr_cmds.c статические: лёгкие клиентские
+	// обработчики (чистая математика, читают/пишут vm->globals).
+	PR1VM_RegisterBuiltin (vm, 97,  (builtin_t)csqc_pow);
+	PR1VM_RegisterBuiltin (vm, 91,  (builtin_t)csqc_randomvec);
+
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
 	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar);
