@@ -1874,6 +1874,125 @@ static void csqc_cvar_string (void)
 	CSQCVM_SetRetStr (var ? var->string : "");
 }
 
+/*
+Phase 1 L1 P1e — клиентские подсистемы. Best-effort на клиентские API ezquake;
+отклонения от FTE документируются в parity-audit.
+*/
+
+/*
+void() breakpoint = #6
+Debugger: no-op на клиенте (движок не имеет QC-отладчика).
+*/
+static void csqc_breakpoint (void)
+{
+	/* no-op (документировано) */
+}
+
+/*
+void(entity e, float chan, string samp, float vol, float atten) sound = #8
+Отклонение: позиционный звук у entity не делаем (нет origin-поля без арены);
+прекеш + локальное проигрывание как #177 (объём vol).
+*/
+static void csqc_sound (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n = CSQCVM_Str (OFS_PARM2);
+	float vol = 1;
+	if (!vm)
+		return;
+	if (vm->argc > 3)
+		vol = vm->globals[OFS_PARM0 + 9];
+	if (n && n[0])
+	{
+		S_PrecacheSound (n);
+		if (vol > 0)
+			S_LocalSoundWithVol (n, vol);
+	}
+}
+
+static void csqc_precache_sound (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n = CSQCVM_Str (OFS_PARM0);
+	if (vm && n && n[0])
+		S_PrecacheSound (n);
+	CSQCVM_SetRetStr (n ? n : "");
+}
+
+static void csqc_precache_model (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n = CSQCVM_Str (OFS_PARM0);
+	if (vm && n && n[0])
+		Mod_ForName (n, false);
+	CSQCVM_SetRetStr (n ? n : "");
+}
+
+/*
+string(string) precache_file (#68/#77): возврат имени; локально файл проверять не
+нужно (CSQC на клиенте). Отклонение: без engine-download-триггера.
+*/
+static void csqc_precache_file (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n = CSQCVM_Str (OFS_PARM0);
+	(void)vm;
+	CSQCVM_SetRetStr (n ? n : "");
+}
+
+/*
+void(vector pos, string samp, float vol, float atten) ambientsound = #74
+Отклонение: без позиционного 3D — прекеш + локальное проигрывание (vol).
+*/
+static void csqc_ambientsound (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n = CSQCVM_Str (OFS_PARM1);
+	float vol = 1;
+	if (!vm)
+		return;
+	if (vm->argc > 2)
+		vol = vm->globals[OFS_PARM0 + 6];
+	if (n && n[0])
+	{
+		S_PrecacheSound (n);
+		if (vol > 0)
+			S_LocalSoundWithVol (n, vol);
+	}
+}
+
+/*
+void(vector pos, vector dir, float colour, float count) particle = #48
+*/
+static void csqc_particle (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	R_RunParticleEffect (&vm->globals[OFS_PARM0],
+		&vm->globals[OFS_PARM0 + 3],
+		(int)vm->globals[OFS_PARM0 + 6],
+		(int)vm->globals[OFS_PARM0 + 9]);
+}
+
+/*
+void(float lightstyle, string stylestring, optional vector rgb) lightstyle = #35
+Отклонение: клиент не стилизует свет — no-op (документировано).
+*/
+static void csqc_lightstyle (void)
+{
+	/* no-op (документировано) */
+}
+
+/*
+void(float pause) setpause = #531
+Отклонение: на клиенте нет серверной паузы — no-op (документировано).
+*/
+static void csqc_setpause (void)
+{
+	/* no-op (документировано) */
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -1922,6 +2041,20 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 118, (builtin_t)csqc_strzone);
 	PR1VM_RegisterBuiltin (vm, 119, (builtin_t)csqc_strunzone);
 	PR1VM_RegisterBuiltin (vm, 448, (builtin_t)csqc_cvar_string);
+
+	// Phase 1 L1 P1e — клиентские подсистемы (no-op/отклонения — в parity-audit).
+	PR1VM_RegisterBuiltin (vm, 6,   (builtin_t)csqc_breakpoint);
+	PR1VM_RegisterBuiltin (vm, 8,   (builtin_t)csqc_sound);
+	PR1VM_RegisterBuiltin (vm, 19,  (builtin_t)csqc_precache_sound);
+	PR1VM_RegisterBuiltin (vm, 20,  (builtin_t)csqc_precache_model);
+	PR1VM_RegisterBuiltin (vm, 35,  (builtin_t)csqc_lightstyle);
+	PR1VM_RegisterBuiltin (vm, 48,  (builtin_t)csqc_particle);
+	PR1VM_RegisterBuiltin (vm, 68,  (builtin_t)csqc_precache_file);
+	PR1VM_RegisterBuiltin (vm, 74,  (builtin_t)csqc_ambientsound);
+	PR1VM_RegisterBuiltin (vm, 75,  (builtin_t)csqc_precache_model);
+	PR1VM_RegisterBuiltin (vm, 76,  (builtin_t)csqc_precache_sound);
+	PR1VM_RegisterBuiltin (vm, 77,  (builtin_t)csqc_precache_file);
+	PR1VM_RegisterBuiltin (vm, 531, (builtin_t)csqc_setpause);
 
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
