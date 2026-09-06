@@ -15,6 +15,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
+#include "gl_model.h"		// custom_model_*/Mod_CustomModel (#431 no-op, C6.1)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -1379,7 +1380,34 @@ static void csqc_te_lavasplash (void)
 /*
 C3.3b — beams #428-431 (te_lightning1/2/3, te_beam): CL_CreateBeam(type, ent, start, end)
 (cl_tent.c:439). own-entity -> entnum (handle/edict_size, guard). Аппроксимация.
+#431-fix (C6.1): если модель эффекта отсутствует (напр. progs/beam.mdl в стенде) —
+Con_Printf-варн и no-op, БЕЗ host error/disconnect (Mod_CustomModel(crash=false);
+CL_CreateBeam сам грузит с crash=true и рвёт коннект).
 */
+static custom_model_id_t CSQC_BeamModelId (int type)
+{
+	switch (type)
+	{
+	case 1: return custom_model_bolt;
+	case 2: return custom_model_bolt2;
+	case 3: return custom_model_bolt3;
+	case 4:
+	default: return custom_model_beam;
+	}
+}
+
+static const char *CSQC_BeamModelName (int type)
+{
+	switch (type)
+	{
+	case 1: return "progs/bolt.mdl";
+	case 2: return "progs/bolt2.mdl";
+	case 3: return "progs/bolt3.mdl";
+	case 4:
+	default: return "progs/beam.mdl";
+	}
+}
+
 static void csqc_te_beam_type (int type)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1388,6 +1416,12 @@ static void csqc_te_beam_type (int type)
 	if (!vm)
 		return;
 	g = vm->globals;
+	if (!Mod_CustomModel (CSQC_BeamModelId (type), false))
+	{
+		Con_Printf ("CSQC: te_beam type %d: %s not found - effect skipped\n",
+			type, CSQC_BeamModelName (type));
+		return;
+	}
 	entnum = (int)g[OFS_PARM0];
 	if (vm->edict_size > 0)
 		entnum /= vm->edict_size;
