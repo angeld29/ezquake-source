@@ -12,6 +12,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #ifndef CLIENTONLY
 #include "qwsvdef.h"
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
+#include <time.h>		// csqc_calltimeofday (#231)
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
@@ -1573,6 +1574,159 @@ static void csqc_randomvec (void)
 	} while (DotProduct (r, r) >= 1);
 }
 
+/*
+Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
+без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
+*/
+
+/*
+void(string err, ...) error = #10
+Не-серверный вариант: печатаем и поднимаем host_error активной VM (клиентский
+колбэк ставит errored — кадры отключаются). Отклонение от серверного PF_error:
+без дампа self/edict и SV_Error.
+*/
+static void csqc_error (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	Con_Printf ("CSQC error: %s\n", s ? s : "");
+	if (vm->host_error)
+		vm->host_error (vm, s ? s : "error");
+}
+
+/*
+void(string err, ...) objerror = #11
+FTE: objerror не-фатальна. Печать в консоль, модуль продолжает.
+*/
+static void csqc_objerror (void)
+{
+	char *s = CSQCVM_Str (OFS_PARM0);
+	Con_Printf ("CSQC objerror: %s\n", s ? s : "");
+}
+
+/*
+void(string str) localcmd = #46
+Выполнение строки как команды движка (буфер команд клиента).
+*/
+static void csqc_localcmd (void)
+{
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (s && s[0])
+		Cbuf_AddText (s);
+}
+
+/*
+void(string cvarname, string value) cvar_set = #72
+Как серверный PF_cvar_set (pr_cmds.c): если cvar нет — предупреждение.
+*/
+static void csqc_cvar_set (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name, *val;
+	cvar_t *var;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	val = CSQCVM_Str (OFS_PARM1);
+	if (!name || !name[0])
+		return;
+	var = Cvar_Find (name);
+	if (!var)
+	{
+		Con_Printf ("csqc cvar_set: variable %s not found\n", name);
+		return;
+	}
+	Cvar_Set (var, val ? val : "");
+}
+
+/*
+float(string name, string value) registercvar = #93
+Создание переменной движка (namespace общий), если ещё нет; возврат 1/0.
+*/
+static void csqc_registercvar (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name, *value;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	value = CSQCVM_Str (OFS_PARM1);
+	if (!name || !name[0])
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	if (Cvar_Find (name))
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	Cvar_Create (name, value ? value : "", 0);
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/*
+float(string ext) checkextension = #99
+Клиентский список поддерживаемых расширений (подмножество реализованного).
+*/
+static void csqc_checkextension (void)
+{
+	static const char *supported[] = {
+		"FTE_CSQC",
+		"DP_REGISTERCVAR",
+		"DP_QC_MINMAXBOUND",
+		"DP_QC_RANDOMVEC",
+		"DP_QC_SINCOSSQRTPOW",
+		NULL
+	};
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *ext;
+	int i;
+	if (!vm)
+		return;
+	ext = CSQCVM_Str (OFS_PARM0);
+	vm->globals[OFS_RETURN] = 0;
+	if (!ext)
+		return;
+	for (i = 0; supported[i]; i++)
+		if (!strcasecmp (supported[i], ext))
+		{
+			vm->globals[OFS_RETURN] = 1;
+			return;
+		}
+}
+
+/*
+void() calltimeofday = #231
+Как серверный PF_calltimeofday: если в модуле есть функция "timeofday" —
+заполнить её аргументы (sec/min/hour/day/mon/year) локальным временем и вызвать.
+*/
+static void csqc_calltimeofday (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	dfunction_t *f;
+	time_t t;
+	struct tm *ltm;
+	if (!vm)
+		return;
+	f = PR1VM_FindFunction (vm, "timeofday");
+	if (!f)
+		return;
+	t = time (NULL);
+	ltm = localtime (&t);
+	if (!ltm)
+		return;
+	vm->globals[OFS_PARM0] = (float)ltm->tm_sec;
+	vm->globals[OFS_PARM1] = (float)ltm->tm_min;
+	vm->globals[OFS_PARM2] = (float)ltm->tm_hour;
+	vm->globals[OFS_PARM3] = (float)ltm->tm_mday;
+	vm->globals[OFS_PARM4] = (float)(ltm->tm_mon + 1);
+	vm->globals[OFS_PARM5] = (float)(ltm->tm_year + 1900);
+	PR1VM_ExecuteProgram (vm, (func_t)(f - vm->functions));
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -1601,6 +1755,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	// обработчики (чистая математика, читают/пишут vm->globals).
 	PR1VM_RegisterBuiltin (vm, 97,  (builtin_t)csqc_pow);
 	PR1VM_RegisterBuiltin (vm, 91,  (builtin_t)csqc_randomvec);
+
+	// Phase 1 L1 P1c — cvar/exec/ошибки (#10/#11/#46/#72/#93/#99/#231;
+	// #28 coredump / #31 eprint — P1d).
+	PR1VM_RegisterBuiltin (vm, 10,  (builtin_t)csqc_error);
+	PR1VM_RegisterBuiltin (vm, 11,  (builtin_t)csqc_objerror);
+	PR1VM_RegisterBuiltin (vm, 46,  (builtin_t)csqc_localcmd);
+	PR1VM_RegisterBuiltin (vm, 72,  (builtin_t)csqc_cvar_set);
+	PR1VM_RegisterBuiltin (vm, 93,  (builtin_t)csqc_registercvar);
+	PR1VM_RegisterBuiltin (vm, 99,  (builtin_t)csqc_checkextension);
+	PR1VM_RegisterBuiltin (vm, 231, (builtin_t)csqc_calltimeofday);
 
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
