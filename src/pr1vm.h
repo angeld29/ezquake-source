@@ -100,6 +100,11 @@ struct pr1vm_s
 // Активный инстанс (тот, внутри которого сейчас исполняется PR1; NULL вне вызова).
 pr1vm_t *PR1VM_Active(void);
 
+// ADR 0019: true, пока исполняется НЕ серверный инстанс (клиентская CSQC-VM).
+// В этом состоянии глобальные серверные хелперы (PR1_Get/SetString и пр.) не
+// вызывать — клиент работает со своими per-instance строками.
+qbool PR1VM_ClientContext(void);
+
 // Серверный инстанс (sv_pr1vm) — «default» для PR_* обёрток.
 pr1vm_t *PR1VM_Server(void);
 

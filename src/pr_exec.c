@@ -30,9 +30,20 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static pr1vm_t sv_pr1vm;	// серверный инстанс (default для PR_* обёрток)
 static pr1vm_t *g_active;	// инстанс, внутри которого сейчас исполняется PR1
 
+// ADR 0019 (Этап 0): true, пока исполняется НЕ серверный инстанс (клиентская
+// CSQC-VM). В этом состоянии «классические» серверные хелперы (PR1_GetString/
+// PR1_SetString/...), завязанные на глобальные таблицы серверного модуля, вызывать
+// нельзя — клиент работает со своими per-instance строками (PR1VM_Get/SetString).
+static qbool g_client_ctx;
+
 pr1vm_t *PR1VM_Active(void)
 {
 	return g_active;
+}
+
+qbool PR1VM_ClientContext(void)
+{
+	return g_client_ctx;
 }
 
 pr1vm_t *PR1VM_Server(void)
@@ -480,6 +491,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 {
 	eval_t *a = NULL, *b = NULL, *c = NULL;
 	pr1vm_t *saved_active;
+	float *saved_prglobals;	// ADR 0019: контекст «классических» зеркал до attach
+	qbool saved_client_ctx;
 	int s;
 	dstatement_t *st = NULL;
 	dfunction_t *f, *newf;
@@ -498,6 +511,18 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			ED_Print (PR1VM_ProgToEdict(vm, vm->global_struct->self));
 		SV_Error ("PR_ExecuteProgram: NULL function");
 	}
+
+	// ADR 0019 (Этап 0): attach исполняемой VM — на время цикла классические
+	// зеркала (pr_globals), которые читают/пишут builtins через G_* макросы,
+	// указывают на данные этой VM. Для серверного инстанса это identity (его
+	// зеркала и есть дефолт). Восстановление — в конце функции (в т.ч. после
+	// возвратного клиентского host_error). Вложенность (listen/PR_ExecuteProgram
+	// из клиентского контекста) безопасна: значения сохраняются в локальных
+	// переменных этого кадра и восстанавливаются по выходе.
+	saved_prglobals = pr_globals;
+	saved_client_ctx = g_client_ctx;
+	pr_globals = vm->globals;
+	g_client_ctx = (vm != PR1VM_Server());
 
 	f = &vm->functions[fnum];
 
@@ -775,6 +800,10 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
 			{
+				// ADR 0019 (Этап 0): detach — вернуть классические зеркала и
+				// флаг клиентского контекста, затем активный инстанс.
+				pr_globals = saved_prglobals;
+				g_client_ctx = saved_client_ctx;
 				g_active = saved_active;
 				return;		// all done
 			}
@@ -819,6 +848,14 @@ int num_prstr;
 
 char *PR1_GetString(int num)
 {
+	// ADR 0019 (Этап 0): глобальные строковые таблицы принадлежат серверному
+	// модулю — в клиентском контексте их не использовать (клиент читает строки
+	// через PR1VM_GetString). Guard ловит случайный вызов из клиента.
+	if (g_client_ctx)
+	{
+		Con_Printf ("PR1_GetString: global string path in client context (ADR 0019) — ignored\n");
+		return NULL;
+	}
 	if (num < 0)
 	{
 		//Con_DPrintf("GET:%d == %s\n", num, pr_strtbl[-num]);
@@ -840,6 +877,13 @@ void PR1_SetString(string_t* address, char* s)
 {
 	int i;
 
+	// ADR 0019 (Этап 0): см. PR1_GetString — в клиентском контексте глобальные
+	// строковые таблицы серверного модуля не трогаем.
+	if (g_client_ctx)
+	{
+		Con_Printf ("PR1_SetString: global string path in client context (ADR 0019) — ignored\n");
+		return;
+	}
 	if (!address) {
 		return;
 	}

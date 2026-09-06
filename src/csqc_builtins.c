@@ -24,6 +24,12 @@ static pr1vm_t *CSQCVM_Active (void)
 	return PR1VM_Active ();
 }
 
+// ADR 0019 (Этап 0): собственный токен-контекст клиентской VM (#441 tokenize /
+// #442 argv). Серверный PR1 использует свой pr1_tokencontext (pr_cmds.c); здесь —
+// свой, чтобы не разделять глобальный токен-буфер движка (Cmd_TokenizeString),
+// которым пользуется консоль/обработка команд.
+static tokenizecontext_t csqc_tokencontext;
+
 static char *CSQCVM_Str (int ofs)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -111,8 +117,8 @@ static void csqc_tokenize (void)
 	if (!vm)
 		return;
 	if (s)
-		Cmd_TokenizeString (s);
-	vm->globals[OFS_RETURN] = Cmd_Argc ();
+		Cmd_TokenizeStringEx (&csqc_tokencontext, s);
+	vm->globals[OFS_RETURN] = Cmd_ArgcEx (&csqc_tokencontext);
 }
 
 /*
@@ -125,7 +131,7 @@ static void csqc_argv (void)
 	if (!vm)
 		return;
 	n = (int)vm->globals[OFS_PARM0];
-	CSQCVM_SetRetStr (Cmd_Argv (n));
+	CSQCVM_SetRetStr (Cmd_ArgvEx (&csqc_tokencontext, n));
 }
 
 /*
