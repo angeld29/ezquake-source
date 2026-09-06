@@ -13,6 +13,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "qwsvdef.h"
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include <time.h>		// csqc_calltimeofday (#231)
+#include <stdlib.h>		// strtod (#81/#117)
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
@@ -1727,6 +1728,152 @@ static void csqc_calltimeofday (void)
 	PR1VM_ExecuteProgram (vm, (func_t)(f - vm->functions));
 }
 
+/*
+Phase 1 L1 P1b — строки/конверсии. Client-handlers на per-instance строки
+(PR1VM_Get/SetString). #118/#119: без GC — strzone = deep-copy в per-instance
+кольцо (PR1VM_SetString), strunzone = no-op (документированное отклонение).
+*/
+
+/*
+string(vector v) vtos = #27
+*/
+static void csqc_vtos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[64];
+	if (!vm)
+		return;
+	snprintf (buf, sizeof (buf), "'%5.1f %5.1f %5.1f'",
+		vm->globals[OFS_PARM0], vm->globals[OFS_PARM0 + 1], vm->globals[OFS_PARM0 + 2]);
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+float(string s) stof = #81
+*/
+static void csqc_stof (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (float)strtod (s ? s : "", NULL);
+}
+
+/*
+float(string s) strlen = #114
+*/
+static void csqc_strlen (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = s ? (float)strlen (s) : 0;
+}
+
+/*
+string(string s, float start, float count) substring = #116
+(логика серверного PF_substr, per-instance строки)
+*/
+static void csqc_substring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	char buf[2048];
+	int start, len, l;
+	if (!vm)
+		return;
+	if (!s)
+		s = "";
+	start = (int)vm->globals[OFS_PARM1];
+	len = (int)vm->globals[OFS_PARM2];
+	l = strlen (s);
+	if (start >= l || len <= 0 || l == 0)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	if (len > l - start + 1)
+		len = l - start + 1;
+	strlcpy (buf, s + start, len + 1);
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+vector(string s) stov = #117
+(в ezq-сервере не реализован — ext {117} закомментирован; парс из vtos-формата)
+*/
+static void csqc_stov (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *p = CSQCVM_Str (OFS_PARM0);
+	double v[3];
+	int i;
+	char *end;
+	if (!vm)
+		return;
+	if (!p)
+		p = "";
+	for (i = 0; i < 3; i++)
+	{
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '\'' || *p == '"')
+			p++;
+		v[i] = strtod (p, &end);
+		if (end == p)
+		{
+			v[i] = 0;
+			while (*p && *p != ' ')
+				p++;
+		}
+		else
+			p = end;
+	}
+	vm->globals[OFS_RETURN] = (float)v[0];
+	vm->globals[OFS_RETURN + 1] = (float)v[1];
+	vm->globals[OFS_RETURN + 2] = (float)v[2];
+}
+
+/*
+string(string s) strzone = #118
+Отклонение (нет GC на клиенте): deep-copy в per-instance кольцо (PR1VM_SetString).
+*/
+static void csqc_strzone (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (s ? s : "");
+}
+
+/*
+void(string s) strunzone = #119
+Отклонение: no-op (нет GC/персистентного пула на клиенте).
+*/
+static void csqc_strunzone (void)
+{
+	/* no-op (ADR 0017 D7 / тема B: классическое кольцо без GC) */
+}
+
+/*
+string(string varname) cvar_string = #448
+*/
+static void csqc_cvar_string (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	cvar_t *var;
+	if (!vm)
+		return;
+	if (!name)
+		name = "";
+	var = Cvar_Find (name);
+	CSQCVM_SetRetStr (var ? var->string : "");
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -1765,6 +1912,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 93,  (builtin_t)csqc_registercvar);
 	PR1VM_RegisterBuiltin (vm, 99,  (builtin_t)csqc_checkextension);
 	PR1VM_RegisterBuiltin (vm, 231, (builtin_t)csqc_calltimeofday);
+
+	// Phase 1 L1 P1b — строки/конверсии (#118/#119 — ring/no-op, отклонение).
+	PR1VM_RegisterBuiltin (vm, 27,  (builtin_t)csqc_vtos);
+	PR1VM_RegisterBuiltin (vm, 81,  (builtin_t)csqc_stof);
+	PR1VM_RegisterBuiltin (vm, 114, (builtin_t)csqc_strlen);
+	PR1VM_RegisterBuiltin (vm, 116, (builtin_t)csqc_substring);
+	PR1VM_RegisterBuiltin (vm, 117, (builtin_t)csqc_stov);
+	PR1VM_RegisterBuiltin (vm, 118, (builtin_t)csqc_strzone);
+	PR1VM_RegisterBuiltin (vm, 119, (builtin_t)csqc_strunzone);
+	PR1VM_RegisterBuiltin (vm, 448, (builtin_t)csqc_cvar_string);
 
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
