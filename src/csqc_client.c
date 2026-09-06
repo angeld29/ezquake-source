@@ -45,6 +45,8 @@ typedef struct csqc_client_state_s
 	// input_* глобалы для CSQC_Input_Frame (или -1, если модуль их не объявил).
 	int			in_timelength, in_angles, in_movevalues, in_buttons, in_impulse;
 	int			in_sequence;	// input_sequence (C1.3 #345) или -1
+	// #1 makevectors (C6.1): глобалы v_forward/v_right/v_up модуля (или -1).
+	int			g_vfwd, g_vright, g_vup;
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -665,6 +667,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 	s_csqc.in_sequence = -1;
+	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_inlast_seq = 0;
 
 	vm = &s_csqc.vm;
@@ -735,6 +738,10 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.in_buttons = PR1VM_FindGlobal (vm, "input_buttons");
 	s_csqc.in_impulse = PR1VM_FindGlobal (vm, "input_impulse");
 	s_csqc.in_sequence = PR1VM_FindGlobal (vm, "input_sequence");
+	// #1 makevectors (C6.1): цели записи v_forward/v_right/v_up (FTE-паритет).
+	s_csqc.g_vfwd = PR1VM_FindGlobal (vm, "v_forward");
+	s_csqc.g_vright = PR1VM_FindGlobal (vm, "v_right");
+	s_csqc.g_vup = PR1VM_FindGlobal (vm, "v_up");
 
 	s_csqc.loaded = true;
 
@@ -1185,6 +1192,30 @@ int CSQC_Client_ApplyInput (unsigned int seq)
 
 /*
 =================
+CSQC_Client_MakeVectors
+
+#1 makevectors (C6.1; FTE-паритет PF_cs_makevectors, pr_csqc.c:669): по вектору
+углов пишет v_forward/v_right/v_up модуля (глобалы, резолв в Load). Если модуль
+их не объявил — no-op (offset -1).
+=================
+*/
+void CSQC_Client_MakeVectors (float *ang)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	float *f, *r, *u;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.g_vfwd < 0 || s_csqc.g_vright < 0 || s_csqc.g_vup < 0)
+		return;		// модуль не объявил v_forward/v_right/v_up
+	f = &vm->globals[s_csqc.g_vfwd];
+	r = &vm->globals[s_csqc.g_vright];
+	u = &vm->globals[s_csqc.g_vup];
+	AngleVectors (ang, f, r, u);
+}
+
+/*
+=================
 CSQC_Client_HasInputEvent / CSQC_Client_InputEvent
 
 C1.2: доставка событий ввода модулю (CSQC_InputEvent, csdefs.qc:159). Вызывается
@@ -1554,6 +1585,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 	s_csqc.in_sequence = -1;
+	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_inlast_seq = 0;
 }
 

@@ -86,6 +86,21 @@ static void csqc_cvar (void)
 }
 
 /*
+void(vector vang) makevectors = #1
+(C6.1) FTE-паритет (pr_csqc.c:669 PF_cs_makevectors, табл. :6634): по вектору
+углов (pitch,yaw,roll) пишет v_forward/v_right/v_up модуля. Внутренние глобалы
+резолвит CSQC_Client_MakeVectors (нет объявления — no-op). Классический
+низкий номер #1 теперь доступен модулям (серверный набор в клиент не грузится).
+*/
+static void csqc_makevectors (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_MakeVectors (&vm->globals[OFS_PARM0]);
+}
+
+/*
 float(string s) tokenize = #441
 */
 static void csqc_tokenize (void)
@@ -1467,6 +1482,8 @@ static void csqc_getmousepos (void)
 
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
+	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
+	PR1VM_RegisterBuiltin (vm, 1, (builtin_t)csqc_makevectors);
 	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
 	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
 	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar);

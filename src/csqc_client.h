@@ -35,6 +35,8 @@ void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 void CSQC_Client_RecordInput (struct usercmd_s *cmd);	// запись из CL_SendCmd
 int CSQC_Client_ApplyInput (unsigned int seq);			// заполнить input_* по seq; 0/1
 void CSQC_Client_RunPlayerPhysics (int entnum);			// #347 runstandardplayerphysics (C1.4)
+// #1 makevectors (C6.1): по vector-углам пишет v_forward/v_right/v_up модуля.
+void CSQC_Client_MakeVectors (float *ang);
 
 // C2.2 #460-469 — string-buffers (DP). handle = 1-based; строки deep-copy.
 int CSQC_Client_BufCreate (void);
