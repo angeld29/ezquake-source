@@ -83,14 +83,6 @@ typedef struct
 } csqc_buf_t;
 static csqc_buf_t s_bufs[CSQC_MAX_BUFS];
 
-// Диагностический переключатель модуля CSQC_Input_Frame (читается модулем через
-// builtin cvar #45). Регистрируется один раз в CSQC_Client_ConnectCheck.
-static cvar_t csqc_inputdebug = {"csqc_inputdebug", "0", 0};
-static qbool csqc_inputdebug_registered;
-// Слой D шаг 1: демо-оверлей 2D-графики модуля (drawfill/drawpic/...; читается
-// модулем через cvar #45). Регистрируется так же.
-static cvar_t csqc_d2d = {"csqc_d2d", "0", 0};
-
 // C1.1 — #346 setsensitivityscaler: временный множитель чувствительности мыши
 // (зум-аналог FTE in_sensitivityscale). Хранит модуль; применяет in_sdl2.c.
 static float s_sens_scale = 1;
@@ -783,14 +775,6 @@ void CSQC_Client_ConnectCheck (void)
 	unsigned crc;
 	int sizep;
 	char path[MAX_QPATH];
-
-	// csqc_inputdebug (см. выше) — регистрируем один раз.
-	if (!csqc_inputdebug_registered)
-	{
-		Cvar_Register (&csqc_inputdebug);
-		Cvar_Register (&csqc_d2d);
-		csqc_inputdebug_registered = true;
-	}
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
 	// модуль не грузится, клиент ведёт себя как раньше.
