@@ -4336,332 +4336,332 @@ static void csqc_nop_str (void)
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
-	PR1VM_RegisterBuiltin (vm, 1, (builtin_t)csqc_makevectors);
+	PR1VM_RegisterBuiltin (vm, 1, (builtin_t)csqc_makevectors); // #1 void() makevectors (QUAKE)
 
 	// Phase 1 L1 P1a — реюз чистых float/vector серверных PF_* (см. extern выше):
 	// attach в PR1VM_ExecuteProgram переключает pr_globals на исполняемую VM.
 	// #7/#13/#51 — клиентские wrapper'ы (FTE-паритет возврата/арг), серверные
 	// PF_random/PF_vectoyaw/PF_vectoangles общие с сервером — не трогаем.
-	PR1VM_RegisterBuiltin (vm, 7,   (builtin_t)csqc_random);
-	PR1VM_RegisterBuiltin (vm, 9,   (builtin_t)PF_normalize);
-	PR1VM_RegisterBuiltin (vm, 12,  (builtin_t)PF_vlen);
-	PR1VM_RegisterBuiltin (vm, 13,  (builtin_t)csqc_vectoyaw);
-	PR1VM_RegisterBuiltin (vm, 29,  (builtin_t)PF_traceon);
-	PR1VM_RegisterBuiltin (vm, 30,  (builtin_t)PF_traceoff);
-	PR1VM_RegisterBuiltin (vm, 36,  (builtin_t)PF_rint);
-	PR1VM_RegisterBuiltin (vm, 37,  (builtin_t)PF_floor);
-	PR1VM_RegisterBuiltin (vm, 38,  (builtin_t)PF_ceil);
-	PR1VM_RegisterBuiltin (vm, 43,  (builtin_t)PF_fabs);
-	PR1VM_RegisterBuiltin (vm, 51,  (builtin_t)csqc_vectoangles);
-	PR1VM_RegisterBuiltin (vm, 60,  (builtin_t)PF_sin);
-	PR1VM_RegisterBuiltin (vm, 61,  (builtin_t)PF_cos);
-	PR1VM_RegisterBuiltin (vm, 62,  (builtin_t)PF_sqrt);
-	PR1VM_RegisterBuiltin (vm, 94,  (builtin_t)PF_min);
-	PR1VM_RegisterBuiltin (vm, 95,  (builtin_t)PF_max);
-	PR1VM_RegisterBuiltin (vm, 96,  (builtin_t)PF_bound);
+	PR1VM_RegisterBuiltin (vm, 7,   (builtin_t)csqc_random); // #7 float() random (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 9,   (builtin_t)PF_normalize); // #9 vector(vector in) normalize (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 12,  (builtin_t)PF_vlen); // #12 float(vector v) vlen (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 13,  (builtin_t)csqc_vectoyaw); // #13 float(vector v) vectoyaw (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 29,  (builtin_t)PF_traceon); // #29 void() traceon (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 30,  (builtin_t)PF_traceoff); // #30 void() traceoff (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 36,  (builtin_t)PF_rint); // #36 float(float f) rint (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 37,  (builtin_t)PF_floor); // #37 float(float f) floor (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 38,  (builtin_t)PF_ceil); // #38 float(float f) ceil (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 43,  (builtin_t)PF_fabs); // #43 float(float f) fabs (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 51,  (builtin_t)csqc_vectoangles); // #51 vector(vector v) vectoangles (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 60,  (builtin_t)PF_sin); // #60 float(float angle) sin (DP_QC_SINCOSSQRTPOW)
+	PR1VM_RegisterBuiltin (vm, 61,  (builtin_t)PF_cos); // #61 float(float angle) cos (DP_QC_SINCOSSQRTPOW)
+	PR1VM_RegisterBuiltin (vm, 62,  (builtin_t)PF_sqrt); // #62 float(float value) sqrt (DP_QC_SINCOSSQRTPOW)
+	PR1VM_RegisterBuiltin (vm, 94,  (builtin_t)PF_min); // #94 float(float a, floats) min (DP_QC_MINMAXBOUND)
+	PR1VM_RegisterBuiltin (vm, 95,  (builtin_t)PF_max); // #95 float(float a, floats) max (DP_QC_MINMAXBOUND)
+	PR1VM_RegisterBuiltin (vm, 96,  (builtin_t)PF_bound); // #96 float(float minimum, float val, float maximum) bound (DP_QC_MINMAXBOUND)
 	// #97 pow / #91 randomvec — тела в pr_cmds.c статические: лёгкие клиентские
 	// обработчики (чистая математика, читают/пишут vm->globals).
-	PR1VM_RegisterBuiltin (vm, 97,  (builtin_t)csqc_pow);
-	PR1VM_RegisterBuiltin (vm, 91,  (builtin_t)csqc_randomvec);
+	PR1VM_RegisterBuiltin (vm, 97,  (builtin_t)csqc_pow); // #97 float(float value) pow (DP_QC_SINCOSSQRTPOW)
+	PR1VM_RegisterBuiltin (vm, 91,  (builtin_t)csqc_randomvec); // #91 vector() randomvec (DP_QC_RANDOMVEC)
 
 	// Phase 1 L1 P1c — cvar/exec/ошибки (#10/#11/#46/#72/#93/#99/#231;
 	// #28 coredump / #31 eprint — P1d).
-	PR1VM_RegisterBuiltin (vm, 10,  (builtin_t)csqc_error);
-	PR1VM_RegisterBuiltin (vm, 11,  (builtin_t)csqc_objerror);
-	PR1VM_RegisterBuiltin (vm, 46,  (builtin_t)csqc_localcmd);
-	PR1VM_RegisterBuiltin (vm, 72,  (builtin_t)csqc_cvar_set);
-	PR1VM_RegisterBuiltin (vm, 93,  (builtin_t)csqc_registercvar);
-	PR1VM_RegisterBuiltin (vm, 99,  (builtin_t)csqc_checkextension);
-	PR1VM_RegisterBuiltin (vm, 231, (builtin_t)csqc_calltimeofday);
+	PR1VM_RegisterBuiltin (vm, 10,  (builtin_t)csqc_error); // #10 void(string errortext) error (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 11,  (builtin_t)csqc_objerror); // #11 void(string errortext) onjerror (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 46,  (builtin_t)csqc_localcmd); // #46 void(string str) localcmd (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 72,  (builtin_t)csqc_cvar_set); // #72 void(string cvarname, string valuetoset) cvar_set (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 93,  (builtin_t)csqc_registercvar); // #93 void(string cvarname, string defaultvalue) registercvar (DP_QC_REGISTERCVAR)
+	PR1VM_RegisterBuiltin (vm, 99,  (builtin_t)csqc_checkextension); // #99 float(string extname) checkextension (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 231, (builtin_t)csqc_calltimeofday); // #231 void() calltimeofday
 
 	// Phase 1 L1 P1b — строки/конверсии (#118/#119 — ring/no-op, отклонение).
-	PR1VM_RegisterBuiltin (vm, 27,  (builtin_t)csqc_vtos);
-	PR1VM_RegisterBuiltin (vm, 81,  (builtin_t)csqc_stof);
-	PR1VM_RegisterBuiltin (vm, 114, (builtin_t)csqc_strlen);
-	PR1VM_RegisterBuiltin (vm, 116, (builtin_t)csqc_substring);
-	PR1VM_RegisterBuiltin (vm, 117, (builtin_t)csqc_stov);
-	PR1VM_RegisterBuiltin (vm, 118, (builtin_t)csqc_strzone);
-	PR1VM_RegisterBuiltin (vm, 119, (builtin_t)csqc_strunzone);
-	PR1VM_RegisterBuiltin (vm, 448, (builtin_t)csqc_cvar_string);
+	PR1VM_RegisterBuiltin (vm, 27,  (builtin_t)csqc_vtos); // #27 string(vector f) vtos (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 81,  (builtin_t)csqc_stof); // #81 float(string s) stof (FRIK_FILE or QW_ENGINE)
+	PR1VM_RegisterBuiltin (vm, 114, (builtin_t)csqc_strlen); // #114 float(string str) strlen (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 116, (builtin_t)csqc_substring); // #116 string(string str, float start, float length) substring (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 117, (builtin_t)csqc_stov); // #117 vector(string str) stov (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 118, (builtin_t)csqc_strzone); // #118 string(string str) dupstring (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 119, (builtin_t)csqc_strunzone); // #119 void(string str) freestring (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 448, (builtin_t)csqc_cvar_string); // #448 string(float n) cvar_string (DP_QC_CVAR_STRING)
 
 	// Phase 1 L1 P1e — клиентские подсистемы (no-op/отклонения — в parity-audit).
-	PR1VM_RegisterBuiltin (vm, 6,   (builtin_t)csqc_breakpoint);
-	PR1VM_RegisterBuiltin (vm, 8,   (builtin_t)csqc_sound);
-	PR1VM_RegisterBuiltin (vm, 19,  (builtin_t)csqc_precache_sound);
-	PR1VM_RegisterBuiltin (vm, 20,  (builtin_t)csqc_precache_model);
-	PR1VM_RegisterBuiltin (vm, 35,  (builtin_t)csqc_lightstyle);
-	PR1VM_RegisterBuiltin (vm, 48,  (builtin_t)csqc_particle);
-	PR1VM_RegisterBuiltin (vm, 68,  (builtin_t)csqc_precache_file);
-	PR1VM_RegisterBuiltin (vm, 74,  (builtin_t)csqc_ambientsound);
-	PR1VM_RegisterBuiltin (vm, 75,  (builtin_t)csqc_precache_model);
-	PR1VM_RegisterBuiltin (vm, 76,  (builtin_t)csqc_precache_sound);
-	PR1VM_RegisterBuiltin (vm, 77,  (builtin_t)csqc_precache_file);
-	PR1VM_RegisterBuiltin (vm, 531, (builtin_t)csqc_setpause);
+	PR1VM_RegisterBuiltin (vm, 6,   (builtin_t)csqc_breakpoint); // #6 void() debugbreak (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 8,   (builtin_t)csqc_sound); // #8 void(entity e, float chan, string samp, float vol, float atten) sound (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 19,  (builtin_t)csqc_precache_sound); // #19 void(string str) precache_sound (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 20,  (builtin_t)csqc_precache_model); // #20 void(string str) precache_model (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 35,  (builtin_t)csqc_lightstyle); // #35 void(float lightstyle, string stylestring) lightstyle (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 48,  (builtin_t)csqc_particle); // #48 void(vector org, vector dir, float colour, float count) particle (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 68,  (builtin_t)csqc_precache_file); // #68 void(string s) precache_file (QUAKE) (don't support)
+	PR1VM_RegisterBuiltin (vm, 74,  (builtin_t)csqc_ambientsound); // #74 void (vector pos, string samp, float vol, float atten) ambientsound (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 75,  (builtin_t)csqc_precache_model); // #75 void(string str) precache_model2 (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 76,  (builtin_t)csqc_precache_sound); // #76 void(string str) precache_sound2 (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 77,  (builtin_t)csqc_precache_file); // #77 void(string str) precache_file2 (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 531, (builtin_t)csqc_setpause); // #531 ?
 
 	// Phase 1 L1 P1d C1 — базовые entity на арене (резерв C0-A).
-	PR1VM_RegisterBuiltin (vm, 2,   (builtin_t)csqc_setorigin);
-	PR1VM_RegisterBuiltin (vm, 3,   (builtin_t)csqc_setmodel);
-	PR1VM_RegisterBuiltin (vm, 4,   (builtin_t)csqc_setsize);
-	PR1VM_RegisterBuiltin (vm, 14,  (builtin_t)csqc_spawn);
-	PR1VM_RegisterBuiltin (vm, 15,  (builtin_t)csqc_remove);
-	PR1VM_RegisterBuiltin (vm, 18,  (builtin_t)csqc_find);
-	PR1VM_RegisterBuiltin (vm, 22,  (builtin_t)csqc_findradius);
-	PR1VM_RegisterBuiltin (vm, 28,  (builtin_t)csqc_coredump);
-	PR1VM_RegisterBuiltin (vm, 31,  (builtin_t)csqc_eprint);
-	PR1VM_RegisterBuiltin (vm, 40,  (builtin_t)csqc_checkbottom);
-	PR1VM_RegisterBuiltin (vm, 47,  (builtin_t)csqc_nextent);
-	PR1VM_RegisterBuiltin (vm, 49,  (builtin_t)csqc_changeyaw);
-	PR1VM_RegisterBuiltin (vm, 69,  (builtin_t)csqc_makestatic);
-	PR1VM_RegisterBuiltin (vm, 80,  (builtin_t)csqc_infokey);
+	PR1VM_RegisterBuiltin (vm, 2,   (builtin_t)csqc_setorigin); // #2 void(entity e, vector org) setorigin (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 3,   (builtin_t)csqc_setmodel); // #3 void(entity e, string modl) setmodel (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 4,   (builtin_t)csqc_setsize); // #4 void(entity e, vector mins, vector maxs) setsize (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 14,  (builtin_t)csqc_spawn); // #14 entity() spawn (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 15,  (builtin_t)csqc_remove); // #15 void(entity e) remove (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 18,  (builtin_t)csqc_find); // #18 entity(entity start, .string fld, string match) findstring (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 22,  (builtin_t)csqc_findradius); // #22 entity(vector org, float rad) findradius (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 28,  (builtin_t)csqc_coredump); // #28 void(void) coredump (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 31,  (builtin_t)csqc_eprint); // #31 void(entity e) eprint (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 40,  (builtin_t)csqc_checkbottom); // #40 float(entity e) checkbottom (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 47,  (builtin_t)csqc_nextent); // #47 entity(entity e) nextent (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 49,  (builtin_t)csqc_changeyaw); // #49 void() changeyaw (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 69,  (builtin_t)csqc_makestatic); // #69 void(entity e) makestatic (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 80,  (builtin_t)csqc_infokey); // #80 string(entity e, string keyname) infokey (QW_ENGINE) (don't support)
 
 	// Phase 1 L1 P1d C2 — мировые трассы/физика (мир-only).
-	PR1VM_RegisterBuiltin (vm, 16,  (builtin_t)csqc_traceline);
-	PR1VM_RegisterBuiltin (vm, 90,  (builtin_t)csqc_tracebox);
-	PR1VM_RegisterBuiltin (vm, 41,  (builtin_t)csqc_pointcontents);
-	PR1VM_RegisterBuiltin (vm, 32,  (builtin_t)csqc_walkmove);
-	PR1VM_RegisterBuiltin (vm, 34,  (builtin_t)csqc_droptofloor);
-	PR1VM_RegisterBuiltin (vm, 67,  (builtin_t)csqc_movetogoal);
+	PR1VM_RegisterBuiltin (vm, 16,  (builtin_t)csqc_traceline); // #16 void(vector v1, vector v2, float nomonst, entity forent) traceline (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 90,  (builtin_t)csqc_tracebox); // #90 void(vector start, vector mins, vector maxs, vector end, float nomonsters, entity ent) tracebox
+	PR1VM_RegisterBuiltin (vm, 41,  (builtin_t)csqc_pointcontents); // #41 float(vector org) pointcontents (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 32,  (builtin_t)csqc_walkmove); // #32 float(float yaw, float dist) walkmove (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 34,  (builtin_t)csqc_droptofloor); // #34 float() droptofloor
+	PR1VM_RegisterBuiltin (vm, 67,  (builtin_t)csqc_movetogoal); // #67 void(float step) movetogoal (QUAKE)
 
-	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint);
-	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos);
-	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar);
+	PR1VM_RegisterBuiltin (vm, 25, (builtin_t)csqc_dprint); // #25 void(string s, ...) dprint (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 26, (builtin_t)csqc_ftos); // #26 string(float f) ftos (QUAKE)
+	PR1VM_RegisterBuiltin (vm, 45, (builtin_t)csqc_cvar); // #45 float(string cvarname) cvar (QUAKE)
 
 	// Слой D шаг 3 — ввод/интерфейс: #340 keynumtostring, #341 stringtokeynum.
-	PR1VM_RegisterBuiltin (vm, 340, (builtin_t)csqc_keynumtostring);
-	PR1VM_RegisterBuiltin (vm, 341, (builtin_t)csqc_stringtokeynum);
+	PR1VM_RegisterBuiltin (vm, 340, (builtin_t)csqc_keynumtostring); // #340 string(float keynum) keynumtostring (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 341, (builtin_t)csqc_stringtokeynum); // #341 float(string keyname) stringtokeynum (EXT_CSQC)
 	// #349 isdemo, #354 serverkey.
-	PR1VM_RegisterBuiltin (vm, 349, (builtin_t)csqc_isdemo);
-	PR1VM_RegisterBuiltin (vm, 354, (builtin_t)csqc_serverkey);
+	PR1VM_RegisterBuiltin (vm, 349, (builtin_t)csqc_isdemo); // #349 float() isdemo (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 354, (builtin_t)csqc_serverkey); // #354 string(string key) serverkey;
 	// #343 setcursormode (A3.1: полная — курсор модуля в CSQC-оверлее).
-	PR1VM_RegisterBuiltin (vm, 343, (builtin_t)csqc_setcursormode);
+	PR1VM_RegisterBuiltin (vm, 343, (builtin_t)csqc_setcursormode); // #343 void(float usecursor, optional string cursorimage, optional vector hotspot, optional float scale) setcursormode
 	// #344 getmousepos (A3.2: read-путь позиции CSQC-курсора).
-	PR1VM_RegisterBuiltin (vm, 344, (builtin_t)csqc_getmousepos);
+	PR1VM_RegisterBuiltin (vm, 344, (builtin_t)csqc_getmousepos); // #344 vector() getmousepos
 	// #348 getplayerkeyvalue (A6).
-	PR1VM_RegisterBuiltin (vm, 348, (builtin_t)csqc_getplayerkeyvalue);
+	PR1VM_RegisterBuiltin (vm, 348, (builtin_t)csqc_getplayerkeyvalue); // #348 string(float playernum, string keyname) getplayerkeyvalue (EXT_CSQC)
 	// C1.1 — #346 setsensitivityscaler.
-	PR1VM_RegisterBuiltin (vm, 346, (builtin_t)csqc_setsensitivityscaler);
+	PR1VM_RegisterBuiltin (vm, 346, (builtin_t)csqc_setsensitivityscaler); // #346 void(float sens) setsensitivityscaler (EXT_CSQC)
 	// C1.3 — #345 getinputstate.
-	PR1VM_RegisterBuiltin (vm, 345, (builtin_t)csqc_getinputstate);
+	PR1VM_RegisterBuiltin (vm, 345, (builtin_t)csqc_getinputstate); // #345 float(float framenum) getinputstate (EXT_CSQC)
 	// C1.4 — #347 runstandardplayerphysics.
-	PR1VM_RegisterBuiltin (vm, 347, (builtin_t)csqc_runstandardplayerphysics);
+	PR1VM_RegisterBuiltin (vm, 347, (builtin_t)csqc_runstandardplayerphysics); // #347 void() runstandardplayerphysics (EXT_CSQC)
 	// C2.1 — #459 edict_num.
-	PR1VM_RegisterBuiltin (vm, 459, (builtin_t)csqc_edict_num);
+	PR1VM_RegisterBuiltin (vm, 459, (builtin_t)csqc_edict_num); // #459 entity(float entnum) edict_num
 	// C2.2 — #460-469 string-buffers.
-	PR1VM_RegisterBuiltin (vm, 460, (builtin_t)csqc_buf_create);
-	PR1VM_RegisterBuiltin (vm, 461, (builtin_t)csqc_buf_del);
-	PR1VM_RegisterBuiltin (vm, 462, (builtin_t)csqc_buf_getsize);
-	PR1VM_RegisterBuiltin (vm, 463, (builtin_t)csqc_buf_copy);
-	PR1VM_RegisterBuiltin (vm, 464, (builtin_t)csqc_buf_sort);
-	PR1VM_RegisterBuiltin (vm, 465, (builtin_t)csqc_buf_implode);
-	PR1VM_RegisterBuiltin (vm, 466, (builtin_t)csqc_bufstr_get);
-	PR1VM_RegisterBuiltin (vm, 467, (builtin_t)csqc_bufstr_set);
-	PR1VM_RegisterBuiltin (vm, 468, (builtin_t)csqc_bufstr_add);
-	PR1VM_RegisterBuiltin (vm, 469, (builtin_t)csqc_bufstr_free);
+	PR1VM_RegisterBuiltin (vm, 460, (builtin_t)csqc_buf_create); // #460 float() buf_create
+	PR1VM_RegisterBuiltin (vm, 461, (builtin_t)csqc_buf_del); // #461 void(float bufhandle) buf_del
+	PR1VM_RegisterBuiltin (vm, 462, (builtin_t)csqc_buf_getsize); // #462 float(float bufhandle) buf_getsize
+	PR1VM_RegisterBuiltin (vm, 463, (builtin_t)csqc_buf_copy); // #463 void(float bufhandle_from, float bufhandle_to) buf_copy
+	PR1VM_RegisterBuiltin (vm, 464, (builtin_t)csqc_buf_sort); // #464 void(float bufhandle, float sortpower, float backward) buf_sort
+	PR1VM_RegisterBuiltin (vm, 465, (builtin_t)csqc_buf_implode); // #465 string(float bufhandle, string glue) buf_implode
+	PR1VM_RegisterBuiltin (vm, 466, (builtin_t)csqc_bufstr_get); // #466 string(float bufhandle, float string_index) bufstr_get
+	PR1VM_RegisterBuiltin (vm, 467, (builtin_t)csqc_bufstr_set); // #467 void(float bufhandle, float string_index, string str) bufstr_set
+	PR1VM_RegisterBuiltin (vm, 468, (builtin_t)csqc_bufstr_add); // #468 float(float bufhandle, string str, float order) bufstr_add
+	PR1VM_RegisterBuiltin (vm, 469, (builtin_t)csqc_bufstr_free); // #469 void(float bufhandle, float string_index) bufstr_free
 	// C3.1 — #177 localsound, #305 dynamiclight_add.
-	PR1VM_RegisterBuiltin (vm, 177, (builtin_t)csqc_localsound);
-	PR1VM_RegisterBuiltin (vm, 305, (builtin_t)csqc_dynamiclight_add);
+	PR1VM_RegisterBuiltin (vm, 177, (builtin_t)csqc_localsound); // #177 void(string soundname, optional float channel, optional float volume) localsound
+	PR1VM_RegisterBuiltin (vm, 305, (builtin_t)csqc_dynamiclight_add); // #305 float(vector org, float radius, vector lightcolours) adddynamiclight (EXT_CSQC)
 	// C3.2 — #335-337 частицы (мини-реестр).
-	PR1VM_RegisterBuiltin (vm, 335, (builtin_t)csqc_particleeffectnum);
-	PR1VM_RegisterBuiltin (vm, 336, (builtin_t)csqc_trailparticles);
-	PR1VM_RegisterBuiltin (vm, 337, (builtin_t)csqc_pointparticles);
+	PR1VM_RegisterBuiltin (vm, 335, (builtin_t)csqc_particleeffectnum); // #335 float(string effectname) particleeffectnum (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 336, (builtin_t)csqc_trailparticles); // #336 void(float effectnum, entity ent, vector start, vector end) trailparticles (EXT_CSQC),
+	PR1VM_RegisterBuiltin (vm, 337, (builtin_t)csqc_pointparticles); // #337 void(float effectnum, vector origin [, vector dir, float count]) pointparticles (EXT_CSQC)
 	// C3.3a — te_* аппроксимируемая группа (#405-427, кроме #426).
-	PR1VM_RegisterBuiltin (vm, 405, (builtin_t)csqc_te_blood);
-	PR1VM_RegisterBuiltin (vm, 406, (builtin_t)csqc_te_bloodshower);
-	PR1VM_RegisterBuiltin (vm, 407, (builtin_t)csqc_te_explosionrgb);
-	PR1VM_RegisterBuiltin (vm, 408, (builtin_t)csqc_te_particlecube);
-	PR1VM_RegisterBuiltin (vm, 409, (builtin_t)csqc_te_rain);
-	PR1VM_RegisterBuiltin (vm, 410, (builtin_t)csqc_te_rain);	// snow = rain-аппроксимация
-	PR1VM_RegisterBuiltin (vm, 411, (builtin_t)csqc_te_spark);
-	PR1VM_RegisterBuiltin (vm, 412, (builtin_t)csqc_te_quad);
-	PR1VM_RegisterBuiltin (vm, 413, (builtin_t)csqc_te_quad);
-	PR1VM_RegisterBuiltin (vm, 414, (builtin_t)csqc_te_quad);
-	PR1VM_RegisterBuiltin (vm, 415, (builtin_t)csqc_te_quad);
-	PR1VM_RegisterBuiltin (vm, 416, (builtin_t)csqc_te_smallflash);
-	PR1VM_RegisterBuiltin (vm, 417, (builtin_t)csqc_te_customflash);
-	PR1VM_RegisterBuiltin (vm, 418, (builtin_t)csqc_te_gunshot);
-	PR1VM_RegisterBuiltin (vm, 419, (builtin_t)csqc_te_spike);
-	PR1VM_RegisterBuiltin (vm, 420, (builtin_t)csqc_te_superspike);
-	PR1VM_RegisterBuiltin (vm, 421, (builtin_t)csqc_te_explosion);
-	PR1VM_RegisterBuiltin (vm, 422, (builtin_t)csqc_te_tarexplosion);
-	PR1VM_RegisterBuiltin (vm, 423, (builtin_t)csqc_te_wizspike);
-	PR1VM_RegisterBuiltin (vm, 424, (builtin_t)csqc_te_knightspike);
-	PR1VM_RegisterBuiltin (vm, 425, (builtin_t)csqc_te_lavasplash);
-	PR1VM_RegisterBuiltin (vm, 427, (builtin_t)csqc_te_explosion2);
+	PR1VM_RegisterBuiltin (vm, 405, (builtin_t)csqc_te_blood); // #405 void(vector org, vector velocity, float howmany) te_blood (DP_TE_BLOOD)
+	PR1VM_RegisterBuiltin (vm, 406, (builtin_t)csqc_te_bloodshower); // #406 void(vector mincorner, vector maxcorner, float explosionspeed, float howmany) te_bloodshower (DP_TE_BLOODSHOWER)
+	PR1VM_RegisterBuiltin (vm, 407, (builtin_t)csqc_te_explosionrgb); // #407 void(vector org, vector color) te_explosionrgb (DP_TE_EXPLOSIONRGB)
+	PR1VM_RegisterBuiltin (vm, 408, (builtin_t)csqc_te_particlecube); // #408 void(vector mincorner, vector maxcorner, vector vel, float howmany, float color, float gravityflag, float randomveljitter) te_particlecube (DP_TE_PARTICLECUBE)
+	PR1VM_RegisterBuiltin (vm, 409, (builtin_t)csqc_te_rain); // #409 void(vector mincorner, vector maxcorner, vector vel, float howmany, float color) te_particlerain (DP_TE_PARTICLERAIN)
+	PR1VM_RegisterBuiltin (vm, 410, (builtin_t)csqc_te_rain); // #410 void(vector mincorner, vector maxcorner, vector vel, float howmany, float color) te_particlesnow (DP_TE_PARTICLESNOW)
+	PR1VM_RegisterBuiltin (vm, 411, (builtin_t)csqc_te_spark); // #411 void(vector org, vector vel, float howmany) te_spark (DP_TE_SPARK)
+	PR1VM_RegisterBuiltin (vm, 412, (builtin_t)csqc_te_quad); // #412 void(vector org) te_gunshotquad (DP_TE_QUADEFFECTS1)
+	PR1VM_RegisterBuiltin (vm, 413, (builtin_t)csqc_te_quad); // #413 void(vector org) te_spikequad (DP_TE_QUADEFFECTS1)
+	PR1VM_RegisterBuiltin (vm, 414, (builtin_t)csqc_te_quad); // #414 void(vector org) te_superspikequad (DP_TE_QUADEFFECTS1)
+	PR1VM_RegisterBuiltin (vm, 415, (builtin_t)csqc_te_quad); // #415 void(vector org) te_explosionquad (DP_TE_QUADEFFECTS1)
+	PR1VM_RegisterBuiltin (vm, 416, (builtin_t)csqc_te_smallflash); // #416 void(vector org) te_smallflash (DP_TE_SMALLFLASH)
+	PR1VM_RegisterBuiltin (vm, 417, (builtin_t)csqc_te_customflash); // #417 void(vector org, float radius, float lifetime, vector color) te_customflash (DP_TE_CUSTOMFLASH)
+	PR1VM_RegisterBuiltin (vm, 418, (builtin_t)csqc_te_gunshot); // #418 void(vector org) te_gunshot (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 419, (builtin_t)csqc_te_spike); // #419 void(vector org) te_spike (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 420, (builtin_t)csqc_te_superspike); // #420 void(vector org) te_superspike (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 421, (builtin_t)csqc_te_explosion); // #421 void(vector org) te_explosion (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 422, (builtin_t)csqc_te_tarexplosion); // #422 void(vector org) te_tarexplosion (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 423, (builtin_t)csqc_te_wizspike); // #423 void(vector org) te_wizspike (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 424, (builtin_t)csqc_te_knightspike); // #424 void(vector org) te_knightspike (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 425, (builtin_t)csqc_te_lavasplash); // #425 void(vector org) te_lavasplash  (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 427, (builtin_t)csqc_te_explosion2); // #427 void(vector org, float color, float colorlength) te_explosion2 (DP_TE_STANDARDEFFECTBUILTINS)
 	// C3.3b — beams #428-431.
-	PR1VM_RegisterBuiltin (vm, 428, (builtin_t)csqc_te_lightning1);
-	PR1VM_RegisterBuiltin (vm, 429, (builtin_t)csqc_te_lightning2);
-	PR1VM_RegisterBuiltin (vm, 430, (builtin_t)csqc_te_lightning3);
-	PR1VM_RegisterBuiltin (vm, 431, (builtin_t)csqc_te_beam);
-	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat);
-	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs);
-	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
-	PR1VM_RegisterBuiltin (vm, 441, (builtin_t)csqc_tokenize);
-	PR1VM_RegisterBuiltin (vm, 442, (builtin_t)csqc_argv);
+	PR1VM_RegisterBuiltin (vm, 428, (builtin_t)csqc_te_lightning1); // #428 void(entity own, vector start, vector end) te_lightning1 (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 429, (builtin_t)csqc_te_lightning2); // #429 void(entity own, vector start, vector end) te_lightning2 (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 430, (builtin_t)csqc_te_lightning3); // #430 void(entity own, vector start, vector end) te_lightning3 (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 431, (builtin_t)csqc_te_beam); // #431 void(entity own, vector start, vector end) te_beam (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 115, (builtin_t)csqc_strcat); // #115 string(string str1, string str2, ...) strcat (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 221, (builtin_t)csqc_strstrofs); // #221 float(string s1, string sub) strstrofs (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand); // #352 void(string cmdname) registercommand (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 441, (builtin_t)csqc_tokenize); // #441 float(string s) tokenize (KRIMZON_SV_PARSECLIENTCOMMAND)
+	PR1VM_RegisterBuiltin (vm, 442, (builtin_t)csqc_argv); // #442 string(float n) argv (KRIMZON_SV_PARSECLIENTCOMMAND)
 
 	// L2-тривиалы T1 — математика (2026-09-07): чистая математика/C, без состояния.
-	PR1VM_RegisterBuiltin (vm, 471, (builtin_t)csqc_asin);
-	PR1VM_RegisterBuiltin (vm, 472, (builtin_t)csqc_acos);
-	PR1VM_RegisterBuiltin (vm, 473, (builtin_t)csqc_atan);
-	PR1VM_RegisterBuiltin (vm, 474, (builtin_t)csqc_atan2);
-	PR1VM_RegisterBuiltin (vm, 475, (builtin_t)csqc_tan);
-	PR1VM_RegisterBuiltin (vm, 532, (builtin_t)csqc_log);
-	PR1VM_RegisterBuiltin (vm, 102, (builtin_t)csqc_anglemod);
-	PR1VM_RegisterBuiltin (vm, 245, (builtin_t)csqc_mod);
-	PR1VM_RegisterBuiltin (vm, 218, (builtin_t)csqc_bitshift);
-	PR1VM_RegisterBuiltin (vm, 494, (builtin_t)csqc_crc16);
-	PR1VM_RegisterBuiltin (vm, 519, (builtin_t)csqc_gettimef);
+	PR1VM_RegisterBuiltin (vm, 471, (builtin_t)csqc_asin); // #471 float(float s) asin
+	PR1VM_RegisterBuiltin (vm, 472, (builtin_t)csqc_acos); // #472 float(float c) acos
+	PR1VM_RegisterBuiltin (vm, 473, (builtin_t)csqc_atan); // #473 float(float t) atan
+	PR1VM_RegisterBuiltin (vm, 474, (builtin_t)csqc_atan2); // #474 float(float c, float s) atan2
+	PR1VM_RegisterBuiltin (vm, 475, (builtin_t)csqc_tan); // #475 float(float a) tan
+	PR1VM_RegisterBuiltin (vm, 532, (builtin_t)csqc_log); // #532 float(float value, optional float base) log
+	PR1VM_RegisterBuiltin (vm, 102, (builtin_t)csqc_anglemod); // #102 float(float value) anglemod
+	PR1VM_RegisterBuiltin (vm, 245, (builtin_t)csqc_mod); // #245 float(float a, float b) mod
+	PR1VM_RegisterBuiltin (vm, 218, (builtin_t)csqc_bitshift); // #218 bitshift (EXT_DIMENSION_PLANES)
+	PR1VM_RegisterBuiltin (vm, 494, (builtin_t)csqc_crc16); // #494 float(float caseinsensitive, string s, ...) crc16
+	PR1VM_RegisterBuiltin (vm, 519, (builtin_t)csqc_gettimef); // #519 float(optional float timetype) gettime
 
 	// L2-тривиалы T2 — int/hex конверсии (2026-09-07): #259-262.
-	PR1VM_RegisterBuiltin (vm, 259, (builtin_t)csqc_stoi);
-	PR1VM_RegisterBuiltin (vm, 260, (builtin_t)csqc_itos);
-	PR1VM_RegisterBuiltin (vm, 261, (builtin_t)csqc_stoh);
-	PR1VM_RegisterBuiltin (vm, 262, (builtin_t)csqc_htos);
+	PR1VM_RegisterBuiltin (vm, 259, (builtin_t)csqc_stoi); // #259 int(string) stoi
+	PR1VM_RegisterBuiltin (vm, 260, (builtin_t)csqc_itos); // #260 string(int) itos
+	PR1VM_RegisterBuiltin (vm, 261, (builtin_t)csqc_stoh); // #261 int(string) stoh
+	PR1VM_RegisterBuiltin (vm, 262, (builtin_t)csqc_htos); // #262 string(int) htos
 
 	// L2-тривиалы T3 — cvar-метаданные (2026-09-07): #482/#495/#518.
-	PR1VM_RegisterBuiltin (vm, 482, (builtin_t)csqc_cvar_defstring);
-	PR1VM_RegisterBuiltin (vm, 495, (builtin_t)csqc_cvar_type);
-	PR1VM_RegisterBuiltin (vm, 518, (builtin_t)csqc_cvar_description);
+	PR1VM_RegisterBuiltin (vm, 482, (builtin_t)csqc_cvar_defstring); // #482 string(string s) cvar_defstring
+	PR1VM_RegisterBuiltin (vm, 495, (builtin_t)csqc_cvar_type); // #495 float(string name) cvar_type
+	PR1VM_RegisterBuiltin (vm, 518, (builtin_t)csqc_cvar_description); // #518 string(string cvarname) cvar_description
 
 	// L2-тривиалы T4 — строки простые (2026-09-07): #222/223/225/226/227/228/229/230/
 	// 480/481/484/485.
-	PR1VM_RegisterBuiltin (vm, 222, (builtin_t)csqc_str2chr);
-	PR1VM_RegisterBuiltin (vm, 223, (builtin_t)csqc_chr2str);
-	PR1VM_RegisterBuiltin (vm, 225, (builtin_t)csqc_strpad);
-	PR1VM_RegisterBuiltin (vm, 226, (builtin_t)csqc_infoadd);
-	PR1VM_RegisterBuiltin (vm, 227, (builtin_t)csqc_infoget);
-	PR1VM_RegisterBuiltin (vm, 228, (builtin_t)csqc_strncmp);
-	PR1VM_RegisterBuiltin (vm, 229, (builtin_t)csqc_strncasecmp);
-	PR1VM_RegisterBuiltin (vm, 230, (builtin_t)csqc_strncasecmp);
-	PR1VM_RegisterBuiltin (vm, 480, (builtin_t)csqc_strtolower);
-	PR1VM_RegisterBuiltin (vm, 481, (builtin_t)csqc_strtoupper);
-	PR1VM_RegisterBuiltin (vm, 484, (builtin_t)csqc_strreplace);
-	PR1VM_RegisterBuiltin (vm, 485, (builtin_t)csqc_strireplace);
+	PR1VM_RegisterBuiltin (vm, 222, (builtin_t)csqc_str2chr); // #222 float(string str, float index) str2chr (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 223, (builtin_t)csqc_chr2str); // #223 string(float chr, ...) chr2str (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 225, (builtin_t)csqc_strpad); // #225 string strpad(float pad, string str1, ...) strpad (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 226, (builtin_t)csqc_infoadd); // #226 string(string old, string key, string value) infoadd
+	PR1VM_RegisterBuiltin (vm, 227, (builtin_t)csqc_infoget); // #227 string(string info, string key) infoget
+	PR1VM_RegisterBuiltin (vm, 228, (builtin_t)csqc_strncmp); // #228 float(string s1, string s2) strcmp (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 229, (builtin_t)csqc_strncasecmp); // #229 float(string s1, string s2) strcasecmp (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 230, (builtin_t)csqc_strncasecmp); // #230 float(string s1, string s2, float len) strncasecmp (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 480, (builtin_t)csqc_strtolower); // #480 string(string s) strtolower
+	PR1VM_RegisterBuiltin (vm, 481, (builtin_t)csqc_strtoupper); // #481 string(string s) strlennocol
+	PR1VM_RegisterBuiltin (vm, 484, (builtin_t)csqc_strreplace); // #484 string(string search, string replace, string subject) strreplace
+	PR1VM_RegisterBuiltin (vm, 485, (builtin_t)csqc_strireplace); // #485 string(string search, string replace, string subject) strireplace
 
 	// L2 — «Система/VM простые» (2026-09-07): #65/#338/#339/#350/#353/#512 +
 	// no-op #63/#332/#355.
-	PR1VM_RegisterBuiltin (vm, 65,  (builtin_t)csqc_etos);
-	PR1VM_RegisterBuiltin (vm, 338, (builtin_t)csqc_cprint);
-	PR1VM_RegisterBuiltin (vm, 339, (builtin_t)csqc_print);
-	PR1VM_RegisterBuiltin (vm, 350, (builtin_t)csqc_isserver);
-	PR1VM_RegisterBuiltin (vm, 353, (builtin_t)csqc_wasfreed);
-	PR1VM_RegisterBuiltin (vm, 512, (builtin_t)csqc_num_for_edict);
-	PR1VM_RegisterBuiltin (vm, 63,  (builtin_t)csqc_changepitch);
-	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_nop_str);
-	PR1VM_RegisterBuiltin (vm, 355, (builtin_t)csqc_nop_str);
+	PR1VM_RegisterBuiltin (vm, 65,  (builtin_t)csqc_etos); // #65 string(entity ent) etos (DP_QC_ETOS)
+	PR1VM_RegisterBuiltin (vm, 338, (builtin_t)csqc_cprint); // #338 void(string s) cprint (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 339, (builtin_t)csqc_print); // #339 void(string s) print (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 350, (builtin_t)csqc_isserver); // #350 float() isserver (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 353, (builtin_t)csqc_wasfreed); // #353 float(entity ent) wasfreed (EXT_CSQC) (should be availabe on server too)
+	PR1VM_RegisterBuiltin (vm, 512, (builtin_t)csqc_num_for_edict); // #512 float(entity ent) num_for_edict
+	PR1VM_RegisterBuiltin (vm, 63,  (builtin_t)csqc_changepitch); // #63 void(entity ent) changepitch (DP_QC_CHANGEPITCH)
+	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_nop_str); // #332 string(float firststnum) getstats (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 355, (builtin_t)csqc_nop_str); // #355 string() getentitytoken;
 
 	// L2 ST — строки/токенизация (2026-09-07): #478/#514/#479/#515/#516.
-	PR1VM_RegisterBuiltin (vm, 478, (builtin_t)csqc_strftime);
-	PR1VM_RegisterBuiltin (vm, 514, (builtin_t)csqc_tokenize_console);
-	PR1VM_RegisterBuiltin (vm, 479, (builtin_t)csqc_tokenizebyseparator);
-	PR1VM_RegisterBuiltin (vm, 515, (builtin_t)csqc_argv_start_index);
-	PR1VM_RegisterBuiltin (vm, 516, (builtin_t)csqc_argv_end_index);
+	PR1VM_RegisterBuiltin (vm, 478, (builtin_t)csqc_strftime); // #478 string(float uselocaltime, string format, ...) strftime
+	PR1VM_RegisterBuiltin (vm, 514, (builtin_t)csqc_tokenize_console); // #514 float(string str) tokenize_console
+	PR1VM_RegisterBuiltin (vm, 479, (builtin_t)csqc_tokenizebyseparator); // #479 float(string s, string separator1, ...) tokenizebyseparator
+	PR1VM_RegisterBuiltin (vm, 515, (builtin_t)csqc_argv_start_index); // #515 float(float idx) argv_start_index
+	PR1VM_RegisterBuiltin (vm, 516, (builtin_t)csqc_argv_end_index); // #516 float(float idx) argv_end_index
 
 	// L2 — «Ввод/клавиатура/меню» (2026-09-07): #342/#520/#521/#603/#604/#608/#609/#610/#614/#630/#631/#632.
-	PR1VM_RegisterBuiltin (vm, 342, (builtin_t)csqc_getkeybind);
-	PR1VM_RegisterBuiltin (vm, 520, (builtin_t)csqc_keynumtostring_menu);
-	PR1VM_RegisterBuiltin (vm, 521, (builtin_t)csqc_findkeysforcommand);
-	PR1VM_RegisterBuiltin (vm, 603, (builtin_t)csqc_setmousetarget);
-	PR1VM_RegisterBuiltin (vm, 604, (builtin_t)csqc_getmousetarget);
-	PR1VM_RegisterBuiltin (vm, 608, (builtin_t)csqc_getresolution);
-	PR1VM_RegisterBuiltin (vm, 609, (builtin_t)csqc_keynumtostring_menu);
-	PR1VM_RegisterBuiltin (vm, 610, (builtin_t)csqc_findkeysforcommand);
-	PR1VM_RegisterBuiltin (vm, 614, (builtin_t)csqc_stringtokeynum_menu);
-	PR1VM_RegisterBuiltin (vm, 630, (builtin_t)csqc_setkeybind);
-	PR1VM_RegisterBuiltin (vm, 631, (builtin_t)csqc_getbindmaps);
-	PR1VM_RegisterBuiltin (vm, 632, (builtin_t)csqc_setbindmaps);
+	PR1VM_RegisterBuiltin (vm, 342, (builtin_t)csqc_getkeybind); // #342 string(float keynum) getkeybind (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 520, (builtin_t)csqc_keynumtostring_menu); // #520 string(float keynum) keynumtostring_omgwtf
+	PR1VM_RegisterBuiltin (vm, 521, (builtin_t)csqc_findkeysforcommand); // #521 string(string command, optional float bindmap) findkeysforcommand
+	PR1VM_RegisterBuiltin (vm, 603, (builtin_t)csqc_setmousetarget); // #603 void(float trg) setmousetarget
+	PR1VM_RegisterBuiltin (vm, 604, (builtin_t)csqc_getmousetarget); // #604 float() getmousetarget
+	PR1VM_RegisterBuiltin (vm, 608, (builtin_t)csqc_getresolution); // #608 vector(float vidmode, optional float forfullscreen) getresolution
+	PR1VM_RegisterBuiltin (vm, 609, (builtin_t)csqc_keynumtostring_menu); // #609 string(float keynum) keynumtostring_menu
+	PR1VM_RegisterBuiltin (vm, 610, (builtin_t)csqc_findkeysforcommand); // #610 string(string command, optional float bindmap) findkeysforcommand_dp
+	PR1VM_RegisterBuiltin (vm, 614, (builtin_t)csqc_stringtokeynum_menu); // #614 float(string key) stringtokeynum_menu
+	PR1VM_RegisterBuiltin (vm, 630, (builtin_t)csqc_setkeybind); // #630 void(float keynum, string binding, optional float bindmap) setkeybind
+	PR1VM_RegisterBuiltin (vm, 631, (builtin_t)csqc_getbindmaps); // #631 vector() getbindmaps
+	PR1VM_RegisterBuiltin (vm, 632, (builtin_t)csqc_setbindmaps); // #632 float(vector bindmaps) setbindmaps
 
 	// L2 — «Система/VM остаток» (2026-09-07, минимум): #98 + #92-аппрокс + no-op
 	// #64/#240/#278/#279/#504 (рефлексия #496-500/#206 — отдельным шагом).
-	PR1VM_RegisterBuiltin (vm, 98,  (builtin_t)csqc_findfloat);
-	PR1VM_RegisterBuiltin (vm, 92,  (builtin_t)csqc_getlight_approx);
-	PR1VM_RegisterBuiltin (vm, 64,  (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 240, (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 278, (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 279, (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 98,  (builtin_t)csqc_findfloat); // #98 entity(entity start, .float fld, float match) findfloat (DP_QC_FINDFLOAT)
+	PR1VM_RegisterBuiltin (vm, 92,  (builtin_t)csqc_getlight_approx); // #92 vector(vector org) getlight (DP_QC_GETLIGHT)
+	PR1VM_RegisterBuiltin (vm, 64,  (builtin_t)csqc_vmrest_nop); // #64 void(entity ent, entity ignore) tracetoss (DP_QC_TRACETOSS)
+	PR1VM_RegisterBuiltin (vm, 240, (builtin_t)csqc_vmrest_nop); // #240 float(vector viewpos, entity entity) checkpvs
+	PR1VM_RegisterBuiltin (vm, 278, (builtin_t)csqc_vmrest_nop); // #278 void(float action, vector pos, float radius, float quant) terrain_edit
+	PR1VM_RegisterBuiltin (vm, 279, (builtin_t)csqc_vmrest_nop); // #279 void() touchtriggers
+	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_vmrest_nop); // #504 __variant(float entnum, fload fieldnum) getentity
 
 	// L2 — «Звук» (2026-09-07): #483 + no-op #351/#371/#533/#534.
-	PR1VM_RegisterBuiltin (vm, 483, (builtin_t)csqc_pointsound);
-	PR1VM_RegisterBuiltin (vm, 351, (builtin_t)csqc_setlistener);
-	PR1VM_RegisterBuiltin (vm, 371, (builtin_t)csqc_deltalisten);
-	PR1VM_RegisterBuiltin (vm, 533, (builtin_t)csqc_getsoundtime);
-	PR1VM_RegisterBuiltin (vm, 534, (builtin_t)csqc_soundlength);
+	PR1VM_RegisterBuiltin (vm, 483, (builtin_t)csqc_pointsound); // #483 void(vector origin, string sample, float volume, float attenuation) pointsound
+	PR1VM_RegisterBuiltin (vm, 351, (builtin_t)csqc_setlistener); // #351 void(vector origin, vector forward, vector right, vector up) SetListener (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 371, (builtin_t)csqc_deltalisten); // #371 float(string modelname, float flags) deltalisten  (EXT_CSQC_1)
+	PR1VM_RegisterBuiltin (vm, 533, (builtin_t)csqc_getsoundtime); // #533 float(entity e, float channel) getsoundtime
+	PR1VM_RegisterBuiltin (vm, 534, (builtin_t)csqc_soundlength); // #534 float(string sample) soundlength
 
 	// L2 — «Свет/decals/скины» (2026-09-07): все no-op (нет аналогов в ezq).
-	PR1VM_RegisterBuiltin (vm, 372, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 373, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 375, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 376, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 377, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 378, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 379, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 501, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 372, (builtin_t)csqc_light_nop_ret0); // #372 __variant(float lno, float fld) dynamiclight_get
+	PR1VM_RegisterBuiltin (vm, 373, (builtin_t)csqc_light_nop_ret0); // #373 void(float lno, float fld, __variant value) dynamiclight_set
+	PR1VM_RegisterBuiltin (vm, 375, (builtin_t)csqc_light_nop_ret0); // #375 void(string shadername, vector origin, vector up, vector side, vector rgb, float alpha) adddecal
+	PR1VM_RegisterBuiltin (vm, 376, (builtin_t)csqc_light_nop_ret0); // #376 void(entity e, string skinfilename, optional string skindata) setcustomskin
+	PR1VM_RegisterBuiltin (vm, 377, (builtin_t)csqc_light_nop_ret0); // #377 ?
+	PR1VM_RegisterBuiltin (vm, 378, (builtin_t)csqc_light_nop_ret0); // #378 ?
+	PR1VM_RegisterBuiltin (vm, 379, (builtin_t)csqc_light_nop_ret0); // #379 ?
+	PR1VM_RegisterBuiltin (vm, 501, (builtin_t)csqc_light_nop_ret0); // #501 void(float to, string s, float sz) WritePicture
 
 	// L2 — «Интроспекция/кон» (2026-09-07): #294/#295/#607 + no-op #391-394/#605.
-	PR1VM_RegisterBuiltin (vm, 294, (builtin_t)csqc_checkcommand);
-	PR1VM_RegisterBuiltin (vm, 295, (builtin_t)csqc_argescape);
-	PR1VM_RegisterBuiltin (vm, 607, (builtin_t)csqc_isfunction);
-	PR1VM_RegisterBuiltin (vm, 391, (builtin_t)csqc_nop_str);
-	PR1VM_RegisterBuiltin (vm, 392, (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 393, (builtin_t)csqc_vmrest_nop);
-	PR1VM_RegisterBuiltin (vm, 394, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 605, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 294, (builtin_t)csqc_checkcommand); // #294 float(string name) checkcommand
+	PR1VM_RegisterBuiltin (vm, 295, (builtin_t)csqc_argescape); // #295 string(string s) argescape
+	PR1VM_RegisterBuiltin (vm, 607, (builtin_t)csqc_isfunction); // #607 float(string s) isfunction
+	PR1VM_RegisterBuiltin (vm, 391, (builtin_t)csqc_nop_str); // #391 string(string conname, string field, optional string newvalue) con_getset
+	PR1VM_RegisterBuiltin (vm, 392, (builtin_t)csqc_vmrest_nop); // #392 void(string conname, string messagefmt, ...) con_printf
+	PR1VM_RegisterBuiltin (vm, 393, (builtin_t)csqc_vmrest_nop); // #393 void(string conname, vector pos, vector size, float fontsize) con_draw
+	PR1VM_RegisterBuiltin (vm, 394, (builtin_t)csqc_light_nop_ret0); // #394 float(string conname, float inevtype, float parama, float paramb, float paramc) con_input
+	PR1VM_RegisterBuiltin (vm, 605, (builtin_t)csqc_vmrest_nop); // #605 void(.../*, string funcname*/) callfunction
 
 	// L2 — «BSP-поверхности» (2026-09-07): все no-op (нет geometry-интерфейса).
-	PR1VM_RegisterBuiltin (vm, 434, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 435, (builtin_t)csqc_bsp_nop_vec);
-	PR1VM_RegisterBuiltin (vm, 436, (builtin_t)csqc_bsp_nop_vec);
-	PR1VM_RegisterBuiltin (vm, 437, (builtin_t)csqc_nop_str);
-	PR1VM_RegisterBuiltin (vm, 438, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 439, (builtin_t)csqc_bsp_nop_vec);
-	PR1VM_RegisterBuiltin (vm, 486, (builtin_t)csqc_bsp_nop_vec);
-	PR1VM_RegisterBuiltin (vm, 628, (builtin_t)csqc_light_nop_ret0);
-	PR1VM_RegisterBuiltin (vm, 629, (builtin_t)csqc_bsp_nop_vec);
+	PR1VM_RegisterBuiltin (vm, 434, (builtin_t)csqc_light_nop_ret0); // #434 float(entity e, float s) getsurfacenumpoints (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 435, (builtin_t)csqc_bsp_nop_vec); // #435 vector(entity e, float s, float n) getsurfacepoint (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 436, (builtin_t)csqc_bsp_nop_vec); // #436 vector(entity e, float s) getsurfacenormal (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 437, (builtin_t)csqc_nop_str); // #437 string(entity e, float s) getsurfacetexture (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 438, (builtin_t)csqc_light_nop_ret0); // #438 float(entity e, vector p) getsurfacenearpoint (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 439, (builtin_t)csqc_bsp_nop_vec); // #439 vector(entity e, float s, vector p) getsurfaceclippedpoint (DP_QC_GETSURFACE)
+	PR1VM_RegisterBuiltin (vm, 486, (builtin_t)csqc_bsp_nop_vec); // #486 vector(entity e, float s, float n, float a) getsurfacepointattribute
+	PR1VM_RegisterBuiltin (vm, 628, (builtin_t)csqc_light_nop_ret0); // #628 float(entity e, float s) getsurfacenumtriangles
+	PR1VM_RegisterBuiltin (vm, 629, (builtin_t)csqc_bsp_nop_vec); // #629 vector(entity e, float s, float n) getsurfacetriangle
 
 	// L2 — «Entity-рефлексия» (2026-09-07): #496-500 по fielddefs модуля.
-	PR1VM_RegisterBuiltin (vm, 496, (builtin_t)csqc_numentityfields);
-	PR1VM_RegisterBuiltin (vm, 497, (builtin_t)csqc_entityfieldname);
-	PR1VM_RegisterBuiltin (vm, 498, (builtin_t)csqc_entityfieldtype);
-	PR1VM_RegisterBuiltin (vm, 499, (builtin_t)csqc_getentityfieldstring);
-	PR1VM_RegisterBuiltin (vm, 500, (builtin_t)csqc_putentityfieldstring);
+	PR1VM_RegisterBuiltin (vm, 496, (builtin_t)csqc_numentityfields); // #496 float() numentityfields
+	PR1VM_RegisterBuiltin (vm, 497, (builtin_t)csqc_entityfieldname); // #497 string(float fieldnum) entityfieldname
+	PR1VM_RegisterBuiltin (vm, 498, (builtin_t)csqc_entityfieldtype); // #498 float(float fieldnum) entityfieldtype
+	PR1VM_RegisterBuiltin (vm, 499, (builtin_t)csqc_getentityfieldstring); // #499 string(float fieldnum, entity ent) getentityfieldstring
+	PR1VM_RegisterBuiltin (vm, 500, (builtin_t)csqc_putentityfieldstring); // #500 float(float fieldnum, entity ent, string s) putentityfieldstring
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
-	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
-	PR1VM_RegisterBuiltin (vm, 301, (builtin_t)csqc_addentities);
-	PR1VM_RegisterBuiltin (vm, 303, (builtin_t)csqc_setproperty);
-	PR1VM_RegisterBuiltin (vm, 304, (builtin_t)csqc_renderscene);
-	PR1VM_RegisterBuiltin (vm, 309, (builtin_t)csqc_getproperty);
-	PR1VM_RegisterBuiltin (vm, 326, (builtin_t)csqc_drawstring);
-	PR1VM_RegisterBuiltin (vm, 315, (builtin_t)csqc_drawline);
-	PR1VM_RegisterBuiltin (vm, 317, (builtin_t)csqc_precache_pic);
-	PR1VM_RegisterBuiltin (vm, 320, (builtin_t)csqc_drawcharacter);
-	PR1VM_RegisterBuiltin (vm, 322, (builtin_t)csqc_drawpic);
-	PR1VM_RegisterBuiltin (vm, 323, (builtin_t)csqc_drawfill);
-	PR1VM_RegisterBuiltin (vm, 327, (builtin_t)csqc_stringwidth);
-	PR1VM_RegisterBuiltin (vm, 328, (builtin_t)csqc_drawsubpic);
+	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene); // #300 void() clearscene (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 301, (builtin_t)csqc_addentities); // #301 void(float mask) addentities (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 303, (builtin_t)csqc_setproperty); // #303 float(float property, ...) setproperty (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 304, (builtin_t)csqc_renderscene); // #304 void() renderscene (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 309, (builtin_t)csqc_getproperty); // #309 vector/float(float property) getproperty (EXT_CSQC_1)
+	PR1VM_RegisterBuiltin (vm, 326, (builtin_t)csqc_drawstring); // #326 float(vector position, string text, vector size, vector rgb, float alpha, float drawflag) drawstring
+	PR1VM_RegisterBuiltin (vm, 315, (builtin_t)csqc_drawline); // #315 void(float width, vector pos1, vector pos2) drawline (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 317, (builtin_t)csqc_precache_pic); // #317 string(string name, float trywad) precache_pic (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 320, (builtin_t)csqc_drawcharacter); // #320 float(vector position, float character, vector scale, vector rgb, float alpha [, float flag]) drawcharacter (EXT_CSQC, [EXT_CSQC_???])
+	PR1VM_RegisterBuiltin (vm, 322, (builtin_t)csqc_drawpic); // #322 float(vector position, string pic, vector size, vector rgb, float alpha [, float flag]) drawpic (EXT_CSQC, [EXT_CSQC_???])
+	PR1VM_RegisterBuiltin (vm, 323, (builtin_t)csqc_drawfill); // #323 float(vector position, vector size, vector rgb, float alpha [, float flag]) drawfill (EXT_CSQC, [EXT_CSQC_???])
+	PR1VM_RegisterBuiltin (vm, 327, (builtin_t)csqc_stringwidth); // #327 float(string text, float usecolours, optional vector fontsize) stringwidth
+	PR1VM_RegisterBuiltin (vm, 328, (builtin_t)csqc_drawsubpic); // #328 void(vector pos, vector sz, string pic, vector srcpos, vector srcsz, vector rgb, float alpha, optional float drawflag) drawsubpic
 	// L2 — «2D-графика доп» (2026-09-07): #316/#318/#319/#321/#324/#325 + no-op #329.
-	PR1VM_RegisterBuiltin (vm, 316, (builtin_t)csqc_iscachedpic);
-	PR1VM_RegisterBuiltin (vm, 318, (builtin_t)csqc_drawgetimagesize);
-	PR1VM_RegisterBuiltin (vm, 319, (builtin_t)csqc_freepic);
-	PR1VM_RegisterBuiltin (vm, 321, (builtin_t)csqc_drawrawstring);
-	PR1VM_RegisterBuiltin (vm, 324, (builtin_t)csqc_drawsetcliparea);
-	PR1VM_RegisterBuiltin (vm, 325, (builtin_t)csqc_drawresetcliparea);
-	PR1VM_RegisterBuiltin (vm, 329, (builtin_t)csqc_drawrotpic_dp);
-	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati);
-	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
-	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);
-	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf);
+	PR1VM_RegisterBuiltin (vm, 316, (builtin_t)csqc_iscachedpic); // #316 float(string name) iscachedpic (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 318, (builtin_t)csqc_drawgetimagesize); // #318 vector(string picname) draw_getimagesize (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 319, (builtin_t)csqc_freepic); // #319 void(string name) freepic (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 321, (builtin_t)csqc_drawrawstring); // #321 float(vector position, string text, vector scale, vector rgb, float alpha [, float flag]) drawstring (EXT_CSQC, [EXT_CSQC_???])
+	PR1VM_RegisterBuiltin (vm, 324, (builtin_t)csqc_drawsetcliparea); // #324 void(float x, float y, float width, float height) drawsetcliparea (EXT_CSQC_???)
+	PR1VM_RegisterBuiltin (vm, 325, (builtin_t)csqc_drawresetcliparea); // #325 void(void) drawresetcliparea (EXT_CSQC_???)
+	PR1VM_RegisterBuiltin (vm, 329, (builtin_t)csqc_drawrotpic_dp); // #329 void(vector pivot, string picname, vector size, vector mins, float angle, vector rgb, float alpha, optional float drawflag) drawrotpic_dp
+	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati); // #330 int(float stnum) getstati (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf); // #331 float(float stnum) getstatf (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent); // #359 void(string evname, string evargs, ...) (EXT_CSQC_1)
+	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf); // #627 string(string fmt, ...) sprintf
 
 	// S1 read*-минимум (полный набор #360–368 — S2).
-	PR1VM_RegisterBuiltin (vm, 360, (builtin_t)csqc_readbyte);
-	PR1VM_RegisterBuiltin (vm, 361, (builtin_t)csqc_readchar);
-	PR1VM_RegisterBuiltin (vm, 362, (builtin_t)csqc_readshort);
-	PR1VM_RegisterBuiltin (vm, 363, (builtin_t)csqc_readlong);
-	PR1VM_RegisterBuiltin (vm, 364, (builtin_t)csqc_readcoord);
-	PR1VM_RegisterBuiltin (vm, 365, (builtin_t)csqc_readangle);
-	PR1VM_RegisterBuiltin (vm, 366, (builtin_t)csqc_readstring);
-	PR1VM_RegisterBuiltin (vm, 367, (builtin_t)csqc_readfloat);
-	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
+	PR1VM_RegisterBuiltin (vm, 360, (builtin_t)csqc_readbyte); // #360 float() readbyte (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 361, (builtin_t)csqc_readchar); // #361 float() readchar (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 362, (builtin_t)csqc_readshort); // #362 float() readshort (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 363, (builtin_t)csqc_readlong); // #363 float() readlong (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 364, (builtin_t)csqc_readcoord); // #364 float() readcoord (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 365, (builtin_t)csqc_readangle); // #365 float() readangle (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 366, (builtin_t)csqc_readstring); // #366 string() readstring (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 367, (builtin_t)csqc_readfloat); // #367 float() readfloat (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum); // #368 float() readentitynum (EXT_CSQC)
 
 	// L2 заглушки: VOID (67) — тип-correct no-op.
 	PR1VM_RegisterBuiltin (vm, 111, (builtin_t)csqc_vmrest_nop); // #111 void(float fnum) fclose (FRIK_FILE)
@@ -4675,7 +4675,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 216, (builtin_t)csqc_vmrest_nop); // #216 216 (FTE_PEXT_HEXEN2)
 	PR1VM_RegisterBuiltin (vm, 217, (builtin_t)csqc_vmrest_nop); // #217 217 (FTE_PEXT_HEXEN2)
 	PR1VM_RegisterBuiltin (vm, 219, (builtin_t)csqc_vmrest_nop); // #219 te_lightningblood void(vector org) (FTE_TE_STANDARDEFFECTBUILTINS)
-	PR1VM_RegisterBuiltin (vm, 234, (builtin_t)csqc_vmrest_nop); // #234 float(entity ent) isbackbuffered
+	PR1VM_RegisterBuiltin (vm, 234, (builtin_t)csqc_light_nop_ret0); // #234 float(entity ent) isbackbuffered
 	PR1VM_RegisterBuiltin (vm, 235, (builtin_t)csqc_vmrest_nop); // #235 void(vector angle) rotatevectorsbyangle
 	PR1VM_RegisterBuiltin (vm, 236, (builtin_t)csqc_vmrest_nop); // #236 void(vector fwd, vector right, vector up) rotatevectorsbyvectors
 	PR1VM_RegisterBuiltin (vm, 239, (builtin_t)csqc_vmrest_nop); // #239 void te_bloodqw(vector org[, float count]) (FTE_TE_STANDARDEFFECTBUILTINS)
