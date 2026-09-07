@@ -4662,6 +4662,152 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 366, (builtin_t)csqc_readstring);
 	PR1VM_RegisterBuiltin (vm, 367, (builtin_t)csqc_readfloat);
 	PR1VM_RegisterBuiltin (vm, 368, (builtin_t)csqc_readentitynum);
+
+	// L2 заглушки: VOID (67) — тип-correct no-op.
+	PR1VM_RegisterBuiltin (vm, 111, (builtin_t)csqc_vmrest_nop); // #111 void(float fnum) fclose (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 113, (builtin_t)csqc_vmrest_nop); // #113 void(float fnum, string str) fputs (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 204, (builtin_t)csqc_vmrest_nop); // #204 void(float prnum, __variant newval, string varname) externset
+	PR1VM_RegisterBuiltin (vm, 207, (builtin_t)csqc_vmrest_nop); // #207 void(entity portal, float state) openportal
+	PR1VM_RegisterBuiltin (vm, 210, (builtin_t)csqc_vmrest_nop); // #210 void() fork
+	PR1VM_RegisterBuiltin (vm, 211, (builtin_t)csqc_vmrest_nop); // #211 void() abort (FTE_MULTITHREADED)
+	PR1VM_RegisterBuiltin (vm, 212, (builtin_t)csqc_vmrest_nop); // #212 void() sleep
+	PR1VM_RegisterBuiltin (vm, 215, (builtin_t)csqc_vmrest_nop); // #215 215 (FTE_PEXT_HEXEN2)
+	PR1VM_RegisterBuiltin (vm, 216, (builtin_t)csqc_vmrest_nop); // #216 216 (FTE_PEXT_HEXEN2)
+	PR1VM_RegisterBuiltin (vm, 217, (builtin_t)csqc_vmrest_nop); // #217 217 (FTE_PEXT_HEXEN2)
+	PR1VM_RegisterBuiltin (vm, 219, (builtin_t)csqc_vmrest_nop); // #219 te_lightningblood void(vector org) (FTE_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 234, (builtin_t)csqc_vmrest_nop); // #234 float(entity ent) isbackbuffered
+	PR1VM_RegisterBuiltin (vm, 235, (builtin_t)csqc_vmrest_nop); // #235 void(vector angle) rotatevectorsbyangle
+	PR1VM_RegisterBuiltin (vm, 236, (builtin_t)csqc_vmrest_nop); // #236 void(vector fwd, vector right, vector up) rotatevectorsbyvectors
+	PR1VM_RegisterBuiltin (vm, 239, (builtin_t)csqc_vmrest_nop); // #239 void te_bloodqw(vector org[, float count]) (FTE_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 271, (builtin_t)csqc_vmrest_nop); // #271 void(float skel, float bonenum, vector org) skel_set_bone
+	PR1VM_RegisterBuiltin (vm, 272, (builtin_t)csqc_vmrest_nop); // #272 void(float skel, float bonenum, vector org) skel_mul_bone
+	PR1VM_RegisterBuiltin (vm, 273, (builtin_t)csqc_vmrest_nop); // #273 void(float skel, float startbone, float endbone, vector org) skel_mul_bone
+	PR1VM_RegisterBuiltin (vm, 274, (builtin_t)csqc_vmrest_nop); // #274 void(float skeldst, float skelsrc, float startbone, float entbone) skel_copybones
+	PR1VM_RegisterBuiltin (vm, 275, (builtin_t)csqc_vmrest_nop); // #275 void(float skel) skel_delete
+	PR1VM_RegisterBuiltin (vm, 283, (builtin_t)csqc_vmrest_nop); // #283 void(entity ent, float bonenum, vector org, optional vector angorfwd, optional vector right, optional vector up) skel_set_bone_world
+	PR1VM_RegisterBuiltin (vm, 288, (builtin_t)csqc_vmrest_nop); // #288 void(hashtable table) hash_destroytab
+	PR1VM_RegisterBuiltin (vm, 289, (builtin_t)csqc_vmrest_nop); // #289 void(hashtable table, string name, __variant value, optional float typeandflags) hash_add
+	PR1VM_RegisterBuiltin (vm, 293, (builtin_t)csqc_vmrest_nop); // #293 void() hash_getcb
+	PR1VM_RegisterBuiltin (vm, 302, (builtin_t)csqc_vmrest_nop); // #302 void(entity ent) addentity (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 306, (builtin_t)csqc_vmrest_nop); // #306 void(string texturename) R_BeginPolygon (EXT_CSQC_???)
+	PR1VM_RegisterBuiltin (vm, 307, (builtin_t)csqc_vmrest_nop); // #307 void(vector org, vector texcoords, vector rgb, float alpha) R_PolygonVertex (EXT_CSQC_???)
+	PR1VM_RegisterBuiltin (vm, 308, (builtin_t)csqc_vmrest_nop); // #308 void() R_EndPolygon (EXT_CSQC_???)
+	PR1VM_RegisterBuiltin (vm, 333, (builtin_t)csqc_vmrest_nop); // #333 void(entity e, float mdlindex) setmodelindex (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 385, (builtin_t)csqc_vmrest_nop); // #385 void(__variant *ptr) memfree
+	PR1VM_RegisterBuiltin (vm, 386, (builtin_t)csqc_vmrest_nop); // #386 void(__variant *dst, __variant *src, int size) memcpy
+	PR1VM_RegisterBuiltin (vm, 387, (builtin_t)csqc_vmrest_nop); // #387 void(__variant *dst, int val, int size) memfill8
+	PR1VM_RegisterBuiltin (vm, 389, (builtin_t)csqc_vmrest_nop); // #389 void(__variant *dst, float ofs, __variant val) memsetval
+	PR1VM_RegisterBuiltin (vm, 400, (builtin_t)csqc_vmrest_nop); // #400 void(entity from, entity to) copyentity (DP_QC_COPYENTITY)
+	PR1VM_RegisterBuiltin (vm, 404, (builtin_t)csqc_vmrest_nop); // #404 void(vector org, string modelname, float startframe, float endframe, float framerate) effect (DP_SV_EFFECT)
+	PR1VM_RegisterBuiltin (vm, 426, (builtin_t)csqc_vmrest_nop); // #426 void(vector org) te_teleport (DP_TE_STANDARDEFFECTBUILTINS)
+	PR1VM_RegisterBuiltin (vm, 432, (builtin_t)csqc_vmrest_nop); // #432 void(vector dir) vectorvectors (DP_QC_VECTORVECTORS)
+	PR1VM_RegisterBuiltin (vm, 433, (builtin_t)csqc_vmrest_nop); // #433 void(vector org) te_plasmaburn (DP_TE_PLASMABURN)
+	PR1VM_RegisterBuiltin (vm, 443, (builtin_t)csqc_vmrest_nop); // #443 void(entity e, entity tagentity, string tagname) setattachment (DP_GFX_QUAKE3MODELTAGS)
+	PR1VM_RegisterBuiltin (vm, 445, (builtin_t)csqc_vmrest_nop); // #445 void	search_end(float handle) (DP_QC_FS_SEARCH)
+	PR1VM_RegisterBuiltin (vm, 457, (builtin_t)csqc_vmrest_nop); // #457 void(vector org, vector vel, float howmany) te_flamejet
+	PR1VM_RegisterBuiltin (vm, 488, (builtin_t)csqc_vmrest_nop); // #488 void(string name)
+	PR1VM_RegisterBuiltin (vm, 489, (builtin_t)csqc_vmrest_nop); // #489 void(string name, string URI)
+	PR1VM_RegisterBuiltin (vm, 491, (builtin_t)csqc_vmrest_nop); // #491 void(string name, float x, float y)
+	PR1VM_RegisterBuiltin (vm, 492, (builtin_t)csqc_vmrest_nop); // #492 void(string name, float w, float h)
+	PR1VM_RegisterBuiltin (vm, 502, (builtin_t)csqc_vmrest_nop); // #502 void(float effectindex, entity own, vector org_from, vector org_to, vector dir_from, vector dir_to, float countmultiplier, optional float flags) boxparticles
+	PR1VM_RegisterBuiltin (vm, 517, (builtin_t)csqc_vmrest_nop); // #517 void(strbuf strbuf) buf_cvarlist
+	PR1VM_RegisterBuiltin (vm, 529, (builtin_t)csqc_vmrest_nop); // #529 void(string s) loadfromdata
+	PR1VM_RegisterBuiltin (vm, 530, (builtin_t)csqc_vmrest_nop); // #530 void(string s) loadfromfile
+	PR1VM_RegisterBuiltin (vm, 540, (builtin_t)csqc_vmrest_nop); // #540 void(entity e, float physics_enabled) physics_enable
+	PR1VM_RegisterBuiltin (vm, 541, (builtin_t)csqc_vmrest_nop); // #541 void(entity e, vector force, vector relative_ofs) physics_addforce
+	PR1VM_RegisterBuiltin (vm, 542, (builtin_t)csqc_vmrest_nop); // #542 void(entity e, vector torque) physics_addtorque
+	PR1VM_RegisterBuiltin (vm, 606, (builtin_t)csqc_vmrest_nop); // #606 void(filestream fh, entity e) writetofile
+	PR1VM_RegisterBuiltin (vm, 613, (builtin_t)csqc_vmrest_nop); // #613 void(entity e, string s) parseentitydata
+	PR1VM_RegisterBuiltin (vm, 615, (builtin_t)csqc_vmrest_nop); // #615 void() resethostcachemasks
+	PR1VM_RegisterBuiltin (vm, 616, (builtin_t)csqc_vmrest_nop); // #616 void(float mask, float fld, string str, float op) sethostcachemaskstring
+	PR1VM_RegisterBuiltin (vm, 617, (builtin_t)csqc_vmrest_nop); // #617 void(float mask, float fld, float num, float op) sethostcachemasknumber
+	PR1VM_RegisterBuiltin (vm, 618, (builtin_t)csqc_vmrest_nop); // #618 void() resorthostcache
+	PR1VM_RegisterBuiltin (vm, 619, (builtin_t)csqc_vmrest_nop); // #619 void(float fld, float descending) sethostcachesort
+	PR1VM_RegisterBuiltin (vm, 620, (builtin_t)csqc_vmrest_nop); // #620 void() refreshhostcache
+	PR1VM_RegisterBuiltin (vm, 623, (builtin_t)csqc_vmrest_nop); // #623 void(string key) addwantedhostcachekey
+	PR1VM_RegisterBuiltin (vm, 650, (builtin_t)csqc_vmrest_nop); // #650 void() fcopy
+	PR1VM_RegisterBuiltin (vm, 651, (builtin_t)csqc_vmrest_nop); // #651 void() frename
+	PR1VM_RegisterBuiltin (vm, 652, (builtin_t)csqc_vmrest_nop); // #652 void() fremove
+	PR1VM_RegisterBuiltin (vm, 654, (builtin_t)csqc_vmrest_nop); // #654 void() rmtree
+	PR1VM_RegisterBuiltin (vm, 741, (builtin_t)csqc_vmrest_nop); // #741 void() controller_rumble
+	PR1VM_RegisterBuiltin (vm, 742, (builtin_t)csqc_vmrest_nop); // #742 void() controller_rumbletriggers
+	// L2 заглушки: FLOAT0 (49) — тип-correct no-op.
+	PR1VM_RegisterBuiltin (vm, 110, (builtin_t)csqc_light_nop_ret0); // #110 float(string strname, float accessmode) fopen (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 200, (builtin_t)csqc_light_nop_ret0); // #200 float(string modelname, optional float queryonly) getmodelindex
+	PR1VM_RegisterBuiltin (vm, 201, (builtin_t)csqc_light_nop_ret0); // #201 __variant(float prnum, string funcname, ...) externcall
+	PR1VM_RegisterBuiltin (vm, 202, (builtin_t)csqc_light_nop_ret0); // #202 float(string progsname) addprogs
+	PR1VM_RegisterBuiltin (vm, 203, (builtin_t)csqc_light_nop_ret0); // #203 __variant(float prnum, string varname) externvalue
+	PR1VM_RegisterBuiltin (vm, 205, (builtin_t)csqc_light_nop_ret0); // #205 float() externrefcall
+	PR1VM_RegisterBuiltin (vm, 206, (builtin_t)csqc_light_nop_ret0); // #206 float(string input, string token) instr
+	PR1VM_RegisterBuiltin (vm, 237, (builtin_t)csqc_light_nop_ret0); // #237 float(float mdlindex, string skinname) skinforname
+	PR1VM_RegisterBuiltin (vm, 238, (builtin_t)csqc_light_nop_ret0); // #238 float(string shadername, optional string defaultshader, ...) shaderforname
+	PR1VM_RegisterBuiltin (vm, 242, (builtin_t)csqc_light_nop_ret0); // #242 void(string dest, string content) sendpacket
+	PR1VM_RegisterBuiltin (vm, 263, (builtin_t)csqc_light_nop_ret0); // #263 float(float modlindex) skel_create
+	PR1VM_RegisterBuiltin (vm, 264, (builtin_t)csqc_light_nop_ret0); // #264 float(float skel, entity ent, float modelindex, float retainfrac, float firstbone, float lastbone, optional float addition) skel_build
+	PR1VM_RegisterBuiltin (vm, 265, (builtin_t)csqc_light_nop_ret0); // #265 float(float skel) skel_get_numbones
+	PR1VM_RegisterBuiltin (vm, 267, (builtin_t)csqc_light_nop_ret0); // #267 float(float skel, float bonenum) skel_get_boneparent
+	PR1VM_RegisterBuiltin (vm, 268, (builtin_t)csqc_light_nop_ret0); // #268 float(float skel, string tagname) skel_get_boneidx
+	PR1VM_RegisterBuiltin (vm, 276, (builtin_t)csqc_light_nop_ret0); // #276 float(float modidx, string framename) frameforname
+	PR1VM_RegisterBuiltin (vm, 277, (builtin_t)csqc_light_nop_ret0); // #277 float(float modidx, float framenum) frameduration
+	PR1VM_RegisterBuiltin (vm, 281, (builtin_t)csqc_light_nop_ret0); // #281 (FTE_QC_RAGDOLL)
+	PR1VM_RegisterBuiltin (vm, 282, (builtin_t)csqc_light_nop_ret0); // #282 (FTE_QC_RAGDOLL)
+	PR1VM_RegisterBuiltin (vm, 286, (builtin_t)csqc_light_nop_ret0); // #286 float(float resourcetype, float tryload, string resourcename) resourcestatus
+	PR1VM_RegisterBuiltin (vm, 287, (builtin_t)csqc_light_nop_ret0); // #287 hashtable(float tabsize, optional float defaulttype) hash_createtab
+	PR1VM_RegisterBuiltin (vm, 290, (builtin_t)csqc_light_nop_ret0); // #290 __variant(hashtable table, string name, optional __variant deflt, optional float requiretype, optional float index) hash_get
+	PR1VM_RegisterBuiltin (vm, 291, (builtin_t)csqc_light_nop_ret0); // #291 __variant(hashtable table, string name) hash_delete
+	PR1VM_RegisterBuiltin (vm, 356, (builtin_t)csqc_light_nop_ret0); // #356 float(string s) findfont
+	PR1VM_RegisterBuiltin (vm, 357, (builtin_t)csqc_light_nop_ret0); // #357 float(string fontname, string fontmaps, string sizes, float slot, optional float fix_scale, optional float fix_voffset) loadfont
+	PR1VM_RegisterBuiltin (vm, 384, (builtin_t)csqc_light_nop_ret0); // #384 __variant*(int size) memalloc
+	PR1VM_RegisterBuiltin (vm, 388, (builtin_t)csqc_light_nop_ret0); // #388 __variant(__variant *dst, float ofs) memgetval
+	PR1VM_RegisterBuiltin (vm, 390, (builtin_t)csqc_light_nop_ret0); // #390 __variant*(__variant *base, float ofs) memptradd
+	PR1VM_RegisterBuiltin (vm, 402, (builtin_t)csqc_light_nop_ret0); // #402 entity(string field, string match) findchain (DP_QC_FINDCHAIN)
+	PR1VM_RegisterBuiltin (vm, 403, (builtin_t)csqc_light_nop_ret0); // #403 entity(float fld, float match) findchainfloat (DP_QC_FINDCHAINFLOAT)
+	PR1VM_RegisterBuiltin (vm, 444, (builtin_t)csqc_light_nop_ret0); // #444 float	search_begin(string pattern, float caseinsensitive, float quiet) (DP_QC_FS_SEARCH)
+	PR1VM_RegisterBuiltin (vm, 446, (builtin_t)csqc_light_nop_ret0); // #446 float	search_getsize(float handle) (DP_QC_FS_SEARCH)
+	PR1VM_RegisterBuiltin (vm, 449, (builtin_t)csqc_light_nop_ret0); // #449 entity(entity start, .entity fld, float match) findflags (DP_QC_FINDFLAGS)
+	PR1VM_RegisterBuiltin (vm, 450, (builtin_t)csqc_light_nop_ret0); // #450 entity(.float fld, float match) findchainflags (DP_QC_FINDCHAINFLAGS)
+	PR1VM_RegisterBuiltin (vm, 451, (builtin_t)csqc_light_nop_ret0); // #451 float(entity ent, string tagname) gettagindex (DP_MD3_TAGSINFO)
+	PR1VM_RegisterBuiltin (vm, 476, (builtin_t)csqc_light_nop_ret0); // #476 float(string s) strlennocol
+	PR1VM_RegisterBuiltin (vm, 487, (builtin_t)csqc_light_nop_ret0); // #487 float(string name)
+	PR1VM_RegisterBuiltin (vm, 490, (builtin_t)csqc_light_nop_ret0); // #490 float(string name, float key, float eventtype)
+	PR1VM_RegisterBuiltin (vm, 513, (builtin_t)csqc_light_nop_ret0); // #513 float(string uril, float id) uri_get
+	PR1VM_RegisterBuiltin (vm, 535, (builtin_t)csqc_light_nop_ret0); // #535 float(string filename, strbuf bufhandle) buf_loadfile
+	PR1VM_RegisterBuiltin (vm, 536, (builtin_t)csqc_light_nop_ret0); // #536 float(filestream filehandle, strbuf bufhandle, optional float startpos, optional float numstrings) buf_writefile
+	PR1VM_RegisterBuiltin (vm, 537, (builtin_t)csqc_light_nop_ret0); // #537 float() bufstr_find
+	PR1VM_RegisterBuiltin (vm, 611, (builtin_t)csqc_light_nop_ret0); // #611 float(float type) gethostcachevalue
+	PR1VM_RegisterBuiltin (vm, 621, (builtin_t)csqc_light_nop_ret0); // #621 float(float fld, float hostnr) gethostcachenumber
+	PR1VM_RegisterBuiltin (vm, 622, (builtin_t)csqc_light_nop_ret0); // #622 float(string key) gethostcacheindexforkey
+	PR1VM_RegisterBuiltin (vm, 638, (builtin_t)csqc_light_nop_ret0); // #638 float() CL_RotateMoves
+	PR1VM_RegisterBuiltin (vm, 640, (builtin_t)csqc_light_nop_ret0); // #640 float() V_CalcRefdef
+	PR1VM_RegisterBuiltin (vm, 653, (builtin_t)csqc_light_nop_ret0); // #653 float() fexists
+	PR1VM_RegisterBuiltin (vm, 740, (builtin_t)csqc_light_nop_ret0); // #740 float() controller_query
+	// L2 заглушки: STRING (18) — тип-correct no-op.
+	PR1VM_RegisterBuiltin (vm, 112, (builtin_t)csqc_nop_str); // #112 string(float fnum) fgets (FRIK_FILE)
+	PR1VM_RegisterBuiltin (vm, 224, (builtin_t)csqc_nop_str); // #224 string(float ccase, float redalpha, float redchars, string str, ...) strconv (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 266, (builtin_t)csqc_nop_str); // #266 string(float skel, float bonenum) skel_get_bonename
+	PR1VM_RegisterBuiltin (vm, 284, (builtin_t)csqc_nop_str); // #284 string(float modidx, float framenum) frametoname
+	PR1VM_RegisterBuiltin (vm, 285, (builtin_t)csqc_nop_str); // #285 string(float modidx, float skin) skintoname
+	PR1VM_RegisterBuiltin (vm, 292, (builtin_t)csqc_nop_str); // #292 string(hashtable table, float idx) hash_getkey
+	PR1VM_RegisterBuiltin (vm, 334, (builtin_t)csqc_nop_str); // #334 string(float mdlindex) modelnameforindex (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 374, (builtin_t)csqc_nop_str); // #374 string(float efnum, float body) particleeffectquery
+	PR1VM_RegisterBuiltin (vm, 447, (builtin_t)csqc_nop_str); // #447 string	search_getfilename(float handle, float num) (DP_QC_FS_SEARCH)
+	PR1VM_RegisterBuiltin (vm, 477, (builtin_t)csqc_nop_str); // #477 string(string s) strdecolorize
+	PR1VM_RegisterBuiltin (vm, 503, (builtin_t)csqc_nop_str); // #503 string(string filename) whichpack
+	PR1VM_RegisterBuiltin (vm, 510, (builtin_t)csqc_nop_str); // #510 string(string in) uri_escape
+	PR1VM_RegisterBuiltin (vm, 511, (builtin_t)csqc_nop_str); // #511 string(string in) uri_unescape
+	PR1VM_RegisterBuiltin (vm, 612, (builtin_t)csqc_nop_str); // #612 string(float type, float hostnr) gethostcachestring
+	PR1VM_RegisterBuiltin (vm, 624, (builtin_t)csqc_nop_str); // #624 string() getextresponse
+	PR1VM_RegisterBuiltin (vm, 625, (builtin_t)csqc_nop_str); // #625 string(string dnsname, optional float defport) netaddress_resolve
+	PR1VM_RegisterBuiltin (vm, 626, (builtin_t)csqc_nop_str); // #626 string() getgamedirinfo
+	PR1VM_RegisterBuiltin (vm, 639, (builtin_t)csqc_nop_str); // #639 string(string digest, string data, ...) digest_hex
+	// L2 заглушки: VECTOR (7) — тип-correct no-op.
+	PR1VM_RegisterBuiltin (vm, 244, (builtin_t)csqc_bsp_nop_vec); // #244 vector(entity ent, float tagnum) rotatevectorsbytag
+	PR1VM_RegisterBuiltin (vm, 269, (builtin_t)csqc_bsp_nop_vec); // #269 vector(float skel, float bonenum) skel_get_bonerel
+	PR1VM_RegisterBuiltin (vm, 270, (builtin_t)csqc_bsp_nop_vec); // #270 vector(float skel, float bonenum) skel_get_boneabs
+	PR1VM_RegisterBuiltin (vm, 310, (builtin_t)csqc_bsp_nop_vec); // #310 vector (vector v) unproject (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 311, (builtin_t)csqc_bsp_nop_vec); // #311 vector (vector v) project (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 452, (builtin_t)csqc_bsp_nop_vec); // #452 vector(entity ent, float tagindex) gettaginfo (DP_MD3_TAGSINFO)
+	PR1VM_RegisterBuiltin (vm, 493, (builtin_t)csqc_bsp_nop_vec); // #493 vector(string name)
 }
 
 #endif // !CLIENTONLY
