@@ -14,8 +14,10 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include <time.h>		// csqc_calltimeofday (#231)
 #include <stdlib.h>		// strtod (#81/#117)
-#include <ctype.h>		// tolower (#494 crc16 insensitive)
+#include <ctype.h>		// tolower (#494 crc16 insensitive, #480/481)
 #include <math.h>		// libm-математика (T1: #471-475/#532)
+#include <string.h>		// strlen/strncmp/strcasecmp (T4: #228-230)
+#include <strings.h>		// strcasecmp/strncasecmp (T4: #229/230)
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
@@ -2043,6 +2045,304 @@ static void csqc_cvar_description (void)
 }
 
 /*
+L2-тривиалы T4 — строки простые (2026-09-07; волна тривиал-кандидатов).
+FTE-эталон — pr_bgcmd.c (strpad 4363, strncasecmp 4272/strncmp 4305, infoadd/infoget
+4337/4348, strreplace 4968/strireplace 4997, chr2str 4560/str2chr 4579, strtolower
+5066/strtoupper 5077). ASCII-семантика (UTF-8-ветки FTE — вне классики, отклонение
+в parity). Строки возврата — temp-ring (SetRetStr).
+*/
+
+/*
+float(string str, optional float index) str2chr = #222 — код символа; index<0 —
+с конца; вне [0,len) → 0.
+*/
+static void csqc_str2chr (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	int len, idx;
+	if (!vm)
+		return;
+	s = s ? s : "";
+	len = strlen (s);
+	idx = (vm->argc > 1) ? (int)vm->globals[OFS_PARM1] : 0;
+	if (idx < 0)
+		idx = len + idx;
+	if (idx < 0 || idx >= len)
+		vm->globals[OFS_RETURN] = 0;
+	else
+		vm->globals[OFS_RETURN] = (float)(unsigned char)s[idx];
+}
+
+/*
+string(float chr, ...) chr2str = #223 — строка из кодов символов (каждый аргумент).
+*/
+static void csqc_chr2str (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[128];
+	int i, n = 0;
+	if (!vm)
+		return;
+	for (i = 0; i < vm->argc && i < 64 && n < (int)sizeof (buf) - 1; i++)
+		buf[n++] = (char)(int)vm->globals[OFS_PARM0 + i * 3];
+	buf[n] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+string(float pad, string str1, ...) strpad = #225 — выравнивание конкатенации
+строк к ширине |pad|: pad>0 — справа, pad<0 — слева (PF_strpad).
+*/
+static void csqc_strpad (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[4096], *d;
+	int pad, len = 0, i;
+	const char *s;
+
+	if (!vm)
+		return;
+	pad = (int)vm->globals[OFS_PARM0];
+	buf[0] = 0;
+	d = buf;
+	for (i = 1; i < vm->argc; i++)
+	{
+		s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		if (!s)
+			continue;
+		len = strlen (s);
+		if (d - buf + len >= (int)sizeof (buf) - 1)
+			len = (int)sizeof (buf) - 1 - (d - buf);
+		memcpy (d, s, len);
+		d += len;
+		*d = 0;
+	}
+	if (pad < 0)
+	{
+		pad = -pad - (int)(d - buf);
+		if (pad > (int)sizeof (buf) - 1 - (d - buf))
+			pad = (int)sizeof (buf) - 1 - (d - buf);
+		if (pad > 0)
+		{
+			memmove (buf + pad, buf, (size_t)(d - buf) + 1);
+			memset (buf, ' ', pad);
+		}
+	}
+	else
+	{
+		pad -= (int)(d - buf);
+		if (pad < 0)
+			pad = 0;
+		if (d - buf + pad >= (int)sizeof (buf) - 1)
+			pad = (int)sizeof (buf) - 1 - (d - buf);
+		memset (d, ' ', pad);
+		d[pad] = 0;
+	}
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+string(infostring old, string key, string value) infoadd = #226
+string(infostring info, string key) infoget = #227
+QW-infostring \key\value; FTE Info_* (pr_bgcmd.c). Прототипы Info_SetValueForStarKey
+в common.h нет — локальный extern.
+*/
+void Info_SetValueForStarKey (char *s, char *key, char *value, int maxsize);
+static void csqc_infoadd (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *info, *key, *val;
+	char buf[1024];
+	if (!vm)
+		return;
+	info = CSQCVM_Str (OFS_PARM0);
+	key = CSQCVM_Str (OFS_PARM1);
+	val = CSQCVM_Str (OFS_PARM2);
+	strlcpy (buf, info ? info : "", sizeof (buf));
+	Info_SetValueForStarKey (buf, key ? key : "", val ? val : "", sizeof (buf));
+	CSQCVM_SetRetStr (buf);
+}
+static void csqc_infoget (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *info = CSQCVM_Str (OFS_PARM0);
+	char *key = CSQCVM_Str (OFS_PARM1);
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (Info_ValueForKey (info ? info : "", key ? key : ""));
+}
+
+/*
+float(string s1, string s2, optional float len, optional float s1ofs, optional float s2ofs)
+strcmp/strncmp = #228 (PF_strncmp, pr_bgcmd.c:4305)
+*/
+static void csqc_strncmp (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *a, *b;
+	int len, aofs, bofs;
+	int alen, blen;
+	if (!vm)
+		return;
+	a = CSQCVM_Str (OFS_PARM0) ? CSQCVM_Str (OFS_PARM0) : "";
+	b = CSQCVM_Str (OFS_PARM1) ? CSQCVM_Str (OFS_PARM1) : "";
+	if (vm->argc <= 2)
+	{
+		vm->globals[OFS_RETURN] = strcmp (a, b);
+		return;
+	}
+	len = (int)vm->globals[OFS_PARM2];
+	aofs = (vm->argc > 3) ? (int)vm->globals[OFS_PARM3] : 0;
+	bofs = (vm->argc > 4) ? (int)vm->globals[OFS_PARM4] : 0;
+	alen = strlen (a);
+	blen = strlen (b);
+	if (aofs < 0 || (aofs && aofs > alen))
+		aofs = alen;
+	if (bofs < 0 || (bofs && bofs > blen))
+		bofs = blen;
+	vm->globals[OFS_RETURN] = strncmp (a + aofs, b, len);
+}
+
+/*
+float(string s1, string s2) strcasecmp = #229
+float(string s1, string s2, float len, optional float s1ofs, optional float s2ofs)
+strncasecmp = #230 (PF_strncasecmp, pr_bgcmd.c:4272)
+*/
+static void csqc_strncasecmp (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *a, *b;
+	int len, aofs, bofs;
+	int alen, blen;
+	if (!vm)
+		return;
+	a = CSQCVM_Str (OFS_PARM0) ? CSQCVM_Str (OFS_PARM0) : "";
+	b = CSQCVM_Str (OFS_PARM1) ? CSQCVM_Str (OFS_PARM1) : "";
+	if (vm->argc <= 2)
+	{
+		vm->globals[OFS_RETURN] = strcasecmp (a, b);
+		return;
+	}
+	len = (int)vm->globals[OFS_PARM2];
+	aofs = (vm->argc > 3) ? (int)vm->globals[OFS_PARM3] : 0;
+	bofs = (vm->argc > 4) ? (int)vm->globals[OFS_PARM4] : 0;
+	alen = strlen (a);
+	blen = strlen (b);
+	if (aofs < 0 || (aofs && aofs > alen))
+		aofs = alen;
+	if (bofs < 0 || (bofs && bofs > blen))
+		bofs = blen;
+	vm->globals[OFS_RETURN] = strncasecmp (a + aofs, b + bofs, len);
+}
+
+/*
+string(string s) strtolower = #480 / strtoupper = #481 — ASCII (FTE — unicode).
+*/
+static void csqc_strtolower (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *s = CSQCVM_Str (OFS_PARM0);
+	char buf[8192];
+	int i, n;
+	if (!vm)
+		return;
+	n = strlen (s ? s : "");
+	if (n >= (int)sizeof (buf))
+		n = (int)sizeof (buf) - 1;
+	for (i = 0; i < n; i++)
+		buf[i] = tolower ((int)(unsigned char)s[i]);
+	buf[n] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+static void csqc_strtoupper (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *s = CSQCVM_Str (OFS_PARM0);
+	char buf[8192];
+	int i, n;
+	if (!vm)
+		return;
+	n = strlen (s ? s : "");
+	if (n >= (int)sizeof (buf))
+		n = (int)sizeof (buf) - 1;
+	for (i = 0; i < n; i++)
+		buf[i] = toupper ((int)(unsigned char)s[i]);
+	buf[n] = 0;
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+string(string search, string replace, string subject) strreplace = #484
+string(string search, string replace, string subject) strireplace = #485
+(PF_strreplace/strireplace: 4096-буфер, нерекурсивная замена).
+*/
+static void csqc_strreplace (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *search, *replace, *sub;
+	char buf[4096], *result = buf;
+	int searchlen, replacelen;
+	if (!vm)
+		return;
+	search = CSQCVM_Str (OFS_PARM0) ? CSQCVM_Str (OFS_PARM0) : "";
+	replace = CSQCVM_Str (OFS_PARM1) ? CSQCVM_Str (OFS_PARM1) : "";
+	sub = CSQCVM_Str (OFS_PARM2) ? CSQCVM_Str (OFS_PARM2) : "";
+	searchlen = strlen (search);
+	replacelen = strlen (replace);
+	if (searchlen)
+	{
+		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		{
+			if (!strncmp (sub, search, searchlen))
+			{
+				sub += searchlen;
+				memcpy (result, replace, replacelen);
+				result += replacelen;
+			}
+			else
+				*result++ = *sub++;
+		}
+		*result = 0;
+	}
+	else
+		strlcpy (buf, sub, sizeof (buf));
+	CSQCVM_SetRetStr (buf);
+}
+static void csqc_strireplace (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *search, *replace, *sub;
+	char buf[4096], *result = buf;
+	int searchlen, replacelen;
+	if (!vm)
+		return;
+	search = CSQCVM_Str (OFS_PARM0) ? CSQCVM_Str (OFS_PARM0) : "";
+	replace = CSQCVM_Str (OFS_PARM1) ? CSQCVM_Str (OFS_PARM1) : "";
+	sub = CSQCVM_Str (OFS_PARM2) ? CSQCVM_Str (OFS_PARM2) : "";
+	searchlen = strlen (search);
+	replacelen = strlen (replace);
+	if (searchlen)
+	{
+		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		{
+			if (!strncasecmp (sub, search, searchlen))
+			{
+				sub += searchlen;
+				memcpy (result, replace, replacelen);
+				result += replacelen;
+			}
+			else
+				*result++ = *sub++;
+		}
+		*result = 0;
+	}
+	else
+		strlcpy (buf, sub, sizeof (buf));
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
 Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
 без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
 */
@@ -3345,6 +3645,21 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 482, (builtin_t)csqc_cvar_defstring);
 	PR1VM_RegisterBuiltin (vm, 495, (builtin_t)csqc_cvar_type);
 	PR1VM_RegisterBuiltin (vm, 518, (builtin_t)csqc_cvar_description);
+
+	// L2-тривиалы T4 — строки простые (2026-09-07): #222/223/225/226/227/228/229/230/
+	// 480/481/484/485.
+	PR1VM_RegisterBuiltin (vm, 222, (builtin_t)csqc_str2chr);
+	PR1VM_RegisterBuiltin (vm, 223, (builtin_t)csqc_chr2str);
+	PR1VM_RegisterBuiltin (vm, 225, (builtin_t)csqc_strpad);
+	PR1VM_RegisterBuiltin (vm, 226, (builtin_t)csqc_infoadd);
+	PR1VM_RegisterBuiltin (vm, 227, (builtin_t)csqc_infoget);
+	PR1VM_RegisterBuiltin (vm, 228, (builtin_t)csqc_strncmp);
+	PR1VM_RegisterBuiltin (vm, 229, (builtin_t)csqc_strncasecmp);
+	PR1VM_RegisterBuiltin (vm, 230, (builtin_t)csqc_strncasecmp);
+	PR1VM_RegisterBuiltin (vm, 480, (builtin_t)csqc_strtolower);
+	PR1VM_RegisterBuiltin (vm, 481, (builtin_t)csqc_strtoupper);
+	PR1VM_RegisterBuiltin (vm, 484, (builtin_t)csqc_strreplace);
+	PR1VM_RegisterBuiltin (vm, 485, (builtin_t)csqc_strireplace);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
