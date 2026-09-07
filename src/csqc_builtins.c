@@ -82,15 +82,60 @@ static void csqc_dprint (void)
 }
 
 /*
-string(float val) ftos = #26
+Порт Q_ftoa (fteqw engine/common/common.c:526) для #26 ftos: float → строка
+без потери значащих цифр («infinite decimal places»), обрезка хвостовых нулей.
+*/
+static void csqc_q_ftoa (char *str, size_t maxlen, float in)
+{
+	unsigned int i = *((unsigned int *)&in);
+	int signbit = (i & 0x80000000u) >> 31;
+	int exp = (int)((i & 0x7F800000u) >> 23) - 127;
+	int mantissa = (i & 0x007FFFFFu);
+	char buf[64];
+	char *p;
+
+	if (exp == 128)
+	{
+		snprintf (buf, sizeof (buf), "%s%s", signbit ? "-" : "",
+			mantissa == 0 ? "1.#INF" : "1.#NAN");
+		strlcpy (str, buf, maxlen);
+		return;
+	}
+	exp = -exp;
+	exp = (int)(exp * 0.30102999957f);	// base 2 → base 10
+	exp += 8;
+	if (exp <= 0)
+		snprintf (buf, sizeof (buf), "%.0f", in);
+	else
+	{
+		char fmt[16];
+		snprintf (fmt, sizeof (fmt), "%%.%if", exp);
+		snprintf (buf, sizeof (buf), fmt, in);
+		// обрезка хвостовых нулей и точки (как Q_ftoa)
+		for (p = buf + strlen (buf) - 1; p > buf && *p == '0'; p--)
+			*p = '\0';
+		if (*p == '.')
+			*p = '\0';
+	}
+	strlcpy (str, buf, maxlen);
+}
+
+/*
+string(float val) ftos = #26 — FTE-паритет (PF_ftos, pr_bgcmd.c:4645):
+целое значение → "%d"; иначе Q_ftoa (дробная часть не теряется).
 */
 static void csqc_ftos (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char buf[32];
+	float v;
+	char buf[64];
 	if (!vm)
 		return;
-	snprintf (buf, sizeof (buf), "%d", (int)vm->globals[OFS_PARM0]);
+	v = vm->globals[OFS_PARM0];
+	if (v >= -2147483648.0f && v <= 2147483647.0f && v == (float)(int)v)
+		snprintf (buf, sizeof (buf), "%d", (int)v);
+	else
+		csqc_q_ftoa (buf, sizeof (buf), v);
 	CSQCVM_SetRetStr (buf);
 }
 
@@ -131,6 +176,117 @@ static void csqc_makevectors (void)
 	if (!vm)
 		return;
 	CSQC_Client_MakeVectors (&vm->globals[OFS_PARM0]);
+}
+
+/*
+float() random = #7 — FTE-паритет (PF_random, pr_bgcmd.c:6360).
+Возвращает в (0,1): (rand&0x7fff)/0x8000 + 0.5/0x8000 — никогда 0 и 1
+(в отличие от серверного ezq-PF_random, способного вернуть 1.0).
+FTE optional: argc==1 → *x; argc>=2 → a + r*(b-a). Внутренний клиентский
+wrapper — серверный PF_random не трогаем (общий с сервером).
+*/
+static void csqc_random (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float r;
+	if (!vm)
+		return;
+	r = (float)(rand () & 0x7fff) / 0x8000 + (0.5f / 0x8000);
+	if (vm->argc == 1)
+		r *= vm->globals[OFS_PARM0];
+	else if (vm->argc >= 2)
+		r = vm->globals[OFS_PARM0] + r * (vm->globals[OFS_PARM1] - vm->globals[OFS_PARM0]);
+	vm->globals[OFS_RETURN] = r;
+}
+
+/*
+float(vector v [, optional entity reference]) vectoyaw = #13 — FTE-паритет
+(PF_vectoyaw, pr_bgcmd.c:6775): yaw = (int)(atan2*180/π), <0 → +360.
+FTE optional entity — gravity-axis; у нас клиент axis не ведёт (gravitydir нет):
+идентичность-ось (дефолт FTE без gravitydir) — отклонение задокум.
+*/
+static void csqc_vectoyaw (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *v;
+	float x, y, yaw;
+	if (!vm)
+		return;
+	v = &vm->globals[OFS_PARM0];
+	x = v[0];
+	y = v[1];
+	if (y == 0 && x == 0)
+		yaw = 0;
+	else
+	{
+		yaw = (float)(int)(atan2 (y, x) * 180 / M_PI);
+		if (yaw < 0)
+			yaw += 360;
+	}
+	vm->globals[OFS_RETURN] = yaw;
+}
+
+/*
+vector(vector fwd [, optional vector up]) vectoangles = #51 — FTE-паритет
+(PF_vectoangles pr_bgcmd.c:6822 → VectorAngles mathlib.c:294, meshpitch=1).
+Optional up → roll. meshpitch/r_meshroll у нас игнорируются (=1) — отклонение.
+*/
+static void csqc_vectoangles (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const float *forward;
+	float *up;
+	float yaw, pitch, roll;
+	float result[3];
+
+	if (!vm)
+		return;
+	forward = &vm->globals[OFS_PARM0];
+	up = (vm->argc >= 2) ? &vm->globals[OFS_PARM0 + 3] : NULL;
+
+	if (forward[1] == 0 && forward[0] == 0)
+	{
+		if (forward[2] > 0)
+		{
+			pitch = -M_PI * 0.5;
+			yaw = up ? atan2 (-up[1], -up[0]) : 0;
+		}
+		else
+		{
+			pitch = M_PI * 0.5;
+			yaw = up ? atan2 (up[1], up[0]) : 0;
+		}
+		roll = 0;
+	}
+	else
+	{
+		float cp, sp, cy, sy;
+		yaw = atan2 (forward[1], forward[0]);
+		pitch = -atan2 (forward[2], sqrt (forward[0] * forward[0] + forward[1] * forward[1]));
+		if (up)
+		{
+			float tleft[3], tup[3];
+			cp = cos (pitch); sp = sin (pitch);
+			cy = cos (yaw); sy = sin (yaw);
+			tleft[0] = -sy; tleft[1] = cy; tleft[2] = 0;
+			tup[0] = sp * cy; tup[1] = sp * sy; tup[2] = cp;
+			roll = -atan2 (up[0] * tleft[0] + up[1] * tleft[1] + up[2] * tleft[2],
+				up[0] * tup[0] + up[1] * tup[1] + up[2] * tup[2]);
+		}
+		else
+			roll = 0;
+	}
+	pitch *= 180 / M_PI;
+	yaw *= 180 / M_PI;
+	roll *= 180 / M_PI;
+	/* meshpitch=1: r_meshpitch/r_meshroll не применяем (отклонение) */
+	if (pitch < 0) pitch += 360;
+	if (yaw < 0) yaw += 360;
+	if (roll < 0) roll += 360;
+	result[0] = pitch; result[1] = yaw; result[2] = roll;
+	vm->globals[OFS_RETURN] = result[0];
+	vm->globals[OFS_RETURN + 1] = result[1];
+	vm->globals[OFS_RETURN + 2] = result[2];
 }
 
 /*
@@ -193,26 +349,31 @@ static void csqc_strcat (void)
 float(string s1, string sub, optional float startidx) strstrofs = #221
 (P2.2) Возвращает позицию подстроки (0-based) или -1.
 */
+/*
+float(string s1, string sub, optional float startidx) strstrofs = #221 — FTE-паритет
+(PF_strstrofs pr_bgcmd.c:4611): start вне [0,len] (и не 0) → −1.
+*/
 static void csqc_strstrofs (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *hay, *needle, *p;
-	int start;
+	int start, len;
 
 	if (!vm)
 		return;
 	hay = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
 	needle = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM1]);
-	start = (int)vm->globals[OFS_PARM2];
-	if (!hay || !needle)
+	start = (vm->argc > 2) ? (int)vm->globals[OFS_PARM2] : 0;
+	if (!hay)
+		hay = "";
+	if (!needle)
+		needle = "";
+	len = strlen (hay);
+	if (start != 0 && (start < 0 || start > len))
 	{
 		vm->globals[OFS_RETURN] = -1;
 		return;
 	}
-	if (start < 0)
-		start = 0;
-	if (start > (int)strlen (hay))
-		start = (int)strlen (hay);
 	p = strstr (hay + start, needle);
 	vm->globals[OFS_RETURN] = p ? (p - hay) : -1;
 }
@@ -1586,6 +1747,11 @@ void(string err, ...) error = #10
 колбэк ставит errored — кадры отключаются). Отклонение от серверного PF_error:
 без дампа self/edict и SV_Error.
 */
+/*
+void(string errortext) error = #10 — FTE-паритет (PF_error, pr_bgcmd.c:7196):
+developer!=0 — нефатально (печать; FTE — debug-break, у нас печать и continue);
+developer==0 — фатально (abort через host_error). Отклонение: FTE-стек не печатаем.
+*/
 static void csqc_error (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1593,7 +1759,7 @@ static void csqc_error (void)
 	if (!vm)
 		return;
 	Con_Printf ("CSQC error: %s\n", s ? s : "");
-	if (vm->host_error)
+	if (!developer.value && vm->host_error)
 		vm->host_error (vm, s ? s : "error");
 }
 
@@ -1631,6 +1797,11 @@ static void csqc_localcmd (void)
 void(string cvarname, string value) cvar_set = #72
 Как серверный PF_cvar_set (pr_cmds.c): если cvar нет — предупреждение.
 */
+/*
+void(string cvarname, string value) cvar_set = #72 — FTE-паритет (PF_cvar_set,
+pr_bgcmd.c:1957): FTE использует FindOrGet — отсутствующий cvar создаётся.
+Отклонение: CVAR_NOTFROMSERVER-guard не воспроизводим (клиент).
+*/
 static void csqc_cvar_set (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1644,11 +1815,9 @@ static void csqc_cvar_set (void)
 		return;
 	var = Cvar_Find (name);
 	if (!var)
-	{
-		Con_Printf ("csqc cvar_set: variable %s not found\n", name);
-		return;
-	}
-	Cvar_Set (var, val ? val : "");
+		var = Cvar_Create (name, "", 0);	// FindOrGet: создаём, если нет
+	if (var)
+		Cvar_Set (var, val ? val : "");
 }
 
 /*
@@ -1744,7 +1913,7 @@ Phase 1 L1 P1b — строки/конверсии. Client-handlers на per-ins
 */
 
 /*
-string(vector v) vtos = #27
+string(vector v) vtos = #27 — FTE-паритет (PF_vtos pr_bgcmd.c:4768): "'%f %f %f'".
 */
 static void csqc_vtos (void)
 {
@@ -1752,7 +1921,7 @@ static void csqc_vtos (void)
 	char buf[64];
 	if (!vm)
 		return;
-	snprintf (buf, sizeof (buf), "'%5.1f %5.1f %5.1f'",
+	snprintf (buf, sizeof (buf), "'%f %f %f'",
 		vm->globals[OFS_PARM0], vm->globals[OFS_PARM0 + 1], vm->globals[OFS_PARM0 + 2]);
 	CSQCVM_SetRetStr (buf);
 }
@@ -1785,6 +1954,11 @@ static void csqc_strlen (void)
 string(string s, float start, float count) substring = #116
 (логика серверного PF_substr, per-instance строки)
 */
+/*
+string(string s, float start, float count) substring = #116 — FTE-паритет
+(PF_substring pr_bgcmd.c:4886): отрицательные start/length от конца, строгий
+clamp (start>=slen || length<=0 → "").
+*/
 static void csqc_substring (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1798,14 +1972,21 @@ static void csqc_substring (void)
 	start = (int)vm->globals[OFS_PARM1];
 	len = (int)vm->globals[OFS_PARM2];
 	l = strlen (s);
+	if (start < 0)
+		start = l + start;
+	if (len < 0)
+		len = l - start + (len + 1);
+	if (start < 0)
+		start = 0;
 	if (start >= l || len <= 0 || l == 0)
 	{
 		CSQCVM_SetRetStr ("");
 		return;
 	}
-	if (len > l - start + 1)
-		len = l - start + 1;
-	strlcpy (buf, s + start, len + 1);
+	l -= start;
+	if (len > l)
+		len = l;
+	strlcpy (buf, s + start, (size_t)len + 1);
 	CSQCVM_SetRetStr (buf);
 }
 
@@ -2658,17 +2839,19 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 
 	// Phase 1 L1 P1a — реюз чистых float/vector серверных PF_* (см. extern выше):
 	// attach в PR1VM_ExecuteProgram переключает pr_globals на исполняемую VM.
-	PR1VM_RegisterBuiltin (vm, 7,   (builtin_t)PF_random);
+	// #7/#13/#51 — клиентские wrapper'ы (FTE-паритет возврата/арг), серверные
+	// PF_random/PF_vectoyaw/PF_vectoangles общие с сервером — не трогаем.
+	PR1VM_RegisterBuiltin (vm, 7,   (builtin_t)csqc_random);
 	PR1VM_RegisterBuiltin (vm, 9,   (builtin_t)PF_normalize);
 	PR1VM_RegisterBuiltin (vm, 12,  (builtin_t)PF_vlen);
-	PR1VM_RegisterBuiltin (vm, 13,  (builtin_t)PF_vectoyaw);
+	PR1VM_RegisterBuiltin (vm, 13,  (builtin_t)csqc_vectoyaw);
 	PR1VM_RegisterBuiltin (vm, 29,  (builtin_t)PF_traceon);
 	PR1VM_RegisterBuiltin (vm, 30,  (builtin_t)PF_traceoff);
 	PR1VM_RegisterBuiltin (vm, 36,  (builtin_t)PF_rint);
 	PR1VM_RegisterBuiltin (vm, 37,  (builtin_t)PF_floor);
 	PR1VM_RegisterBuiltin (vm, 38,  (builtin_t)PF_ceil);
 	PR1VM_RegisterBuiltin (vm, 43,  (builtin_t)PF_fabs);
-	PR1VM_RegisterBuiltin (vm, 51,  (builtin_t)PF_vectoangles);
+	PR1VM_RegisterBuiltin (vm, 51,  (builtin_t)csqc_vectoangles);
 	PR1VM_RegisterBuiltin (vm, 60,  (builtin_t)PF_sin);
 	PR1VM_RegisterBuiltin (vm, 61,  (builtin_t)PF_cos);
 	PR1VM_RegisterBuiltin (vm, 62,  (builtin_t)PF_sqrt);
