@@ -1599,12 +1599,21 @@ static void csqc_error (void)
 
 /*
 void(string err, ...) objerror = #11
-FTE: objerror не-фатальна. Печать в консоль, модуль продолжает.
+Паритет FTE (PF_objerror, pr_csqc.c): фатальность зависит от cvar developer.
+developer!=0 — нефатальна: печать в консоль, модуль продолжает (debug_trace
+в FTE не воспроизводим). developer==0 — фатальна: печать + дисконнект клиента
+(CSQC_Client_Abort: как FTE CSQC_Abort → Host_EndGame).
+Отклонение от FTE: без дампа self/edict (ED_Print) перед сообщением.
 */
 static void csqc_objerror (void)
 {
+	pr1vm_t *vm = CSQCVM_Active ();
 	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
 	Con_Printf ("CSQC objerror: %s\n", s ? s : "");
+	if (!developer.value)
+		CSQC_Client_Abort (s ? s : "objerror");
 }
 
 /*

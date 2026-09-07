@@ -396,6 +396,25 @@ static void CSQC_Client_HostError (pr1vm_t *vm, const char *msg)
 
 /*
 =================
+CSQC_Client_Abort
+
+Фатальная ошибка модуля (паритет FTE CSQC_Abort → Host_EndGame): печатаем
+причину и отключаем клиента от сервера (дисконнект, возврат в меню), затем
+Host_Abort (longjmp в Host_Frame) — не возвращаемся в исполняемую VM.
+errored ставим ДО CL_Disconnect, чтобы CSQC_Client_Disconnect не звал
+func_shutdown реентерабельно (мы сами внутри исполняемой VM).
+=================
+*/
+void CSQC_Client_Abort (const char *msg)
+{
+	Con_Printf ("CSQC (PR1VM) fatal: %s\n", msg ? msg : "fatal");
+	s_csqc.errored = true;
+	CL_Disconnect ();
+	Host_Abort ();
+}
+
+/*
+=================
 Внутренние помощники
 =================
 */

@@ -20,6 +20,7 @@ void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 3
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
+void CSQC_Client_Abort (const char *msg);			// фатально: дисконнект клиента (паритет FTE CSQC_Abort)
 
 // FTE-пул (слот ≠ серверный номер). entnum-функции работают со слотами пула;
 // сетевые номера держатся картой номер→слот (svc 76/92). slot 0 = world.
