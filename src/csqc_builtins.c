@@ -3944,6 +3944,21 @@ static void csqc_soundlength (void)
 }
 
 /*
+L2 — «BSP-поверхности» (2026-09-07). Все no-op: FTE читает геометрию brush-моделей
+(surfaces/mesh/plane/texture, pr_bgcmd.c:953-1350); в ezq такого geometry-интерфейса
+моделей нет. Регистрация — защита от «Bad builtin».
+*/
+static void csqc_bsp_nop_vec (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN + 0] = 0;
+	vm->globals[OFS_RETURN + 1] = 0;
+	vm->globals[OFS_RETURN + 2] = 0;
+}
+
+/*
 L2 — «Интроспекция/кон» (2026-09-07; roadmap продолжение L2). FTE-эталон —
 pr_bgcmd.c (isfunction 3809, callfunction 3816, argescape 6349, checkcommand 7820),
 pr_menu.c (con_* 1143+). Реализовано: #294 checkcommand (ezq: cmd→1, cvar→3,
@@ -4443,6 +4458,17 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 393, (builtin_t)csqc_vmrest_nop);
 	PR1VM_RegisterBuiltin (vm, 394, (builtin_t)csqc_light_nop_ret0);
 	PR1VM_RegisterBuiltin (vm, 605, (builtin_t)csqc_vmrest_nop);
+
+	// L2 — «BSP-поверхности» (2026-09-07): все no-op (нет geometry-интерфейса).
+	PR1VM_RegisterBuiltin (vm, 434, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 435, (builtin_t)csqc_bsp_nop_vec);
+	PR1VM_RegisterBuiltin (vm, 436, (builtin_t)csqc_bsp_nop_vec);
+	PR1VM_RegisterBuiltin (vm, 437, (builtin_t)csqc_nop_str);
+	PR1VM_RegisterBuiltin (vm, 438, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 439, (builtin_t)csqc_bsp_nop_vec);
+	PR1VM_RegisterBuiltin (vm, 486, (builtin_t)csqc_bsp_nop_vec);
+	PR1VM_RegisterBuiltin (vm, 628, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 629, (builtin_t)csqc_bsp_nop_vec);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
