@@ -1920,6 +1920,63 @@ static void csqc_gettimef (void)
 }
 
 /*
+L2-тривиалы T2 — int/hex конверсии (#259-262, 2026-09-07; волна тривиал-кандидатов).
+FTE-эталон — pr_bgcmd.c (itos 4701, stoi 4712, htos 4720, stoh 4731).
+ABI: параметры/возврат типа int в классике передаются 4 байтами битового значения
+(как строки), а не float-числом — читаем/пишем через *(int *)&globals[...].
+*/
+
+/*
+string(int input) itos = #260 — "%d".
+*/
+static void csqc_itos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[32];
+	if (!vm)
+		return;
+	snprintf (buf, sizeof (buf), "%d", *(int *)&vm->globals[OFS_PARM0]);
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+int(string input) stoi = #259 — atoi (возврат int-битами).
+*/
+static void csqc_stoi (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	*(int *)&vm->globals[OFS_RETURN] = atoi (s ? s : "");
+}
+
+/*
+string(int input) htos = #262 — "%08x" (всегда 8 символов, без префикса).
+*/
+static void csqc_htos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[32];
+	if (!vm)
+		return;
+	snprintf (buf, sizeof (buf), "%08x", *(unsigned int *)&vm->globals[OFS_PARM0]);
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
+int(string input) stoh = #261 — strtoul base 16 (возврат int-битами).
+*/
+static void csqc_stoh (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	*(int *)&vm->globals[OFS_RETURN] = (int)strtoul (s ? s : "", NULL, 16);
+}
+
+/*
 Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
 без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
 */
@@ -3211,6 +3268,12 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 218, (builtin_t)csqc_bitshift);
 	PR1VM_RegisterBuiltin (vm, 494, (builtin_t)csqc_crc16);
 	PR1VM_RegisterBuiltin (vm, 519, (builtin_t)csqc_gettimef);
+
+	// L2-тривиалы T2 — int/hex конверсии (2026-09-07): #259-262.
+	PR1VM_RegisterBuiltin (vm, 259, (builtin_t)csqc_stoi);
+	PR1VM_RegisterBuiltin (vm, 260, (builtin_t)csqc_itos);
+	PR1VM_RegisterBuiltin (vm, 261, (builtin_t)csqc_stoh);
+	PR1VM_RegisterBuiltin (vm, 262, (builtin_t)csqc_htos);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
