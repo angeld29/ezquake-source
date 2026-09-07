@@ -3944,6 +3944,20 @@ static void csqc_soundlength (void)
 }
 
 /*
+L2 — «Свет/decals/скины» (2026-09-07; roadmap волна 5-финальная). Все номера —
+документированные no-op/аппроксимации: в ezq нет decal/skin-файловых подсистем
+FTE (`Mod_*Skin`, `CL_AddDecal`), readback-пикч и констант `lfield_*` для
+`cl_dlights[]`. Регистрация — чтобы модуль не ловил «Bad builtin».
+*/
+static void csqc_light_nop_ret0 (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
 L2 — «Система/VM остаток» (2026-09-07; roadmap волна 3, минимум-скоуп). Реализовано
 полностью: #98 findfloat (обход пула по float-полю, как FTE PF_FindFloat
 pr_bgcmd.c:1643). #92 getlight — аппроксимация (сэмпла света нет → 0). No-op
@@ -4338,6 +4352,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 371, (builtin_t)csqc_deltalisten);
 	PR1VM_RegisterBuiltin (vm, 533, (builtin_t)csqc_getsoundtime);
 	PR1VM_RegisterBuiltin (vm, 534, (builtin_t)csqc_soundlength);
+
+	// L2 — «Свет/decals/скины» (2026-09-07): все no-op (нет аналогов в ezq).
+	PR1VM_RegisterBuiltin (vm, 372, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 373, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 375, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 376, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 377, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 378, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 379, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 501, (builtin_t)csqc_light_nop_ret0);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
