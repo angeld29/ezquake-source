@@ -510,6 +510,82 @@ static qbool CSQC_Client_ValidateFile (const char *path, int size, unsigned crc)
 
 /*
 =================
+CSQC_Client_FindMainProgs
+
+Поиск валидного локального csprogs по FTE-семантике (CSQC_FindMainProgs,
+fteqw/engine/client/pr_csqc.c): 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname
+(+ фолбэк на csprogs.dat). При валидном name-файле и заданном crc пишем копию
+в кэш csprogsvers/<crc>.dat (write-back, как FTE COM_WriteFile в pr_csqc.c) —
+следующие коннекты берут кэш, а не перекачивают. Возвращает true и заполняет
+pathbuf путём для CSQC_Client_Load.
+=================
+*/
+static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
+	const char *name, int sizep, unsigned crc)
+{
+	extern void Sys_mkdir (const char *path);
+	char buf[MAX_QPATH];
+	const char *cands[3];
+	int nc = 0;
+	int i;
+
+	if (crc)
+	{
+		snprintf (buf, sizeof (buf), "csprogsvers/%x.dat", crc);
+		if (CSQC_Client_ValidateFile (buf, sizep, crc))
+		{
+			strlcpy (pathbuf, buf, bufsz);
+			return true;
+		}
+	}
+
+	if (name && name[0])
+		cands[nc++] = name;
+	if (!name || !name[0] || strcmp (name, "csprogs.dat"))
+		cands[nc++] = "csprogs.dat";
+
+	for (i = 0; i < nc; i++)
+	{
+		if (CSQC_Client_ValidateFile (cands[i], sizep, crc))
+		{
+			strlcpy (pathbuf, cands[i], bufsz);
+			// FTE write-back: валидный name-файл копируем в кэш на будущее.
+			if (crc && !cls.demoplayback)
+			{
+				byte *data;
+				int len;
+				char dest[MAX_OSPATH], dir[MAX_OSPATH];
+				char *slash;
+				FILE *f;
+				data = (byte *)FS_LoadHunkFile ((char *)cands[i], &len);
+				if (data)
+				{
+					snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
+						cls.gamedir, crc);
+					strlcpy (dir, dest, sizeof (dir));
+					slash = strrchr (dir, '/');
+					if (slash && slash != dir)
+					{
+						*slash = 0;
+						Sys_mkdir (dir);
+					}
+					f = fopen (dest, "wb");
+					if (f)
+					{
+						fwrite (data, 1, len, f);
+						fclose (f);
+						Con_Printf ("CSQC: cached csprogsvers/%x.dat\n", crc);
+					}
+				}
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+=================
 CSQC_Client_StartDownload
 
 Запрашивает у сервера скачивание csprogs. Сервер отдаёт файл под *csprogsname
@@ -932,19 +1008,10 @@ void CSQC_Client_ConnectCheck (void)
 	if (s_csqc.loaded)
 		CSQC_Client_Disconnect ();
 
-	// Локальные кандидаты (валидация размер+crc как FTE CSQC_FindMainProgs):
-	// 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname (csprogs.dat).
-	path[0] = 0;
-	if (crc)
-	{
-		snprintf (path, sizeof (path), "csprogsvers/%x.dat", crc);
-		if (!CSQC_Client_ValidateFile (path, sizep, crc))
-			path[0] = 0;
-	}
-	if (!path[0] && CSQC_Client_ValidateFile (name, sizep, crc))
-		snprintf (path, sizeof (path), "%s", name);
-
-	if (path[0])
+	// Локальные кандидаты по FTE-семантике (CSQC_FindMainProgs, pr_csqc.c):
+	// 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname (+ фолбэк csprogs.dat);
+	// при валидном name-файле делается write-back копии в кэш.
+	if (CSQC_Client_FindMainProgs (path, sizeof (path), name, sizep, crc))
 	{
 		if (!CSQC_Client_Load (path))
 			return;
