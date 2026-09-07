@@ -22,6 +22,7 @@ csprogs.dat.
 #include "pr1vm.h"
 #include "csqc_client.h"
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
+#include "common_draw.h"	// CachePic_Find/Remove, Draw_EnableScissorRectangle/DisableScissor
 
 // FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
@@ -179,6 +180,35 @@ static color_t CSQC_Client_Color (int r, int g, int b, float alpha)
 }
 
 /*
+#324 drawsetcliparea / #325 drawresetcliparea — геометрическое отсечение (решение
+2026-09-07; аппаратный GL-scissor на отложенном 2D-пайплайне ezq не применим).
+Состояние clip-прямоугольника в координатах CSQC-рисования; прямоугольные
+примитивы (pic/subpic/fill) пересекаются с ним, текст/линии только не рисуются,
+если целиком вне (строки внутри не режутся) — отклонение в parity.
+*/
+static qbool s_clip_on = false;
+static float s_clip_x, s_clip_y, s_clip_w, s_clip_h;
+
+// Пересекает dest-rect (x,y,w,h) с активным clip. Возврат false = пусто/вне.
+static qbool CSQC_Client_ClipDest (float *x, float *y, float *w, float *h)
+{
+	float x0, y0, x1, y1;
+	if (!s_clip_on)
+		return true;
+	x0 = *x; y0 = *y;
+	x1 = *x + *w; y1 = *y + *h;
+	if (x1 <= s_clip_x || x0 >= s_clip_x + s_clip_w ||
+		y1 <= s_clip_y || y0 >= s_clip_y + s_clip_h)
+		return false;
+	x0 = (x0 > s_clip_x) ? x0 : s_clip_x;
+	y0 = (y0 > s_clip_y) ? y0 : s_clip_y;
+	x1 = (x1 < s_clip_x + s_clip_w) ? x1 : s_clip_x + s_clip_w;
+	y1 = (y1 < s_clip_y + s_clip_h) ? y1 : s_clip_y + s_clip_h;
+	*x = x0; *y = y0; *w = x1 - x0; *h = y1 - y0;
+	return true;
+}
+
+/*
 =================
 Слой D, шаг 1 — 2D-графика (docs/ezquake_csqc_client_layerd_2d_plan.md).
 Координаты/размеры — сырые пиксели видео (как DrawText). drawpic: rgb-tint
@@ -189,6 +219,8 @@ void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int
 {
 	if (w <= 0 || h <= 0)
 		return;
+	if (!CSQC_Client_ClipDest (&x, &y, &w, &h))
+		return;
 	Draw_AlphaRectangleRGB (x, y, w, h, 1, true, CSQC_Client_Color (r, g, b, alpha));
 }
 
@@ -196,19 +228,27 @@ void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, 
 {
 	mpic_t *pic;
 	float sx, sy, a = bound (0, alpha, 1);
+	float dx, dy, dw, dh, srcx, srcy, srcw, srch;
 	if (!name || !name[0] || w < 0 || h < 0)
 		return;
 	pic = Draw_CachePicSafe (name, false, false);
 	if (!pic)
 		return;
+	// Клип: пересечение dest с активной областью, источник пересчитывается
+	// (свойство «весь pic → dest» сохраняется).
+	dx = x; dy = y; dw = w; dh = h;
+	if (!CSQC_Client_ClipDest (&dx, &dy, &dw, &dh))
+		return;
 	sx = (w > 0) ? w / (float)pic->width : 1;
 	sy = (h > 0) ? h / (float)pic->height : 1;
-	// Слой D шаг 2: цветной tint (rgb != 255,255,255) — через Draw_SColoredSubPic2;
-	// white (по умолчанию) — прежний путь SAlphaSubPic2.
+	srcx = (dx - x) / sx;
+	srcy = (dy - y) / sy;
+	srcw = dw / sx;
+	srch = dh / sy;
 	if (r == 255 && g == 255 && b == 255)
-		Draw_SAlphaSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy, a);
+		Draw_SAlphaSubPic2 (dx, dy, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch, sx, sy, a);
 	else
-		Draw_SColoredSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy,
+		Draw_SColoredSubPic2 (dx, dy, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch, sx, sy,
 			bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
 }
 
@@ -216,19 +256,27 @@ void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *nam
 {
 	mpic_t *pic;
 	float a = bound (0, alpha, 1);
+	float dx, dy, dw, dh, nsx, nsy, nsw, nsh, ssx, ssy;
 	if (!name || !name[0] || w <= 0 || h <= 0 || srcw <= 0 || srch <= 0)
 		return;
 	pic = Draw_CachePicSafe (name, false, false);
 	if (!pic)
 		return;
-	// Субрегион src (в пикселях пикчи) растягивается в target (w,h):
-	// scale = target / src.
+	// Клип как в DrawPic: dest пересекается, источник — по аффинному маппингу.
+	dx = x; dy = y; dw = w; dh = h;
+	if (!CSQC_Client_ClipDest (&dx, &dy, &dw, &dh))
+		return;
+	ssx = w / srcw;
+	ssy = h / srch;
+	nsx = srcx + ((dx - x) / w) * srcw;
+	nsy = srcy + ((dy - y) / h) * srch;
+	nsw = (dw / w) * srcw;
+	nsh = (dh / h) * srch;
 	if (r == 255 && g == 255 && b == 255)
-		Draw_SAlphaSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch,
-			w / srcw, h / srch, a);
+		Draw_SAlphaSubPic2 (dx, dy, pic, (int)nsx, (int)nsy, (int)nsw, (int)nsh, ssx, ssy, a);
 	else
-		Draw_SColoredSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch,
-			w / srcw, h / srch, bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
+		Draw_SColoredSubPic2 (dx, dy, pic, (int)nsx, (int)nsy, (int)nsw, (int)nsh, ssx, ssy,
+			bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
 }
 
 void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha, float scale)
@@ -272,6 +320,69 @@ qbool CSQC_Client_PrecachePic (const char *name)
 	if (!name || !name[0])
 		return false;
 	return Draw_CachePicSafe (name, false, false) != NULL;
+}
+
+// Слой L2 — «2D-графика доп» (2026-09-07; #316/#318/#319/#321/#324/#325/#329).
+
+qbool CSQC_Client_IsCachedPic (const char *name)
+{
+	if (!name || !name[0])
+		return false;
+	return CachePic_Find (name, false) != NULL;
+}
+
+qbool CSQC_Client_PicSize (const char *name, float *w, float *h)
+{
+	mpic_t *pic;
+	if (!name || !name[0])
+		return false;
+	pic = Draw_CachePicSafe (name, false, false);
+	if (!pic)
+		return false;
+	if (w)
+		*w = (float)pic->width;
+	if (h)
+		*h = (float)pic->height;
+	return true;
+}
+
+void CSQC_Client_DrawRawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale)
+{
+	char one[2];
+	const char *p;
+	float xx;
+	(void)alpha;
+	if (!text)
+		return;
+	// «Сырой» вывод: каждый символ рисуется одиночным цветным глифом — внутри
+	// одной строки нет места для сборки &cRGB, поэтому & в тексте модуля
+	// выводится литерально (как FTE drawrawstring). Цвет применяется.
+	xx = x;
+	for (p = text; *p; p++)
+	{
+		one[0] = *p;
+		one[1] = 0;
+		CSQC_Client_DrawCharacter (xx, y, (int)(unsigned char)*p, r, g, b, 1, scale);
+		xx += Draw_StringLength (one, 1, (scale > 0) ? scale : 1, true);
+	}
+}
+
+/*
+#324 drawsetcliparea / #325 drawresetcliparea — геометрический clip (состояние),
+без аппаратного scissor/flush (см. комментарий к CSQC_Client_ClipDest).
+*/
+void CSQC_Client_SetClipArea (float x, float y, float w, float h)
+{
+	s_clip_x = x;
+	s_clip_y = y;
+	s_clip_w = (w > 0) ? w : 0;
+	s_clip_h = (h > 0) ? h : 0;
+	s_clip_on = true;
+}
+
+void CSQC_Client_ResetClipArea (void)
+{
+	s_clip_on = false;
 }
 
 void CSQC_Client_SetCursorMode (qbool usecursor, const char *image,
@@ -1081,6 +1192,9 @@ void CSQC_Client_Update (void)
 
 	if (cls.state != ca_active)
 		return;
+
+	// Clip-состояние (#324/325) — пер-кадр (модуль ставит/снимает в своём кадре).
+	s_clip_on = false;
 
 	// Ожидание скачанного csprogs (валидный файл появился -> грузим).
 	if (s_csqc.csprogs_dl_pending)

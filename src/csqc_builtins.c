@@ -734,6 +734,110 @@ static void csqc_precache_pic (void)
 }
 
 /*
+L2 — «2D-графика доп» (2026-09-07; #316/#318/#319/#321/#324/#325/#329).
+FTE-эталон — pr_menu.c PF_CL_* (iscachedpic 813, drawgetimagesize 1093, freepic 969,
+drawrawstring 1019, drawsetcliparea 65, drawresetcliparea 87, drawrotpic_dp 762).
+Обёртки-реализации — в CSQC_Client_* (csqc_client.c/.h).
+*/
+
+/* float(string name) iscachedpic = #316 — пикча уже в кэше (без загрузки) */
+static void csqc_iscachedpic (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	vm->globals[OFS_RETURN] = (name && CSQC_Client_IsCachedPic (name)) ? 1 : 0;
+}
+
+/* vector(string picname) drawgetimagesize = #318 — (w,h,0) загруженной пикчи */
+static void csqc_drawgetimagesize (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name;
+	float w = 0, h = 0;
+	if (!vm)
+		return;
+	name = CSQCVM_Str (OFS_PARM0);
+	if (name && CSQC_Client_PicSize (name, &w, &h))
+	{
+		vm->globals[OFS_RETURN + 0] = w;
+		vm->globals[OFS_RETURN + 1] = h;
+		vm->globals[OFS_RETURN + 2] = 0;
+	}
+	else
+	{
+		vm->globals[OFS_RETURN + 0] = 0;
+		vm->globals[OFS_RETURN + 1] = 0;
+		vm->globals[OFS_RETURN + 2] = 0;
+	}
+}
+
+/* void(string name) freepic = #319 — no-op (FTE: тело пустое; пикчи шарятся) */
+static void csqc_freepic (void)
+{
+	/* no-op (FTE-паритет: shader/pic могут использоваться в других местах) */
+}
+
+/*
+void(vector position, string text, vector scale, vector rgb, float alpha,
+     optional float flag) drawrawstring = #321
+Раскладка как drawstring #326; «сырой» текст (без &c-префикса/парсинга).
+*/
+static void csqc_drawrawstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *g;
+	int r, gg, b;
+	float scale;
+	char *s;
+	if (!vm)
+		return;
+	g = vm->globals;
+	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	if (!s)
+		return;
+	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
+	gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
+	b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
+	scale = (g[OFS_PARM0 + 6] > 0) ? g[OFS_PARM0 + 6] / 8.0f : 1;
+	CSQC_Client_DrawRawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s,
+		r, gg, b, g[OFS_PARM0 + 12], scale);
+}
+
+/* void(float x, float y, float width, float height) drawsetcliparea = #324 */
+static void csqc_drawsetcliparea (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_SetClipArea (vm->globals[OFS_PARM0 + 0], vm->globals[OFS_PARM0 + 3],
+		vm->globals[OFS_PARM0 + 6], vm->globals[OFS_PARM0 + 9]);
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/* void() drawresetcliparea = #325 */
+static void csqc_drawresetcliparea (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_ResetClipArea ();
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/*
+void(vector pivot, string picname, vector size, vector mins, float angle,
+     vector rgb, float alpha, optional float flag) drawrotpic_dp = #329
+No-op: в ezq 2D-пути нет GL-ротации текстурированного quad (докум. отклонение).
+*/
+static void csqc_drawrotpic_dp (void)
+{
+	/* no-op (документировано; GL-ротация 2D-quad в ezq отсутствует) */
+}
+
+/*
 string(string fmt, ...) sprintf = #627
 Мини-форматтер (QC): %d/%i (int), %s (string), %f/%g (+ %.Nprec), %v (vector),
 %%. Аргументы читаются по порядку из парам-слотов (начиная с OFS_PARM1);
@@ -3771,6 +3875,14 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 323, (builtin_t)csqc_drawfill);
 	PR1VM_RegisterBuiltin (vm, 327, (builtin_t)csqc_stringwidth);
 	PR1VM_RegisterBuiltin (vm, 328, (builtin_t)csqc_drawsubpic);
+	// L2 — «2D-графика доп» (2026-09-07): #316/#318/#319/#321/#324/#325 + no-op #329.
+	PR1VM_RegisterBuiltin (vm, 316, (builtin_t)csqc_iscachedpic);
+	PR1VM_RegisterBuiltin (vm, 318, (builtin_t)csqc_drawgetimagesize);
+	PR1VM_RegisterBuiltin (vm, 319, (builtin_t)csqc_freepic);
+	PR1VM_RegisterBuiltin (vm, 321, (builtin_t)csqc_drawrawstring);
+	PR1VM_RegisterBuiltin (vm, 324, (builtin_t)csqc_drawsetcliparea);
+	PR1VM_RegisterBuiltin (vm, 325, (builtin_t)csqc_drawresetcliparea);
+	PR1VM_RegisterBuiltin (vm, 329, (builtin_t)csqc_drawrotpic_dp);
 	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati);
 	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf);
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent);

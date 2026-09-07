@@ -77,6 +77,11 @@ void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, 
 void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *name, float srcx, float srcy, float srcw, float srch, int r, int g, int b, float alpha);
 void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, int r, int g, int b, float alpha);
+void CSQC_Client_DrawRawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);	// без &c-парсинга (#321)
+qbool CSQC_Client_IsCachedPic (const char *name);		// #316 iscachedpic
+qbool CSQC_Client_PicSize (const char *name, float *w, float *h);	// #318 drawgetimagesize
+void CSQC_Client_SetClipArea (float x, float y, float w, float h);	// #324
+void CSQC_Client_ResetClipArea (void);				// #325
 float CSQC_Client_StringWidth (const char *text, qbool usecolours, float fontsize_x);
 qbool CSQC_Client_PrecachePic (const char *name);
 
