@@ -3760,6 +3760,135 @@ static void csqc_argv_end_index (void)
 }
 
 /*
+L2 — «Ввод/клавиатура/меню» (2026-09-07; roadmap волна 2). FTE-эталон —
+pr_clcmd.c (findkeysforcommand 388, getkeybind 431, setkeybind 438,
+stringtokeynum 451, keynumtostring 469, getresolution 774, GetBindMap 969,
+setmousetarget 989, getmousetarget 1007). ezq: keybindings[]/Key_* (keys.h);
+bindmaps/модификаторов/перечисления режимов нет — no-op/аппроксимации (parity).
+*/
+
+/* string(float keynum) getkeybind = #342 — binding команда или "" */
+static void csqc_getkeybind (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int keynum = (int)vm->globals[OFS_PARM0];
+	char *b;
+	if (!vm)
+		return;
+	if (keynum < 0 || keynum >= UNKNOWN + 256)
+		b = NULL;
+	else
+		b = keybindings[keynum];
+	CSQCVM_SetRetStr (b ? b : "");
+}
+
+/* void(float keynum, string binding, optional float bindmap) setkeybind = #630 */
+static void csqc_setkeybind (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int keynum = (int)vm->globals[OFS_PARM0];
+	char *binding = CSQCVM_Str (OFS_PARM1);
+	if (!vm)
+		return;
+	if (keynum >= 0 && keynum < UNKNOWN + 256)
+		Key_SetBinding (keynum, binding ? binding : "");
+}
+
+/* #520 keynumtostring_omgwtf / #609 keynumtostring_menu — как #340 (наш домен) */
+static void csqc_keynumtostring_menu (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr (Key_KeynumToString ((int)vm->globals[OFS_PARM0]));
+}
+
+/* float(string key) stringtokeynum_menu = #614 — как #341 */
+static void csqc_stringtokeynum_menu (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (name && name[0]) ? Key_StringToKeynum (name) : -1;
+}
+
+/*
+string(string command, optional float bindmap) findkeysforcommand = #521
+string(string command, optional float bindmap) findkeysforcommand_dp = #610
+Скан keybindings[]; возврат списка имён ключей (наш формат; FTE — QCCode-числа).
+*/
+static void csqc_findkeysforcommand (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *cmd = CSQCVM_Str (OFS_PARM0);
+	char buf[512];
+	int i, o = 0;
+	if (!vm)
+		return;
+	buf[0] = 0;
+	if (cmd && cmd[0])
+	{
+		for (i = 0; i < UNKNOWN + 256 && o < (int)sizeof (buf) - 2; i++)
+		{
+			if (keybindings[i] && !strcmp (keybindings[i], cmd))
+			{
+				const char *nm = Key_KeynumToString (i);
+				o += snprintf (buf + o, sizeof (buf) - o, "%s%s", (o ? " " : ""), nm ? nm : "?");
+			}
+		}
+	}
+	CSQCVM_SetRetStr (buf);
+}
+
+/* void(float trg) setmousetarget = #603 — no-op (курсор через #343) */
+static void csqc_setmousetarget (void)
+{
+	/* no-op (отдельного mousetarget нет; курсор — #343) */
+}
+
+/* float() getmousetarget = #604 — 2 если CSQC-курсор активен, иначе 1 */
+static void csqc_getmousetarget (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = CSQC_Client_CSQCCursor () ? 2 : 1;
+}
+
+/* vector(float vidmode, optional float forfullscreen) getresolution = #608 —
+   возврат текущего разрешения (список режимов не перечисляем) */
+static void csqc_getresolution (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN + 0] = vid.width;
+	vm->globals[OFS_RETURN + 1] = vid.height;
+	vm->globals[OFS_RETURN + 2] = 0;
+}
+
+/* vector() getbindmaps = #631 — bindmaps нет: (0,0,0) */
+static void csqc_getbindmaps (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN + 0] = 0;
+	vm->globals[OFS_RETURN + 1] = 0;
+	vm->globals[OFS_RETURN + 2] = 0;
+}
+
+/* float(vector bindmaps) setbindmaps = #632 — no-op, возврат 1 */
+static void csqc_setbindmaps (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/*
 L2 — «Система/VM простые» (2026-09-07). FTE-эталон: etos pr_bgcmd.c:5029,
 wasfreed/num_for_edict pr_bgcmd.c:3961/3970, print pr_bgcmd.c:4264, cprint
 pr_csqc.c:662 (SCR_CenterPrint), isserver pr_clcmd.c:553. Entity-значение в нашей
@@ -4064,6 +4193,20 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 479, (builtin_t)csqc_tokenizebyseparator);
 	PR1VM_RegisterBuiltin (vm, 515, (builtin_t)csqc_argv_start_index);
 	PR1VM_RegisterBuiltin (vm, 516, (builtin_t)csqc_argv_end_index);
+
+	// L2 — «Ввод/клавиатура/меню» (2026-09-07): #342/#520/#521/#603/#604/#608/#609/#610/#614/#630/#631/#632.
+	PR1VM_RegisterBuiltin (vm, 342, (builtin_t)csqc_getkeybind);
+	PR1VM_RegisterBuiltin (vm, 520, (builtin_t)csqc_keynumtostring_menu);
+	PR1VM_RegisterBuiltin (vm, 521, (builtin_t)csqc_findkeysforcommand);
+	PR1VM_RegisterBuiltin (vm, 603, (builtin_t)csqc_setmousetarget);
+	PR1VM_RegisterBuiltin (vm, 604, (builtin_t)csqc_getmousetarget);
+	PR1VM_RegisterBuiltin (vm, 608, (builtin_t)csqc_getresolution);
+	PR1VM_RegisterBuiltin (vm, 609, (builtin_t)csqc_keynumtostring_menu);
+	PR1VM_RegisterBuiltin (vm, 610, (builtin_t)csqc_findkeysforcommand);
+	PR1VM_RegisterBuiltin (vm, 614, (builtin_t)csqc_stringtokeynum_menu);
+	PR1VM_RegisterBuiltin (vm, 630, (builtin_t)csqc_setkeybind);
+	PR1VM_RegisterBuiltin (vm, 631, (builtin_t)csqc_getbindmaps);
+	PR1VM_RegisterBuiltin (vm, 632, (builtin_t)csqc_setbindmaps);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
