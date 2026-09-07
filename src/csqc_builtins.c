@@ -3563,6 +3563,203 @@ static void csqc_movetogoal (void)
 }
 
 /*
+L2 ST — строки/токенизация (2026-09-07; см. docs/ezquake_csqc_client_l2_roadmap.md).
+FTE-эталон — pr_bgcmd.c: strftime 5088, tokenize_console 6214, tokenizebyseparator
+6219, argv_start_index 6307, argv_end_index 6321. Отдельное хранилище span'ов для
+#514/#479/#515/#516; существующие #441/#442 работают через Cmd-контекст и НЕ меняются
+(раздельные механизмы — отклонение в parity).
+*/
+#define CSQC_TOK_MAX 128
+static int s_tokn = 0;
+static int s_tok_start[CSQC_TOK_MAX];
+static int s_tok_end[CSQC_TOK_MAX];
+
+// Консольная токенизация (спаны): пробелы/табы разделители; "..." — один токен.
+static void csqc_tok_console_spans (const char *s)
+{
+	int i = 0, len = s ? (int)strlen (s) : 0, n = 0;
+	s_tokn = 0;
+	while (i < len && n < CSQC_TOK_MAX)
+	{
+		while (i < len && (s[i] == ' ' || s[i] == '\t'))
+			i++;
+		if (i >= len)
+			break;
+		s_tok_start[n] = i;
+		if (s[i] == '"')
+		{
+			i++;
+			while (i < len && s[i] != '"')
+				i++;
+			if (i < len)
+				i++;
+		}
+		else
+		{
+			while (i < len && s[i] != ' ' && s[i] != '\t')
+				i++;
+		}
+		s_tok_end[n] = i;
+		n++;
+	}
+	s_tokn = n;
+}
+
+// tokenizebyseparator: split по любому сепаратору (пустые токены учитываются),
+// спаны как у FTE (6219).
+static void csqc_tok_sep_spans (const char *s, const char *sep[], int nsep)
+{
+	int i, len, tokstart, n, si;
+	int seplen[7];
+
+	s_tokn = 0;
+	if (!s || !*s)
+		return;
+	len = (int)strlen (s);
+	for (si = 0; si < nsep && si < 7; si++)
+		seplen[si] = (int)strlen (sep[si]);
+	i = 0;
+	tokstart = 0;
+	n = 0;
+	for (;;)
+	{
+		int found = -1;
+		if (i >= len)
+			found = -2;			// конец строки
+		else
+		{
+			for (si = 0; si < nsep && si < 7; si++)
+				if (!strncmp (s + i, sep[si], seplen[si]))
+				{
+					found = si;
+					break;
+				}
+		}
+		if (found >= 0)
+		{
+			if (n < CSQC_TOK_MAX)
+			{
+				s_tok_start[n] = tokstart;
+				s_tok_end[n] = i;
+				n++;
+			}
+			i += seplen[found];
+			tokstart = i;
+			if (n >= CSQC_TOK_MAX)
+				break;
+		}
+		else if (found == -2)
+		{
+			if (n < CSQC_TOK_MAX)
+			{
+				s_tok_start[n] = tokstart;
+				s_tok_end[n] = len;
+				n++;
+			}
+			break;
+		}
+		else
+			i++;
+	}
+	s_tokn = n;
+}
+
+/* string(float uselocaltime, string format, ...) strftime = #478 */
+static void csqc_strftime (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *p;
+	char buf[2048];
+	int i, o = 0;
+	time_t t;
+	struct tm *tm;
+	if (!vm)
+		return;
+	t = time (NULL);
+	tm = (vm->globals[OFS_PARM0] != 0) ? localtime (&t) : gmtime (&t);
+	for (i = 1; i < vm->argc && o < (int)sizeof (buf) - 1; i++)
+	{
+		p = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		if (!p)
+			continue;
+		// msvc-совместимость (как FTE): %R/%F
+		if (!strcmp (p, "%R"))
+			p = "%H:%M";
+		else if (!strcmp (p, "%F"))
+			p = "%Y-%m-%d";
+		o += snprintf (buf + o, sizeof (buf) - o, "%s", p);
+	}
+	if (!o)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	{
+		char out[512];
+		if (strftime (out, sizeof (out), buf, tm))
+			CSQCVM_SetRetStr (out);
+		else
+			CSQCVM_SetRetStr (buf);	// некорректный формат — вернуть как есть
+	}
+}
+
+/* float(string str) tokenize_console = #514 — как #441 (Cmd) + спаны */
+static void csqc_tokenize_console (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	if (s)
+		Cmd_TokenizeStringEx (&csqc_tokencontext, s);
+	vm->globals[OFS_RETURN] = Cmd_ArgcEx (&csqc_tokencontext);
+	csqc_tok_console_spans (s);
+}
+
+/* float(string s, string sep1, ...) tokenizebyseparator = #479 */
+static void csqc_tokenizebyseparator (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *s = CSQCVM_Str (OFS_PARM0);
+	const char *sep[7];
+	int nsep = 0, i;
+	if (!vm)
+		return;
+	for (i = 1; i < vm->argc && nsep < 7; i++)
+		sep[nsep++] = CSQCVM_Str (OFS_PARM0 + i * 3);
+	csqc_tok_sep_spans (s, sep, nsep);
+	vm->globals[OFS_RETURN] = s_tokn;
+}
+
+/* float(float idx) argv_start_index = #515 / argv_end_index = #516 */
+static void csqc_argv_start_index (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int idx = (int)vm->globals[OFS_PARM0];
+	if (!vm)
+		return;
+	if (idx < 0)
+		idx += s_tokn;
+	if ((unsigned int)idx >= (unsigned int)s_tokn)
+		vm->globals[OFS_RETURN] = -1;
+	else
+		vm->globals[OFS_RETURN] = s_tok_start[idx];
+}
+static void csqc_argv_end_index (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int idx = (int)vm->globals[OFS_PARM0];
+	if (!vm)
+		return;
+	if (idx < 0)
+		idx += s_tokn;
+	if ((unsigned int)idx >= (unsigned int)s_tokn)
+		vm->globals[OFS_RETURN] = -1;
+	else
+		vm->globals[OFS_RETURN] = s_tok_end[idx];
+}
+
+/*
 L2 — «Система/VM простые» (2026-09-07). FTE-эталон: etos pr_bgcmd.c:5029,
 wasfreed/num_for_edict pr_bgcmd.c:3961/3970, print pr_bgcmd.c:4264, cprint
 pr_csqc.c:662 (SCR_CenterPrint), isserver pr_clcmd.c:553. Entity-значение в нашей
@@ -3860,6 +4057,13 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 63,  (builtin_t)csqc_changepitch);
 	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_nop_str);
 	PR1VM_RegisterBuiltin (vm, 355, (builtin_t)csqc_nop_str);
+
+	// L2 ST — строки/токенизация (2026-09-07): #478/#514/#479/#515/#516.
+	PR1VM_RegisterBuiltin (vm, 478, (builtin_t)csqc_strftime);
+	PR1VM_RegisterBuiltin (vm, 514, (builtin_t)csqc_tokenize_console);
+	PR1VM_RegisterBuiltin (vm, 479, (builtin_t)csqc_tokenizebyseparator);
+	PR1VM_RegisterBuiltin (vm, 515, (builtin_t)csqc_argv_start_index);
+	PR1VM_RegisterBuiltin (vm, 516, (builtin_t)csqc_argv_end_index);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
