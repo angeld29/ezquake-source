@@ -23,12 +23,6 @@ csprogs.dat.
 #include "csqc_client.h"
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
 
-// FTE-пул Шаг 7 (часть 2): зеркало игроков — стандартный hull игрока (pmove.c).
-extern vec3_t player_mins, player_maxs;
-// Значения полей/флагов, которые движок пишет в зеркало (паритет csdefs.qc).
-#define CSQC_MIR_SOLID_BBOX	2
-#define CSQC_MIR_FL_MONSTER	32
-
 // FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
 // edict-слотов арены (слот 0 = world, не управляется). .entnum (поле модуля) = серверный
@@ -55,10 +49,9 @@ typedef struct csqc_client_state_s
 	// C1.4 #347: field-offset'ы стандартной физики (или -1).
 	int			f_origin, f_velocity, f_mins, f_maxs;
 	int			f_movetype, f_flags, f_gravity, f_pmove_flags;
-	// FTE-пул Шаг 7 (часть 2, entity-слой трасс): поля классификации трасс и
-	// зеркала игроков (или -1): solid/flags уже есть выше (f_flags), добавляем
-	// solid/owner/classname; owner — ev_entity (int-биты слот*edict_size).
-	int			f_solid, f_owner, f_classname;
+	// FTE-пул Шаг 7 (часть 2): поля классификации трасс и зеркала игроков —
+	// удалены вместе с зеркалом (окружение = FTE: без серверной эмиссии игроков
+	// ezquake сущности игроков не фабрикует). Публикация player_localentnum (FTE).
 	int			g_localentnum;	// глобал модуля player_localentnum (или -1)
 	// input_* глобалы для CSQC_Input_Frame (или -1, если модуль их не объявил).
 	int			in_timelength, in_angles, in_movevalues, in_buttons, in_impulse;
@@ -123,13 +116,6 @@ static csqc_cursormode_t s_cursormode;
 static qbool s_used[CSQC_MAX_EDICTS];
 static qbool s_own[CSQC_MAX_EDICTS];
 static int s_numslot[CSQC_MAX_NUM];
-
-// FTE-пул Шаг 7 (часть 2): зеркало игроков из playerstate (entity-слой трасс).
-// s_mirror_slot[pnum] — слот пула игрока pnum (0 = нет). Слот занят (s_used),
-// НЕ s_own (модульный remove игнорит) и НЕ в s_numslot (NumToSlot — только
-// сетевой приём). .entnum слота = pnum+1. Апдейт позиций каждый 2D-кадр по
-// текущему frame; слот жив, пока игрок обновляется (см. CSQC_Client_MirrorUpdate).
-static int s_mirror_slot[MAX_CLIENTS];
 
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
@@ -679,7 +665,6 @@ static void CSQC_Client_AllocArena (pr1vm_t *vm)
 	memset (s_used, 0, sizeof (s_used));
 	memset (s_own, 0, sizeof (s_own));
 	memset (s_numslot, 0, sizeof (s_numslot));
-	memset (s_mirror_slot, 0, sizeof (s_mirror_slot));
 
 	s_csqc.game_edicts = (byte *)Q_malloc ((size_t)CSQC_MAX_EDICTS * vm->edict_size);
 	s_csqc.edicts = (edict_t *)Q_malloc (sizeof (edict_t) * CSQC_MAX_EDICTS);
@@ -848,116 +833,23 @@ int CSQC_Client_MapNumber (int number, int slot)
 
 /*
 =================
-FTE-пул Шаг 7 (часть 2) — зеркало игроков из playerstate (entity-слой трасс).
+player_localentnum (FTE pr_csqc.c:136-145)
 =================
 
-Для игроков pnum (0..MAX_CLIENTS) заводим слот пула «игрок»:
-.origin = playerstate.origin, .mins/.maxs = стандартный hull игрока,
-.solid = SOLID_BBOX, .flags |= FL_MONSTER, .entnum = pnum+1. Слот НЕ s_own
-(модульный remove игнорит) и НЕ участвует в s_numslot (NumToSlot — только
-сетевой приём svc76). Игрок «есть», пока свежий playerstate (движение) ЛИБО
-известный не-спектатор в списке игроков (QW не шлёт state стоящего каждый кадр —
-зеркало персистентно, чтобы стоящий игрок оставался твёрдым). Позиция
-обновляется из свежего state, при stale держится последняя. Слот освобождается,
-когда игрок выходит (нет имени) или становится спектатором.
-Дедуп: если номер pnum+1 уже занят svc76-сущностью — не зеркалим.
-Здесь же публикуется глобал модуля player_localentnum (FTE pr_csqc.c:136-145).
+Публикация глобала модуля player_localentnum (номер наблюдаемого игрока) каждый
+кадр перед CSQC_UpdateView. Это часть окружения builtins «как в FTE»: FTE публикует
+глобал всегда; НО сущности игроков ezquake НЕ фабрикует (окружение сущностей = то,
+что прислал сервер svc76 + свои spawn, как у FTE в отсутствие серверной эмиссии
+игроков / player-delta). Зеркало игроков (бывш. Шаг 7.2) удалено — C7 self/play
+N/A до серверной эмиссии игроков модом.
 */
-static void CSQC_Client_MirrorFreeSlot (int slot)
+void CSQC_Client_UpdateLocalEntnum (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
-	float *s;
 
-	if (slot <= 0 || slot >= CSQC_MAX_EDICTS || !s_used[slot])
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.g_localentnum < 0)
 		return;
-	s_used[slot] = false;
-	s_own[slot] = false;
-	if (vm && vm->game_edicts && vm->edict_size > 0)
-	{
-		s = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
-		memset (s, 0, vm->edict_size);
-	}
-}
-
-void CSQC_Client_MirrorUpdate (void)
-{
-	pr1vm_t *vm = &s_csqc.vm;
-	frame_t *frame;
-	int fridx, cur, p, slot;
-	float *base;
-
-	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
-		return;
-	if (cls.state != ca_active)
-		return;
-	if (!vm || !vm->game_edicts || vm->edict_size <= 0)
-		return;
-
-	// Текущий кадр для чтения playerstate: живая игра — parsecountmod,
-	// MVD/демо — oldparsecount (ср. cl_parse.c:3635).
-	if (cls.mvdplayback)
-	{
-		fridx = cl.oldparsecount & UPDATE_MASK;
-		cur = cl.oldparsecount;
-	}
-	else
-	{
-		fridx = cl.parsecountmod;
-		cur = cl.parsecount;
-	}
-	frame = &cl.frames[fridx];
-
-	// player_localentnum: номер наблюдаемого игрока (FTE-паритет).
-	if (s_csqc.g_localentnum >= 0)
-		vm->globals[s_csqc.g_localentnum] = (cl.viewplayernum >= 0) ? cl.viewplayernum + 1 : 0;
-
-	for (p = 0; p < MAX_CLIENTS; p++)
-	{
-		player_state_t *ps = &frame->playerstate[p];
-		player_info_t *info = &cl.players[p];
-		int recent = cur - ps->messagenum;	// 0 = обновлён в текущем кадре
-
-		slot = s_mirror_slot[p];
-		// «Игрок есть»: свежий playerstate (обновляется при движении) ЛИБО известный
-		// не-спектатор из списка игроков. Персистентность важна: QW не шлёт state
-		// стоящего игрока каждый кадр, а снимать зеркало при простое нельзя (он всё
-		// ещё твёрдое тело). Спектаторов (летающих/без тела) не зеркалим.
-		if (!((recent >= 0 && recent <= 2) || (info->name[0] && !info->spectator)))
-		{
-			if (slot)
-			{
-				CSQC_Client_MirrorFreeSlot (slot);
-				s_mirror_slot[p] = 0;
-			}
-			continue;
-		}
-		if (!slot)
-		{
-			// Дедуп: сущность игрока уже пришла svc76 (номер p+1).
-			if (CSQC_Client_NumToSlot (p + 1))
-				continue;
-			slot = CSQC_Client_AllocSlot ();
-			if (!slot)
-				continue;
-			s_mirror_slot[p] = slot;
-		}
-
-		base = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
-		if (s_csqc.field_entnum >= 0)
-			base[s_csqc.field_entnum] = (float)(p + 1);
-		// Позицию обновляем только из свежего state; при stale держим последнюю
-		// (не телепортируем в (0,0,0) из необновлённого буфера).
-		if (s_csqc.f_origin >= 0 && recent >= 0 && recent <= 2)
-			memcpy (base + s_csqc.f_origin, ps->origin, 3 * sizeof (float));
-		if (s_csqc.f_mins >= 0)
-			memcpy (base + s_csqc.f_mins, player_mins, 3 * sizeof (float));
-		if (s_csqc.f_maxs >= 0)
-			memcpy (base + s_csqc.f_maxs, player_maxs, 3 * sizeof (float));
-		if (s_csqc.f_solid >= 0)
-			base[s_csqc.f_solid] = CSQC_MIR_SOLID_BBOX;
-		if (s_csqc.f_flags >= 0)
-			base[s_csqc.f_flags] = (float)((int)base[s_csqc.f_flags] | CSQC_MIR_FL_MONSTER);
-	}
+	vm->globals[s_csqc.g_localentnum] = (cl.viewplayernum >= 0) ? cl.viewplayernum + 1 : 0;
 }
 
 /*
@@ -999,7 +891,6 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
-	s_csqc.f_solid = s_csqc.f_owner = s_csqc.f_classname = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
@@ -1066,10 +957,6 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.f_flags = CSQC_Client_FindField (vm, "flags");
 	s_csqc.f_gravity = CSQC_Client_FindField (vm, "gravity");
 	s_csqc.f_pmove_flags = CSQC_Client_FindField (vm, "pmove_flags");
-	// FTE-пул Шаг 7 (часть 2): поля классификации трасс / зеркала игроков.
-	s_csqc.f_solid = CSQC_Client_FindField (vm, "solid");
-	s_csqc.f_owner = CSQC_Client_FindField (vm, "owner");
-	s_csqc.f_classname = CSQC_Client_FindField (vm, "classname");
 	s_csqc.g_localentnum = PR1VM_FindGlobal (vm, "player_localentnum");
 
 	// input_* глобалы для CSQC_Input_Frame (csdefs.qc: input_timelength/angles/
@@ -1249,9 +1136,9 @@ void CSQC_Client_Update (void)
 		}
 	}
 
-	// FTE-пул Шаг 7 (часть 2): зеркало игроков + player_localentnum — до модуля,
-	// чтобы трассы/смоки кадра видели свежие позиции игроков.
-	CSQC_Client_MirrorUpdate ();
+	// player_localentnum — публикуем до модуля (окружение builtins как FTE;
+	// сущности игроков не фабрикуем — см. CSQC_Client_UpdateLocalEntnum).
+	CSQC_Client_UpdateLocalEntnum ();
 
 	if (s_csqc.func_update > 0)
 	{
@@ -1949,7 +1836,6 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
-	s_csqc.f_solid = s_csqc.f_owner = s_csqc.f_classname = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;

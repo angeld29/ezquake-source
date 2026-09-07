@@ -35,9 +35,9 @@ qbool CSQC_Client_EntUsed (int slot);			// слот занят (сеть или 
 int CSQC_Client_EntSpawnBase (void);			// первый используемый слот (1)
 int CSQC_Client_EntUsedCount (void);			// число занятых слотов пула
 int CSQC_Client_FindField (struct pr1vm_s *vm, const char *name);	// offset поля в float-словах / -1
-// FTE-пул Шаг 7 (часть 2) — зеркало игроков из playerstate (entity-слой трасс):
-// каждый 2D-кадр до CSQC_UpdateView. Слоты игроков не s_own и не в NumToSlot.
-void CSQC_Client_MirrorUpdate (void);
+// Окружение builtins «как в FTE»: публикация player_localentnum каждый 2D-кадр
+// до CSQC_UpdateView. Сущности игроков НЕ фабрикуются (см. csqc_client.c).
+void CSQC_Client_UpdateLocalEntnum (void);
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке
