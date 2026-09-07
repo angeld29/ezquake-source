@@ -1977,6 +1977,72 @@ static void csqc_stoh (void)
 }
 
 /*
+L2-тривиалы T3 — cvar-метаданные (#482/#495/#518, 2026-09-07; волна тривиал-кандидатов).
+FTE-эталон — pr_bgcmd.c (cvar_defstring 1907, cvar_description 1918, cvar_type 1934).
+Отклонения (parity): в ezq `cvar_t` нет description (→ #518 всегда "" и флаг
+HASDESCRIPTION не ставится); PRIVATE-аналога FTE (NOTFROMSERVER/NOUNSAFEEXPAND) нет —
+не выставляется.
+*/
+
+/*
+string(string cvarname) cvar_defstring = #482
+FTE: FindOrGet (создаёт, если нет), возврат default-значения (нет — "").
+ezq: Cvar_Find / Cvar_Create (FindOrGet), возврат cvar_t.defaultvalue.
+*/
+static void csqc_cvar_defstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	cvar_t *v;
+	if (!vm)
+		return;
+	v = (name && name[0]) ? Cvar_Find (name) : NULL;
+	if (!v && name && name[0])
+		v = Cvar_Create (name, "", 0);
+	CSQCVM_SetRetStr ((v && v->defaultvalue) ? v->defaultvalue : "");
+}
+
+/*
+float(string cvarname) cvar_type = #495
+Флаги FTE (pr_common.h:225): EXISTS=1 SAVED=2 PRIVATE=4 ENGINE=8 HASDESCRIPTION=16
+READONLY=32. Маппинг на ezq: SAVED = CVAR_ARCHIVE|CVAR_USER_ARCHIVE; ENGINE = не
+CVAR_USER_CREATED/MOD_CREATED; READONLY = CVAR_ROM. cvar не обязан существовать.
+*/
+static void csqc_cvar_type (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	cvar_t *v;
+	int ret = 0;
+	if (!vm)
+		return;
+	v = (name && name[0]) ? Cvar_Find (name) : NULL;
+	if (v)
+	{
+		ret |= 1;	// EXISTS
+		if (v->flags & (CVAR_ARCHIVE | CVAR_USER_ARCHIVE))
+			ret |= 2;	// SAVED
+		if (v->flags & CVAR_ROM)
+			ret |= 32;	// READONLY
+		if (!(v->flags & (CVAR_USER_CREATED | CVAR_MOD_CREATED)))
+			ret |= 8;	// ENGINE
+	}
+	vm->globals[OFS_RETURN] = ret;
+}
+
+/*
+string(string cvarname) cvar_description = #518
+FTE возвращает описание cvar; в ezq у cvar_t описаний нет — всегда "".
+*/
+static void csqc_cvar_description (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr ("");
+}
+
+/*
 Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
 без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
 */
@@ -3274,6 +3340,11 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 260, (builtin_t)csqc_itos);
 	PR1VM_RegisterBuiltin (vm, 261, (builtin_t)csqc_stoh);
 	PR1VM_RegisterBuiltin (vm, 262, (builtin_t)csqc_htos);
+
+	// L2-тривиалы T3 — cvar-метаданные (2026-09-07): #482/#495/#518.
+	PR1VM_RegisterBuiltin (vm, 482, (builtin_t)csqc_cvar_defstring);
+	PR1VM_RegisterBuiltin (vm, 495, (builtin_t)csqc_cvar_type);
+	PR1VM_RegisterBuiltin (vm, 518, (builtin_t)csqc_cvar_description);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
