@@ -1128,6 +1128,23 @@ void CSQC_Client_ParseEntities (qbool sized)
 						break;	// патологично (пул 4095); рассинхрон невозможен при чтении
 					}
 					CSQC_Client_MapNumber ((int)entnum, slot);
+					// FTE-пул Шаг 5 (диагностика): номер → слот пула; печать
+					// ограничена, чтобы серверный churn remove/update не залил
+					// консоль (≤32 строк на сессию csqc_dbg>=3).
+					{
+						static int s_dbg_lines = 0;
+						cvar_t *dbg = Cvar_Find ("csqc_dbg");
+						if (dbg && dbg->value >= 3)
+						{
+							if (s_dbg_lines < 32)
+							{
+								Con_Printf ("CSQC ent num %u -> slot %d\n", entnum, slot);
+								s_dbg_lines++;
+							}
+						}
+						else
+							s_dbg_lines = 0;
+					}
 				}
 				CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
 			}
