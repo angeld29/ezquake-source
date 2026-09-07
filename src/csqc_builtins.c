@@ -2122,17 +2122,16 @@ static void csqc_precache_model (void)
 }
 
 /*
-float(string) precache_file (#68/#77) — FTE-паритет возврата (PF_cs_precachefile,
-pr_csqc.c:3263): число 1/0 (файл присутствует в FS). FTE при отсутствии ставит
-на скачивание (CL_CheckOrEnqueDownloadFile) и возвращает 0; у нас download-триггер
-не реализован — 0 при отсутствии (отдельный шаг).
+float(string) precache_file (#68/#77) — FTE-паритет (PF_cs_precachefile →
+CL_CheckOrEnqueDownloadFile): true=файл есть → 1; false=поставлен на скачивание → 0.
+У нас — CL_CheckOrDownloadFile (cl_parse.c:482, тот же контракт: true если есть/не
+качается, иначе шлёт download и false). Guard: при уже идущем скачивании (cls.download)
+второй не стартуем → 0 (отклонение). Ограничения CL_Download_Accept — см. parity.
 */
 static void csqc_precache_file (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *n;
-	byte *data;
-	int size = 0;
 
 	if (!vm)
 		return;
@@ -2142,8 +2141,12 @@ static void csqc_precache_file (void)
 		vm->globals[OFS_RETURN] = 0;
 		return;
 	}
-	data = FS_LoadHunkFile (n, &size);
-	vm->globals[OFS_RETURN] = data ? 1.0f : 0.0f;
+	if (cls.download)	// уже качается другой ресурс — не перебиваем
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	vm->globals[OFS_RETURN] = CL_CheckOrDownloadFile (n) ? 1.0f : 0.0f;
 }
 
 /*
