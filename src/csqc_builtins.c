@@ -3889,6 +3889,61 @@ static void csqc_setbindmaps (void)
 }
 
 /*
+L2 — «Звук» (2026-09-07; roadmap волна 5). FTE-эталон — pr_csqc.c/pr_clcmd.c.
+Реализовано: #483 pointsound (S_PrecacheSound + S_StartSound(0,0,…) с origin —
+позиционный по origin, как FTE). No-op (нет аналога в ezq): #351 SetListener
+(аудио-листенер фиксирован), #371 deltalisten (предикция EXT_CSQC_1), #533
+getsoundtime / #534 soundlength (нет канальных таймингов/длины сэмпла).
+*/
+
+/* void(vector origin, string sample, float volume, float attenuation) pointsound = #483 */
+static void csqc_pointsound (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *org;
+	char *sample;
+	sfx_t *sfx;
+	if (!vm)
+		return;
+	org = &vm->globals[OFS_PARM0];
+	sample = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + 3]);
+	if (!sample || !sample[0])
+		return;
+	sfx = S_PrecacheSound (sample);
+	if (sfx)
+		S_StartSound (0, 0, sfx, org, vm->globals[OFS_PARM0 + 6], vm->globals[OFS_PARM0 + 9]);
+}
+
+/* #351 SetListener / #371 deltalisten — no-op (нет аналога) */
+static void csqc_setlistener (void)
+{
+	/* no-op (аудио-листенер фиксирован у камеры) */
+}
+static void csqc_deltalisten (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/* #533 getsoundtime / #534 soundlength — no-op (нет канальных таймингов/длины) */
+static void csqc_getsoundtime (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = -1;
+}
+static void csqc_soundlength (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = 0;
+}
+
+/*
 L2 — «Система/VM остаток» (2026-09-07; roadmap волна 3, минимум-скоуп). Реализовано
 полностью: #98 findfloat (обход пула по float-полю, как FTE PF_FindFloat
 pr_bgcmd.c:1643). #92 getlight — аппроксимация (сэмпла света нет → 0). No-op
@@ -4276,6 +4331,13 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 278, (builtin_t)csqc_vmrest_nop);
 	PR1VM_RegisterBuiltin (vm, 279, (builtin_t)csqc_vmrest_nop);
 	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_vmrest_nop);
+
+	// L2 — «Звук» (2026-09-07): #483 + no-op #351/#371/#533/#534.
+	PR1VM_RegisterBuiltin (vm, 483, (builtin_t)csqc_pointsound);
+	PR1VM_RegisterBuiltin (vm, 351, (builtin_t)csqc_setlistener);
+	PR1VM_RegisterBuiltin (vm, 371, (builtin_t)csqc_deltalisten);
+	PR1VM_RegisterBuiltin (vm, 533, (builtin_t)csqc_getsoundtime);
+	PR1VM_RegisterBuiltin (vm, 534, (builtin_t)csqc_soundlength);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
