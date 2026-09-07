@@ -3889,6 +3889,65 @@ static void csqc_setbindmaps (void)
 }
 
 /*
+L2 — «Система/VM остаток» (2026-09-07; roadmap волна 3, минимум-скоуп). Реализовано
+полностью: #98 findfloat (обход пула по float-полю, как FTE PF_FindFloat
+pr_bgcmd.c:1643). #92 getlight — аппроксимация (сэмпла света нет → 0). No-op
+(серверно-мировые/нет аналога): #64 tracetoss, #240 checkpvs, #278 terrain_edit,
+#279 touchtriggers, #504 getentity. #206 instr/#496-500 (рефлексия FieldInfo) —
+отложены отдельным шагом (сигнатура/механизм).
+*/
+
+/*
+entity(entity start, .float fld, float match) findfloat = #98
+(он же findentity у FTE). Возврат: следующий used-слот после start с равенством
+значения float-поля; нет — world (0).
+*/
+static void csqc_findfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int e, f;
+	float match, *slot;
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	f = *(int *)&vm->globals[OFS_PARM0 + 3];
+	match = vm->globals[OFS_PARM0 + 6];
+	if (e < 0)
+		e = 0;
+	for (e++; e < vm->num_edicts; e++)
+	{
+		if (!CSQC_Client_EntUsed (e))
+			continue;
+		slot = csqc_ent_slot (vm, e);
+		if (!slot)
+			continue;
+		if (slot[f] == match)
+		{
+			csqc_ret_entity (vm, e);
+			return;
+		}
+	}
+	csqc_ret_entity (vm, 0);
+}
+
+/* vector(vector org) getlight = #92 — аппроксимация: сэмпла статик-света нет → 0 */
+static void csqc_getlight_approx (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN + 0] = 0;
+	vm->globals[OFS_RETURN + 1] = 0;
+	vm->globals[OFS_RETURN + 2] = 0;
+}
+
+/* no-op: #64/#240/#278/#279/#504 — серверно-мировые/нет аналога (см. parity) */
+static void csqc_vmrest_nop (void)
+{
+	/* no-op (документировано) */
+}
+
+/*
 L2 — «Система/VM простые» (2026-09-07). FTE-эталон: etos pr_bgcmd.c:5029,
 wasfreed/num_for_edict pr_bgcmd.c:3961/3970, print pr_bgcmd.c:4264, cprint
 pr_csqc.c:662 (SCR_CenterPrint), isserver pr_clcmd.c:553. Entity-значение в нашей
@@ -4207,6 +4266,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 630, (builtin_t)csqc_setkeybind);
 	PR1VM_RegisterBuiltin (vm, 631, (builtin_t)csqc_getbindmaps);
 	PR1VM_RegisterBuiltin (vm, 632, (builtin_t)csqc_setbindmaps);
+
+	// L2 — «Система/VM остаток» (2026-09-07, минимум): #98 + #92-аппрокс + no-op
+	// #64/#240/#278/#279/#504 (рефлексия #496-500/#206 — отдельным шагом).
+	PR1VM_RegisterBuiltin (vm, 98,  (builtin_t)csqc_findfloat);
+	PR1VM_RegisterBuiltin (vm, 92,  (builtin_t)csqc_getlight_approx);
+	PR1VM_RegisterBuiltin (vm, 64,  (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 240, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 278, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 279, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_vmrest_nop);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
