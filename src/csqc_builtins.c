@@ -3944,6 +3944,154 @@ static void csqc_soundlength (void)
 }
 
 /*
+L2 — «Entity-рефлексия» (#496-500, 2026-09-07; roadmap — ранее отложено). FTE-эталон
+pr_bgcmd.c:7694-7830 (FieldInfo + UglyValueString/ParseEval). Работаем по
+vm->fielddefs[] (ddef_t: name/type/ofs в словах арены, etype_t ev_* из pr_comp.h).
+#206 instr — отдельно (сигнатура float/string vs FTE-строковый возврат — отложено).
+*/
+static ddef_t *csqc_fielddef (pr1vm_t *vm, unsigned int fidx)
+{
+	if (!vm || !vm->fielddefs || !vm->progs)
+		return NULL;
+	if (fidx >= (unsigned int)vm->progs->numfielddefs)
+		return NULL;
+	return &vm->fielddefs[fidx];
+}
+
+/* float() numentityfields = #496 */
+static void csqc_numentityfields (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm || !vm->progs)
+		return;
+	vm->globals[OFS_RETURN] = vm->progs->numfielddefs;
+}
+
+/* string(float fieldnum) entityfieldname = #497 */
+static void csqc_entityfieldname (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	ddef_t *f;
+	char *s;
+	if (!vm)
+		return;
+	f = csqc_fielddef (vm, (unsigned int)vm->globals[OFS_PARM0]);
+	if (!f)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	s = PR1VM_GetString (vm, f->s_name);
+	CSQCVM_SetRetStr (s ? s : "");
+}
+
+/* float(float fieldnum) entityfieldtype = #498 (etype_t, низкие биты) */
+static void csqc_entityfieldtype (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	ddef_t *f;
+	if (!vm)
+		return;
+	f = csqc_fielddef (vm, (unsigned int)vm->globals[OFS_PARM0]);
+	vm->globals[OFS_RETURN] = f ? (float)(f->type & 0xff) : 0;
+}
+
+/* string(float fieldnum, entity ent) getentityfieldstring = #499 */
+static void csqc_getentityfieldstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	ddef_t *f;
+	float *slot;
+	int slotidx, type, ofs;
+	char buf[512];
+	if (!vm)
+		return;
+	f = csqc_fielddef (vm, (unsigned int)vm->globals[OFS_PARM0]);
+	slotidx = csqc_ent_of (vm, OFS_PARM1);
+	if (!f || slotidx < 0)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	slot = csqc_ent_slot (vm, slotidx);
+	if (!slot)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	type = f->type & 0xff;
+	ofs = f->ofs;
+	switch (type)
+	{
+	case ev_string:
+		{
+			char *s = PR1VM_GetString (vm, *(int *)&slot[ofs]);
+			CSQCVM_SetRetStr (s ? s : "");
+			return;
+		}
+	case ev_vector:
+		snprintf (buf, sizeof (buf), "%g %g %g", slot[ofs], slot[ofs + 1], slot[ofs + 2]);
+		break;
+	case ev_entity:
+		{
+			int v = *(int *)&slot[ofs];
+			snprintf (buf, sizeof (buf), "entity %d", (vm->edict_size > 0) ? v / vm->edict_size : v);
+			break;
+		}
+	case ev_float:
+	default:
+		csqc_q_ftoa (buf, sizeof (buf), slot[ofs]);
+		break;
+	}
+	CSQCVM_SetRetStr (buf);
+}
+
+/* float(float fieldnum, entity ent, string s) putentityfieldstring = #500 */
+static void csqc_putentityfieldstring (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	ddef_t *f;
+	float *slot;
+	int slotidx, type, ofs;
+	char *s = CSQCVM_Str (OFS_PARM2);
+	if (!vm)
+		return;
+	f = csqc_fielddef (vm, (unsigned int)vm->globals[OFS_PARM0]);
+	slotidx = csqc_ent_of (vm, OFS_PARM1);
+	vm->globals[OFS_RETURN] = 0;
+	if (!f || slotidx < 0)
+		return;
+	slot = csqc_ent_slot (vm, slotidx);
+	if (!slot)
+		return;
+	type = f->type & 0xff;
+	ofs = f->ofs;
+	switch (type)
+	{
+	case ev_string:
+		PR1VM_SetString (vm, (string_t *)&slot[ofs], s ? s : "");
+		break;
+	case ev_vector:
+		{
+			float v[3] = { 0, 0, 0 };
+			int n = 0;
+			if (s)
+				n = sscanf (s, "%f %f %f", &v[0], &v[1], &v[2]);
+			if (n > 0)
+				VectorCopy (v, &slot[ofs]);
+			else
+				return;
+			break;
+		}
+	case ev_float:
+	default:
+		slot[ofs] = (s && s[0]) ? (float)atof (s) : 0;
+		break;
+	}
+	vm->globals[OFS_RETURN] = 1;
+}
+
+/*
 L2 — «BSP-поверхности» (2026-09-07). Все no-op: FTE читает геометрию brush-моделей
 (surfaces/mesh/plane/texture, pr_bgcmd.c:953-1350); в ezq такого geometry-интерфейса
 моделей нет. Регистрация — защита от «Bad builtin».
@@ -4469,6 +4617,13 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 486, (builtin_t)csqc_bsp_nop_vec);
 	PR1VM_RegisterBuiltin (vm, 628, (builtin_t)csqc_light_nop_ret0);
 	PR1VM_RegisterBuiltin (vm, 629, (builtin_t)csqc_bsp_nop_vec);
+
+	// L2 — «Entity-рефлексия» (2026-09-07): #496-500 по fielddefs модуля.
+	PR1VM_RegisterBuiltin (vm, 496, (builtin_t)csqc_numentityfields);
+	PR1VM_RegisterBuiltin (vm, 497, (builtin_t)csqc_entityfieldname);
+	PR1VM_RegisterBuiltin (vm, 498, (builtin_t)csqc_entityfieldtype);
+	PR1VM_RegisterBuiltin (vm, 499, (builtin_t)csqc_getentityfieldstring);
+	PR1VM_RegisterBuiltin (vm, 500, (builtin_t)csqc_putentityfieldstring);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
