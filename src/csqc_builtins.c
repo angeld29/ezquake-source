@@ -2100,13 +2100,16 @@ static void csqc_sound (void)
 	}
 }
 
+/*
+void(string str) precache_sound = #19/#76 — FTE-паритет (PF_cs_PrecacheSound,
+pr_csqc.c:3268): void — OFS_RETURN не пишем (модуль на возврат не опирается).
+*/
 static void csqc_precache_sound (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *n = CSQCVM_Str (OFS_PARM0);
 	if (vm && n && n[0])
 		S_PrecacheSound (n);
-	CSQCVM_SetRetStr (n ? n : "");
 }
 
 static void csqc_precache_model (void)
@@ -2119,15 +2122,28 @@ static void csqc_precache_model (void)
 }
 
 /*
-string(string) precache_file (#68/#77): возврат имени; локально файл проверять не
-нужно (CSQC на клиенте). Отклонение: без engine-download-триггера.
+float(string) precache_file (#68/#77) — FTE-паритет возврата (PF_cs_precachefile,
+pr_csqc.c:3263): число 1/0 (файл присутствует в FS). FTE при отсутствии ставит
+на скачивание (CL_CheckOrEnqueDownloadFile) и возвращает 0; у нас download-триггер
+не реализован — 0 при отсутствии (отдельный шаг).
 */
 static void csqc_precache_file (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char *n = CSQCVM_Str (OFS_PARM0);
-	(void)vm;
-	CSQCVM_SetRetStr (n ? n : "");
+	char *n;
+	byte *data;
+	int size = 0;
+
+	if (!vm)
+		return;
+	n = CSQCVM_Str (OFS_PARM0);
+	if (!n || !n[0])
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	data = FS_LoadHunkFile (n, &size);
+	vm->globals[OFS_RETURN] = data ? 1.0f : 0.0f;
 }
 
 /*
