@@ -3944,6 +3944,77 @@ static void csqc_soundlength (void)
 }
 
 /*
+L2 — «Интроспекция/кон» (2026-09-07; roadmap продолжение L2). FTE-эталон —
+pr_bgcmd.c (isfunction 3809, callfunction 3816, argescape 6349, checkcommand 7820),
+pr_menu.c (con_* 1143+). Реализовано: #294 checkcommand (ezq: cmd→1, cvar→3,
+alias недоступно→0), #295 argescape (своё quoting), #607 isfunction. No-op:
+#391/#392/#393/#394 (multi-console FTE нет в ezq), #605 callfunction (reentrant
+exec из builtin не поддержан — отложено).
+*/
+
+/* float(string name) checkcommand = #294 */
+static void csqc_checkcommand (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	if (name && name[0] && Cmd_Exists (name))
+		vm->globals[OFS_RETURN] = 1;
+	else if (name && name[0] && Cvar_Find (name))
+		vm->globals[OFS_RETURN] = 3;
+	else
+		vm->globals[OFS_RETURN] = 0;
+}
+
+/* string(string s) argescape = #295 — оборачивает в кавычки с экранированием */
+static void csqc_argescape (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *s = CSQCVM_Str (OFS_PARM0);
+	char buf[4096];
+	int i, n, need = 0;
+	if (!vm)
+		return;
+	s = s ? s : "";
+	n = strlen (s);
+	for (i = 0; i < n; i++)
+		if (s[i] == ' ' || s[i] == '\t' || s[i] == '"' || s[i] == '\\' || s[i] == ';')
+		{
+			need = 1;
+			break;
+		}
+	if (!need)
+	{
+		CSQCVM_SetRetStr ((char *)s);
+		return;
+	}
+	{
+		char *d = buf;
+		*d++ = '"';
+		for (i = 0; i < n && d < buf + sizeof (buf) - 3; i++)
+		{
+			if (s[i] == '"' || s[i] == '\\')
+				*d++ = '\\';
+			*d++ = s[i];
+		}
+		*d++ = '"';
+		*d = 0;
+	}
+	CSQCVM_SetRetStr (buf);
+}
+
+/* float(string name) isfunction = #607 — функция есть в модуле */
+static void csqc_isfunction (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *name = CSQCVM_Str (OFS_PARM0);
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (name && name[0] && PR1VM_FindFunction (vm, name)) ? 1 : 0;
+}
+
+/*
 L2 — «Свет/decals/скины» (2026-09-07; roadmap волна 5-финальная). Все номера —
 документированные no-op/аппроксимации: в ezq нет decal/skin-файловых подсистем
 FTE (`Mod_*Skin`, `CL_AddDecal`), readback-пикч и констант `lfield_*` для
@@ -4362,6 +4433,16 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 378, (builtin_t)csqc_light_nop_ret0);
 	PR1VM_RegisterBuiltin (vm, 379, (builtin_t)csqc_light_nop_ret0);
 	PR1VM_RegisterBuiltin (vm, 501, (builtin_t)csqc_light_nop_ret0);
+
+	// L2 — «Интроспекция/кон» (2026-09-07): #294/#295/#607 + no-op #391-394/#605.
+	PR1VM_RegisterBuiltin (vm, 294, (builtin_t)csqc_checkcommand);
+	PR1VM_RegisterBuiltin (vm, 295, (builtin_t)csqc_argescape);
+	PR1VM_RegisterBuiltin (vm, 607, (builtin_t)csqc_isfunction);
+	PR1VM_RegisterBuiltin (vm, 391, (builtin_t)csqc_nop_str);
+	PR1VM_RegisterBuiltin (vm, 392, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 393, (builtin_t)csqc_vmrest_nop);
+	PR1VM_RegisterBuiltin (vm, 394, (builtin_t)csqc_light_nop_ret0);
+	PR1VM_RegisterBuiltin (vm, 605, (builtin_t)csqc_vmrest_nop);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
