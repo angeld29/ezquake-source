@@ -2288,10 +2288,12 @@ static void csqc_coredump (void)
 }
 
 /*
-Phase 1 L1 P1d C2 — мировые трассы/физика (мир-only, без глобального pmove).
-Отклонения: без игроков/bbox-сущностей; tracebox — hull[1] с offset по mins/maxs;
-движение — своя трасса, без полного PM_PlayerMove. trace_* глобалы пишутся по
-именам (PR1VM_FindGlobal), ent всегда = world (0).
+Phase 1 L1 P1d C2 — мировые трассы/физика. С Шага 7 (часть 2) traceline/tracebox
+учитывают entity-слой пула (dispatch MOVE_* + forent/owner-ignore + зеркало игроков,
+см. csqc_trace_ents ниже); walkmove/droptofloor остаются мир-only (серверная семантика:
+движение к полу/шаг не блокируется сущностями). Отклонения: AABB вместо hull,
+HITMODEL→bbox, TRIGGERS без brush-мира, LAGGED нет, plane ent-попадания не пишется,
+движение — своя трасса без полного PM_PlayerMove.
 */
 
 static trace_t csqc_trace_fallback (vec3_t end)
@@ -2394,34 +2396,112 @@ static qbool csqc_ray_aabb (vec3_t start, vec3_t dir, vec3_t bmin, vec3_t bmax, 
 }
 
 /*
-FTE-пул Шаг 7 (entity-слой): после мир-трассы проверить сущности пула (origin/mins/maxs)
-и, если ближе — перекрыть результат. AABB-приближение (без hull/movetype-семантики).
+FTE-пул Шаг 7 (часть 2): dispatch MOVE_* + forent/owner-ignore над сущностями пула.
+После мир-трассы проверить сущности (origin/mins/maxs) и, если ближе — перекрыть.
+AABB-приближение (без hull/movetype-семантики; .solid/.flags/.owner — как в csdefs.qc).
+moveflags — 3-й арг traceline / 5-й tracebox (маска MOVE_* FTE); forent — slot сущности,
+которую и её владельца трасса не бьёт. boxmin/boxmax != NULL — tracebox: AABB сущности
+расширяется на бокс (swept-приближение). Константы SOLID/FL/MOVE — паритет csdefs.qc.
 */
-static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end, trace_t *tr)
+#define CSQC_SOLID_NOT		0
+#define CSQC_SOLID_TRIGGER	1
+#define CSQC_FL_MONSTER		32
+#define CSQC_MOVE_NOMONSTERS	1
+#define CSQC_MOVE_MISSILE	2
+#define CSQC_MOVE_HITMODEL	4
+#define CSQC_MOVE_TRIGGERS	16
+#define CSQC_MOVE_EVERYTHING	32
+#define CSQC_MOVE_LAGGED	64
+
+static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end,
+	int moveflags, int forent, vec3_t boxmin, vec3_t boxmax, trace_t *tr)
 {
 	vec3_t dir, bmin, bmax;
 	float t;
 	int e, i;
+	int ofs_o, ofs_mn, ofs_mx, ofs_sol, ofs_fl, ofs_own;
+	qbool nomon, everything, triggers, missile;
 
-	if (!vm || tr->fraction <= 0)
+	if (!vm || !vm->game_edicts || tr->fraction <= 0 || vm->edict_size <= 0)
 		return;
+	nomon = !!(moveflags & CSQC_MOVE_NOMONSTERS);
+	everything = !!(moveflags & CSQC_MOVE_EVERYTHING);
+	triggers = !!(moveflags & CSQC_MOVE_TRIGGERS);
+	missile = !!(moveflags & CSQC_MOVE_MISSILE);
+	if (nomon)
+		return;	// NOMONSTERS: только мир (уже в tr)
+	if (forent < 0 || forent >= vm->num_edicts)
+		forent = 0;	// world — forent-проверок нет
+
+	ofs_o = CSQC_Client_FindField (vm, "origin");
+	ofs_mn = CSQC_Client_FindField (vm, "mins");
+	ofs_mx = CSQC_Client_FindField (vm, "maxs");
+	ofs_sol = CSQC_Client_FindField (vm, "solid");
+	ofs_fl = CSQC_Client_FindField (vm, "flags");
+	ofs_own = CSQC_Client_FindField (vm, "owner");
+	if (ofs_o < 0 || ofs_mn < 0 || ofs_mx < 0)
+		return;	// модуль без геометрии полей — entity-слой недоступен
+
 	for (i = 0; i < 3; i++)
 		dir[i] = end[i] - start[i];
 
 	for (e = 1; e < vm->num_edicts; e++)
 	{
-		float *org, *mn, *mx;
+		float *base, *org, *mn, *mx;
+		int solf, flf;
+		float inflate = 0;
+
 		if (!CSQC_Client_EntUsed (e))
 			continue;
-		org = csqc_ent_field (vm, e, "origin");
-		mn = csqc_ent_field (vm, e, "mins");
-		mx = csqc_ent_field (vm, e, "maxs");
-		if (!org || !mn || !mx)
+		base = (float *)((byte *)vm->game_edicts + (size_t)e * vm->edict_size);
+		org = base + ofs_o;
+		mn = base + ofs_mn;
+		mx = base + ofs_mx;
+
+		// forent/owner-ignore (FTE csdefs.qc:523-525): не бьёт forent, его .owner и
+		// любую сущность, чей .owner == forent.
+		if (e == forent)
 			continue;
+		if (ofs_own >= 0)
+		{
+			int own;
+			own = (int)base[ofs_own];
+			if (own != 0 && own / vm->edict_size == forent)
+				continue;	// ent, чей owner == forent
+		}
+		if (forent > 0 && ofs_own >= 0)
+		{
+			float *fbase = (float *)((byte *)vm->game_edicts + (size_t)forent * vm->edict_size);
+			int fo = (int)fbase[ofs_own];
+			if (fo != 0 && fo / vm->edict_size == e)
+				continue;	// forent.owner == ent
+		}
+
+		solf = (ofs_sol >= 0) ? (int)base[ofs_sol] : CSQC_SOLID_NOT;
+		flf = (ofs_fl >= 0) ? (int)base[ofs_fl] : 0;
+
+		if (everything)
+		{
+			/* любая сущность с геометрией, даже .solid==SOLID_NOT */
+		}
+		else if (triggers)
+		{
+			if (solf != CSQC_SOLID_TRIGGER)
+				continue;
+		}
+		else
+		{
+			if (solf == CSQC_SOLID_NOT)
+				continue;	// NORMAL/HITMODEL: не-SOLID_NOT мимо
+		}
+		// MISSILE: монстры с увеличенным размером (±15, как FTE).
+		if (missile && (flf & CSQC_FL_MONSTER))
+			inflate = 15;
+
 		for (i = 0; i < 3; i++)
 		{
-			bmin[i] = org[i] + mn[i];
-			bmax[i] = org[i] + mx[i];
+			bmin[i] = org[i] + mn[i] - inflate + (boxmin ? boxmin[i] : 0);
+			bmax[i] = org[i] + mx[i] + inflate + (boxmax ? boxmax[i] : 0);
 		}
 		if (!csqc_ray_aabb (start, dir, bmin, bmax, &t))
 			continue;
@@ -2436,30 +2516,42 @@ static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end, trace_t *tr)
 	}
 }
 
-/* void(vector v1, vector v2, float nomonsters, entity forent) traceline = #16 */
+/* void(vector v1, vector v2, float flags, entity forent) traceline = #16 */
 static void csqc_traceline (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	trace_t tr;
+	int moveflags, forent;
 	if (!vm)
 		return;
+	// ABI PR1: каждый параметр — 3-словный блок (param_index*3). traceline:
+	// v1@0 v2@3 flags@6 forent@9.
+	moveflags = (int)vm->globals[OFS_PARM0 + 6];
+	forent = csqc_ent_of (vm, OFS_PARM0 + 9);
 	tr = csqc_world_trace (&vm->globals[OFS_PARM0], NULL, NULL,
 		&vm->globals[OFS_PARM0 + 3]);
-	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 3], &tr);
+	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 3],
+		moveflags, forent, NULL, NULL, &tr);
 	csqc_store_trace (vm, &tr);
 }
 
-/* void(vector v1, vector mins, vector maxs, vector v2, ...) tracebox = #90 */
+/* void(vector v1, vector mins, vector maxs, vector v2, float flags, entity forent) tracebox = #90 */
 static void csqc_tracebox (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	trace_t tr;
+	int moveflags, forent;
 	if (!vm)
 		return;
+	// ABI PR1: каждый параметр — 3-словный блок (param_index*3). tracebox:
+	// v1@0 mins@3 maxs@6 v2@9 flags@12 forent@15.
+	moveflags = (int)vm->globals[OFS_PARM0 + 12];
+	forent = csqc_ent_of (vm, OFS_PARM0 + 15);
 	tr = csqc_world_trace (&vm->globals[OFS_PARM0],
 		&vm->globals[OFS_PARM0 + 3], &vm->globals[OFS_PARM0 + 6],
 		&vm->globals[OFS_PARM0 + 9]);
-	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 9], &tr);
+	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 9],
+		moveflags, forent, &vm->globals[OFS_PARM0 + 3], &vm->globals[OFS_PARM0 + 6], &tr);
 	csqc_store_trace (vm, &tr);
 }
 
