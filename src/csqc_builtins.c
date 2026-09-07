@@ -23,6 +23,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
 #include "gl_model.h"		// custom_model_*/Mod_CustomModel (#431 no-op, C6.1)
 #include "crc.h"		// CRC_Init/CRC_ProcessByte/CRC_Value (#494 crc16)
+#include "screen.h"		// SCR_CenterPrint (#338 cprint)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -3457,6 +3458,89 @@ static void csqc_movetogoal (void)
 	/* no-op (документировано; нет .goalentity) */
 }
 
+/*
+L2 — «Система/VM простые» (2026-09-07). FTE-эталон: etos pr_bgcmd.c:5029,
+wasfreed/num_for_edict pr_bgcmd.c:3961/3970, print pr_bgcmd.c:4264, cprint
+pr_csqc.c:662 (SCR_CenterPrint), isserver pr_clcmd.c:553. Entity-значение в нашей
+классике = slot*edict_size; слот = ent_of (см. #459/#512 — слот-индексная семантика,
+отклонение от FTE-«entnum», в parity).
+*/
+
+/* string(entity ent) etos = #65 — "entity <slot>" */
+static void csqc_etos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
+	char buf[32];
+	if (!vm)
+		return;
+	slot = csqc_ent_of (vm, OFS_PARM0);
+	snprintf (buf, sizeof (buf), "entity %d", slot > 0 ? slot : 0);
+	CSQCVM_SetRetStr (buf);
+}
+
+/* void(string s, ...) print = #339 — консоль (Con_Printf). */
+static void csqc_print (void)
+{
+	char *s = CSQCVM_Str (OFS_PARM0);
+	if (s && s[0])
+		Con_Printf ("%s", s);
+}
+
+/* void(string s, ...) cprint = #338 — центр-экран (SCR_CenterPrint, как FTE). */
+static void csqc_cprint (void)
+{
+	char *s = CSQCVM_Str (OFS_PARM0);
+	SCR_CenterPrint (s ? s : "");
+}
+
+/* float() isserver = #350 — сервер запущен? (ezq-клиент включает сервер).
+   Отклонение: без различения 0.5 (sv.allocated_client_slots нет в ezq). */
+static void csqc_isserver (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (sv.state != ss_dead) ? 1 : 0;
+}
+
+/* float(entity ent) wasfreed = #353 — слот освобождён (remove). */
+static void csqc_wasfreed (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
+	if (!vm)
+		return;
+	slot = csqc_ent_of (vm, OFS_PARM0);
+	vm->globals[OFS_RETURN] = (slot > 0 && !CSQC_Client_EntUsed (slot)) ? 1 : 0;
+}
+
+/* float(entity ent) num_for_edict = #512 — слот-индекс (парный к #459). */
+static void csqc_num_for_edict (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
+	if (!vm)
+		return;
+	slot = csqc_ent_of (vm, OFS_PARM0);
+	vm->globals[OFS_RETURN] = slot > 0 ? slot : 0;
+}
+
+/* #63 changepitch — no-op (движение углов к idealpitch — серверная механика). */
+static void csqc_changepitch (void)
+{
+	/* no-op (документировано; как changeyaw #49) */
+}
+
+/* #332 getstats / #355 getentitytoken — deprecated/не нужны: возврат "" (""). */
+static void csqc_nop_str (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQCVM_SetRetStr ("");
+}
+
 void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 {
 	// #1 makevectors (C6.1, FTE-паритет) — до CSQC-специфичных.
@@ -3660,6 +3744,18 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 481, (builtin_t)csqc_strtoupper);
 	PR1VM_RegisterBuiltin (vm, 484, (builtin_t)csqc_strreplace);
 	PR1VM_RegisterBuiltin (vm, 485, (builtin_t)csqc_strireplace);
+
+	// L2 — «Система/VM простые» (2026-09-07): #65/#338/#339/#350/#353/#512 +
+	// no-op #63/#332/#355.
+	PR1VM_RegisterBuiltin (vm, 65,  (builtin_t)csqc_etos);
+	PR1VM_RegisterBuiltin (vm, 338, (builtin_t)csqc_cprint);
+	PR1VM_RegisterBuiltin (vm, 339, (builtin_t)csqc_print);
+	PR1VM_RegisterBuiltin (vm, 350, (builtin_t)csqc_isserver);
+	PR1VM_RegisterBuiltin (vm, 353, (builtin_t)csqc_wasfreed);
+	PR1VM_RegisterBuiltin (vm, 512, (builtin_t)csqc_num_for_edict);
+	PR1VM_RegisterBuiltin (vm, 63,  (builtin_t)csqc_changepitch);
+	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_nop_str);
+	PR1VM_RegisterBuiltin (vm, 355, (builtin_t)csqc_nop_str);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
