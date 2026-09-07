@@ -2351,7 +2351,80 @@ static void csqc_store_trace (pr1vm_t *vm, trace_t *tr)
 		vm->globals[o + 2] = tr->plane.normal[2];
 	}
 	if ((o = PR1VM_FindGlobal (vm, "trace_ent")) >= 0)
-		*(int *)&vm->globals[o] = 0;	// world
+	{
+		// entity-значение = slot*edict_size (int-биты); 0 — world.
+		*(int *)&vm->globals[o] = (tr->e.entnum > 0) ? tr->e.entnum * vm->edict_size : 0;
+	}
+}
+
+/* Отрезок против AABB (slab); возвращает t в [0,1], false — нет пересечения. */
+static qbool csqc_ray_aabb (vec3_t start, vec3_t dir, vec3_t bmin, vec3_t bmax, float *tout)
+{
+	float tmin = 0, tmax = 1;
+	int i;
+	for (i = 0; i < 3; i++)
+	{
+		float d = dir[i];
+		float t1, t2, tmp;
+		if (d > -1e-8 && d < 1e-8)
+		{
+			if (start[i] < bmin[i] || start[i] > bmax[i])
+				return false;
+			continue;
+		}
+		t1 = (bmin[i] - start[i]) / d;
+		t2 = (bmax[i] - start[i]) / d;
+		if (t1 > t2) { tmp = t1; t1 = t2; t2 = tmp; }
+		if (t1 > tmin) tmin = t1;
+		if (t2 < tmax) tmax = t2;
+		if (tmin > tmax)
+			return false;
+	}
+	*tout = tmin;
+	return (tmin >= 0 && tmin <= 1);
+}
+
+/*
+FTE-пул Шаг 7 (entity-слой): после мир-трассы проверить сущности пула (origin/mins/maxs)
+и, если ближе — перекрыть результат. AABB-приближение (без hull/movetype-семантики).
+*/
+static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end, trace_t *tr)
+{
+	vec3_t dir, bmin, bmax;
+	float t;
+	int e, i;
+
+	if (!vm || tr->fraction <= 0)
+		return;
+	for (i = 0; i < 3; i++)
+		dir[i] = end[i] - start[i];
+
+	for (e = 1; e < vm->num_edicts; e++)
+	{
+		float *org, *mn, *mx;
+		if (!CSQC_Client_EntUsed (e))
+			continue;
+		org = csqc_ent_field (vm, e, "origin");
+		mn = csqc_ent_field (vm, e, "mins");
+		mx = csqc_ent_field (vm, e, "maxs");
+		if (!org || !mn || !mx)
+			continue;
+		for (i = 0; i < 3; i++)
+		{
+			bmin[i] = org[i] + mn[i];
+			bmax[i] = org[i] + mx[i];
+		}
+		if (!csqc_ray_aabb (start, dir, bmin, bmax, &t))
+			continue;
+		if (t > tr->fraction)
+			continue;
+		tr->fraction = t;
+		for (i = 0; i < 3; i++)
+			tr->endpos[i] = start[i] + dir[i] * t;
+		tr->e.entnum = e;
+		tr->allsolid = false;
+		tr->startsolid = false;
+	}
 }
 
 /* void(vector v1, vector v2, float nomonsters, entity forent) traceline = #16 */
@@ -2363,6 +2436,7 @@ static void csqc_traceline (void)
 		return;
 	tr = csqc_world_trace (&vm->globals[OFS_PARM0], NULL, NULL,
 		&vm->globals[OFS_PARM0 + 3]);
+	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 3], &tr);
 	csqc_store_trace (vm, &tr);
 }
 
@@ -2376,6 +2450,7 @@ static void csqc_tracebox (void)
 	tr = csqc_world_trace (&vm->globals[OFS_PARM0],
 		&vm->globals[OFS_PARM0 + 3], &vm->globals[OFS_PARM0 + 6],
 		&vm->globals[OFS_PARM0 + 9]);
+	csqc_trace_ents (vm, &vm->globals[OFS_PARM0], &vm->globals[OFS_PARM0 + 9], &tr);
 	csqc_store_trace (vm, &tr);
 }
 
