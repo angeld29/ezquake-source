@@ -14,10 +14,13 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "quakedef.h"	// client.h (cls: netchan/fteprotocolextensions/state) с нужными типами
 #include <time.h>		// csqc_calltimeofday (#231)
 #include <stdlib.h>		// strtod (#81/#117)
+#include <ctype.h>		// tolower (#494 crc16 insensitive)
+#include <math.h>		// libm-математика (T1: #471-475/#532)
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
 #include "gl_model.h"		// custom_model_*/Mod_CustomModel (#431 no-op, C6.1)
+#include "crc.h"		// CRC_Init/CRC_ProcessByte/CRC_Value (#494 crc16)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 
@@ -1737,6 +1740,186 @@ static void csqc_randomvec (void)
 }
 
 /*
+L2-тривиалы T1 — математика (2026-09-07; волна тривиал-кандидатов, L2-реестр).
+FTE-эталон тел — fteqw/engine/common/pr_bgcmd.c (asin 6486, log 4776, anglemod 6534,
+mod 6452, bitshift 6376, crc16 5772, gettimef 7266). Чистые float/string-функции без
+edict/движкового состояния (исключения #494 crc16 / #519 gettimef отмечены в телах).
+*/
+
+/*
+float(float x) asin = #471; float(float x) acos = #472
+float(float x) atan = #473; float(float a, float b) atan2 = #474; float(float x) tan = #475
+*/
+static void csqc_asin (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = asin (vm->globals[OFS_PARM0]);
+}
+static void csqc_acos (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = acos (vm->globals[OFS_PARM0]);
+}
+static void csqc_atan (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = atan (vm->globals[OFS_PARM0]);
+}
+static void csqc_atan2 (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = atan2 (vm->globals[OFS_PARM0], vm->globals[OFS_PARM1]);
+}
+static void csqc_tan (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = tan (vm->globals[OFS_PARM0]);
+}
+
+/*
+float(float x, optional float base) log = #532
+log(x); при 2-м аргументе — log_base(x) = log(x)/log(base) (PF_Logarithm).
+*/
+static void csqc_log (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	double r;
+	if (!vm)
+		return;
+	r = log (vm->globals[OFS_PARM0]);
+	if (vm->argc > 1)
+		r /= log (vm->globals[OFS_PARM1]);
+	vm->globals[OFS_RETURN] = (float)r;
+}
+
+/*
+float(float v) anglemod = #102 — в [0,360) (PF_anglemod).
+*/
+static void csqc_anglemod (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float v;
+	if (!vm)
+		return;
+	v = vm->globals[OFS_PARM0];
+	while (v >= 360)
+		v -= 360;
+	while (v < 0)
+		v += 360;
+	vm->globals[OFS_RETURN] = v;
+}
+
+/*
+float(float a, float n) mod = #245 — a - n*(int)(a/n); деление на 0 → warning + 0.
+*/
+static void csqc_mod (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float a, n;
+	if (!vm)
+		return;
+	a = vm->globals[OFS_PARM0];
+	n = vm->globals[OFS_PARM1];
+	if (n == 0)
+	{
+		Con_Printf ("CSQC mod: mod by zero\n");
+		vm->globals[OFS_RETURN] = 0;
+	}
+	else
+		vm->globals[OFS_RETURN] = a - n * (float)(int)(a / n);
+}
+
+/*
+float(float number, float quantity) bitshift = #218
+quantity<0 → сдвиг вправо на −quantity, иначе влево (PF_bitshift).
+*/
+static void csqc_bitshift (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int mask, shift;
+	if (!vm)
+		return;
+	mask = (int)vm->globals[OFS_PARM0];
+	shift = (int)vm->globals[OFS_PARM1];
+	if (shift < 0)
+		mask >>= -shift;
+	else
+		mask <<= shift;
+	vm->globals[OFS_RETURN] = mask;
+}
+
+/*
+float(float insensitive, string str, ...) crc16 = #494
+CRC16 (CCITT, poly 0x1021, init/xor 0xffff/0x0000 — тот же, что ezq CRC_* и FTE
+hash_crc16); insensitive → строчные буквы перед подсчётом (FTE hash_crc16_lower).
+Строки от 1-го аргумента конкатенируются (FTE PF_VarString). Возврат — значение crc.
+*/
+static void csqc_crc16 (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	unsigned short crc;
+	char buf[4096];
+	int i, insens, len = 0;
+	const char *s;
+
+	if (!vm)
+		return;
+	insens = (int)vm->globals[OFS_PARM0];
+	buf[0] = 0;
+	for (i = 1; i < vm->argc; i++)
+	{
+		s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		if (s)
+			len += snprintf (buf + len, sizeof (buf) - len, "%s", s);
+		if (len >= (int)sizeof (buf) - 1)
+			break;
+	}
+	CRC_Init (&crc);
+	for (i = 0; i < len; i++)
+		CRC_ProcessByte (&crc, insens ? tolower ((int)(unsigned char)buf[i]) : (unsigned char)buf[i]);
+	vm->globals[OFS_RETURN] = CRC_Value (crc);
+}
+
+/*
+float(optional float timer) gettimef = #519 — время в секундах (float).
+FTE PF_gettimed (pr_bgcmd.c:7248): timer 0/нет — realtime (кадр), 1 — wall-clock
+с точностью до мс, 5 — sim-time (cl.time); остальное → realtime.
+Отклонение (в parity): mode0 = cls.realtime ezquake (масштабируется cl_demospeed).
+sys.h не включаем (конфликт dllfunction_t после quakedef) — прототип локальный.
+*/
+double Sys_DoubleTime (void);
+static void csqc_gettimef (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int timer;
+	if (!vm)
+		return;
+	timer = (vm->argc > 0) ? (int)vm->globals[OFS_PARM0] : 0;
+	switch (timer)
+	{
+	case 1:
+		vm->globals[OFS_RETURN] = (float)((double)(long long)(Sys_DoubleTime () * 1000.0) / 1000.0);
+		break;
+	case 5:
+		vm->globals[OFS_RETURN] = (float)cl.time;
+		break;
+	default:
+		vm->globals[OFS_RETURN] = (float)cls.realtime;
+		break;
+	}
+}
+
+/*
 Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
 без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
 */
@@ -3015,6 +3198,19 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 352, (builtin_t)csqc_registercommand);
 	PR1VM_RegisterBuiltin (vm, 441, (builtin_t)csqc_tokenize);
 	PR1VM_RegisterBuiltin (vm, 442, (builtin_t)csqc_argv);
+
+	// L2-тривиалы T1 — математика (2026-09-07): чистая математика/C, без состояния.
+	PR1VM_RegisterBuiltin (vm, 471, (builtin_t)csqc_asin);
+	PR1VM_RegisterBuiltin (vm, 472, (builtin_t)csqc_acos);
+	PR1VM_RegisterBuiltin (vm, 473, (builtin_t)csqc_atan);
+	PR1VM_RegisterBuiltin (vm, 474, (builtin_t)csqc_atan2);
+	PR1VM_RegisterBuiltin (vm, 475, (builtin_t)csqc_tan);
+	PR1VM_RegisterBuiltin (vm, 532, (builtin_t)csqc_log);
+	PR1VM_RegisterBuiltin (vm, 102, (builtin_t)csqc_anglemod);
+	PR1VM_RegisterBuiltin (vm, 245, (builtin_t)csqc_mod);
+	PR1VM_RegisterBuiltin (vm, 218, (builtin_t)csqc_bitshift);
+	PR1VM_RegisterBuiltin (vm, 494, (builtin_t)csqc_crc16);
+	PR1VM_RegisterBuiltin (vm, 519, (builtin_t)csqc_gettimef);
 
 	// P2.3 — визуальный слой B (2D-оверлей; сетевая часть B — позже).
 	PR1VM_RegisterBuiltin (vm, 300, (builtin_t)csqc_clearscene);
