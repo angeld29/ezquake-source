@@ -17,7 +17,9 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include <ctype.h>		// tolower (#494 crc16 insensitive, #480/481)
 #include <math.h>		// libm-математика (T1: #471-475/#532)
 #include <string.h>		// strlen/strncmp/strcasecmp (T4: #228-230)
-#include <strings.h>		// strcasecmp/strncasecmp (T4: #229/230)
+#ifndef _WIN32
+#include <strings.h>		// strcasecmp/strncasecmp (T4: #229/230; MSVC — макросы в q_shared.h)
+#endif
 #include "keys.h"		// Key_KeynumToString/Key_StringToKeynum (Слой D шаг 3)
 #include "qsound.h"		// S_LocalSoundWithVol (C3.1 #177)
 #include "cl_tent.h"		// CL_CreateBeam (C3.3b #428-431)
