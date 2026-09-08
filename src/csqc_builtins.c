@@ -1217,9 +1217,12 @@ static void csqc_setsensitivityscaler (void)
 
 /*
 float(float inputsequencenum) getinputstate = #345
-Заполняет input_* глобалы из локальной истории отправленных usercmd (C1.3).
-Отличие от FTE: QW не эхает подтверждение движения — история локальная
-(последние CSQC_INHIST команд от CL_SendCmd); возврат 0, если seq вне истории.
+Заполняет input_* глобалы из истории отправленных usercmd (C5-A). seq = зеркало
+cls.netchan.outgoing_sequence; валиден (servercommandframe, clientcommandframe]
+(контракт модуля — движок диапазон не проверяет, спека ext_csqc_1.txt:262);
+paused-guard как FTE (pr_csqc.c:4142). Возврат 0, если seq вне кольца истории
+(64) или пауза. Живой pending-кадр #345(clientcommandframe) вне CSQC_Input_Frame
+недоступен (нет аналога cl_pendingcmd; текущий cmd — в input_*) — отклонение.
 */
 static void csqc_getinputstate (void)
 {

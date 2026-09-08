@@ -57,6 +57,12 @@ typedef struct csqc_client_state_s
 	// input_* глобалы для CSQC_Input_Frame (или -1, если модуль их не объявил).
 	int			in_timelength, in_angles, in_movevalues, in_buttons, in_impulse;
 	int			in_sequence;	// input_sequence (C1.3 #345) или -1
+	// C5-A: глобалы окна предикции (csdefs.qc:50-51) или -1.
+	int			g_ccframe;		// clientcommandframe
+	int			g_scframe;		// servercommandframe
+	// C5-A/B: deprec-глобалы pmove_org/pmove_vel/pmove_onground (или -1;
+	// пишет #347 в B; в A только резолв).
+	int			p_org, p_vel, p_onground;
 	// #1 makevectors (C6.1): глобалы v_forward/v_right/v_up модуля (или -1).
 	int			g_vfwd, g_vright, g_vup;
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
@@ -77,12 +83,16 @@ typedef struct csqc_client_state_s
 
 static csqc_client_state_t s_csqc;
 
-// C1.3 #345: кольцевой буфер отправленных usercmd (запись из CL_SendCmd).
-// QW-протокол не эхает подтверждение движения — seq локальный (отличие от FTE).
-#define CSQC_INHIST	16
+// C5-A #345: кольцевой буфер отправленных usercmd (запись из CL_SendCmd).
+// seq = зеркало cls.netchan.outgoing_sequence (номер клиентского сообщения на
+// момент записи; Netchan_Transmit инкрементирует ПОСЛЕ записи заголовка —
+// net_chan.c:316-319, поэтому во время CL_SendCmd outgoing_sequence ещё равен
+// номеру текущего cmd). C1.3 ввёл локальный счётчик — заменён зеркалом (C5-A).
+// Размер 64 = UPDATE_BACKUP (окно предикции).
+#define CSQC_INHIST	64
 typedef struct { unsigned int seq; usercmd_t cmd; } csqc_inrec_t;
 static csqc_inrec_t s_inhist[CSQC_INHIST];
-static unsigned int s_inlast_seq;
+static unsigned int s_last_seq;	// seq последней записи (0 — записей нет)
 
 // C2.2 #460-469: пул string-buffers (DP). Строки deep-copy (переживают кадры).
 #define CSQC_MAX_BUFS	64
@@ -1006,8 +1016,10 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 	s_csqc.in_sequence = -1;
+	s_csqc.g_ccframe = s_csqc.g_scframe = -1;
+	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
-	s_inlast_seq = 0;
+	s_last_seq = 0;
 
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
@@ -1078,6 +1090,12 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.in_buttons = PR1VM_FindGlobal (vm, "input_buttons");
 	s_csqc.in_impulse = PR1VM_FindGlobal (vm, "input_impulse");
 	s_csqc.in_sequence = PR1VM_FindGlobal (vm, "input_sequence");
+	// C5-A: глобалы окна предикции + deprec pmove_* (csdefs.qc:50-51,69-71).
+	s_csqc.g_ccframe = PR1VM_FindGlobal (vm, "clientcommandframe");
+	s_csqc.g_scframe = PR1VM_FindGlobal (vm, "servercommandframe");
+	s_csqc.p_org = PR1VM_FindGlobal (vm, "pmove_org");
+	s_csqc.p_vel = PR1VM_FindGlobal (vm, "pmove_vel");
+	s_csqc.p_onground = PR1VM_FindGlobal (vm, "pmove_onground");
 	// #1 makevectors (C6.1): цели записи v_forward/v_right/v_up (FTE-паритет).
 	s_csqc.g_vfwd = PR1VM_FindGlobal (vm, "v_forward");
 	s_csqc.g_vright = PR1VM_FindGlobal (vm, "v_right");
@@ -1178,6 +1196,54 @@ void CSQC_Client_ConnectCheck (void)
 
 /*
 =================
+C5-A: окно предикции EXT_CSQC_1 — значения глобалов модуля
+clientcommandframe/servercommandframe (csdefs.qc:50-51).
+
+- clientcommandframe = «следующий формируемый» клиентский кадр =
+  cls.netchan.outgoing_sequence (Netchan_Transmit инкрементирует ПОСЛЕ записи
+  заголовка — net_chan.c:316-319, поэтому во время CL_SendCmd outgoing_sequence
+  ещё равен номеру текущего cmd; после — следующего).
+- servercommandframe = последний подтверждённый сервером клиентский кадр =
+  cl.parsecount (CL_ParseClientdata ставит его в cls.netchan.incoming_acknowledged,
+  cl_parse.c:2050-2054) — аналог FTE QW ackedmovesequence.
+- Предикция недоступна (0): демо/MVD, не ca_active, до первого принятого
+  серверного кадра (cl.validsequence == 0; client.h:647-650).
+- Окно (servercommandframe, clientcommandframe] — контракт модуля (движок его
+  не проверяет; спека ext_csqc_1.txt:262) — см. CSQC_Client_ApplyInput.
+=================
+*/
+static float CSQC_Client_ClientCmdFrame (void)
+{
+	if (!s_csqc.loaded || s_csqc.errored)
+		return 0;
+	if (cls.state != ca_active || cls.demoplayback || cls.mvdplayback)
+		return 0;
+	return (float)cls.netchan.outgoing_sequence;
+}
+
+static float CSQC_Client_ServerCmdFrame (void)
+{
+	if (!s_csqc.loaded || s_csqc.errored)
+		return 0;
+	if (cls.state != ca_active || cls.demoplayback || cls.mvdplayback)
+		return 0;
+	if (!cl.validsequence)
+		return 0;	// ни одного принятого серверного кадра (преспаун)
+	return (float)cl.parsecount;
+}
+
+static void CSQC_Client_PatchFrames (void)
+{
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.g_ccframe >= 0)
+		s_csqc.vm.globals[s_csqc.g_ccframe] = CSQC_Client_ClientCmdFrame ();
+	if (s_csqc.g_scframe >= 0)
+		s_csqc.vm.globals[s_csqc.g_scframe] = CSQC_Client_ServerCmdFrame ();
+}
+
+/*
+=================
 CSQC_Client_Update
 
 Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
@@ -1253,6 +1319,8 @@ void CSQC_Client_Update (void)
 	// player_localentnum — публикуем до модуля (окружение builtins как FTE;
 	// сущности игроков не фабрикуем — см. CSQC_Client_UpdateLocalEntnum).
 	CSQC_Client_UpdateLocalEntnum ();
+	// C5-A: окно предикции модулю (перед CSQC_UpdateView; FTE pr_csqc.c:8837-8844).
+	CSQC_Client_PatchFrames ();
 
 	if (s_csqc.func_update > 0)
 	{
@@ -1441,6 +1509,10 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.func_input <= 0)
 		return;
 
+	// C5-A: окно предикции до CSQC_Input_Frame (clientcommandframe = текущий cmd;
+	// FTE pr_csqc.c:9430-9431).
+	CSQC_Client_PatchFrames ();
+
 	CSQC_Client_SetTime ();
 
 	// cmd -> input_* глобалы (только объявленные модулем).
@@ -1498,19 +1570,36 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 =================
 CSQC_Client_RecordInput / CSQC_Client_ApplyInput
 
-C1.3 #345: локальная история отправленных usercmd. CL_SendCmd записывает каждый
+C5-A #345: история отправленных usercmd. CL_SendCmd записывает каждый
 отправленный cmd (CSQC_Client_RecordInput); builtin #345(seq) запрашивает его и
-заполняет input_* глобалы (CSQC_Client_ApplyInput). seq локальный — QW не эхает
-подтверждение движения (отличие от FTE).
+заполняет input_* глобалы (CSQC_Client_ApplyInput).
+
+seq = зеркало cls.netchan.outgoing_sequence (номер клиентского сообщения на
+момент записи; Netchan_Transmit инкрементирует после записи заголовка). Это и
+есть тот номер, который подтверждает сервер (servercommandframe = incoming_
+acknowledged = cl.parsecount) — окно (servercommandframe, clientcommandframe]
+согласовано в одной нумерации. Отличие от FTE: у нас ring-история (64) + запись
+только живого пути CL_SendCmd (демо/MVD не записываются); живой pending-кадр
+#345(clientcommandframe) вне CSQC_Input_Frame недоступен — модуль берёт текущий
+cmd из input_* (движок выставляет их до CSQC_Input_Frame). NQ-механизм
+ackedmovesequence (PEXT2_PREDINFO) недостижим (не для QW).
 =================
 */
 void CSQC_Client_RecordInput (usercmd_t *cmd)
 {
-	s_inlast_seq++;
-	s_inhist[s_inlast_seq % CSQC_INHIST].seq = s_inlast_seq;
-	s_inhist[s_inlast_seq % CSQC_INHIST].cmd = *cmd;
-	if (s_csqc.loaded && !s_csqc.errored && s_csqc.in_sequence >= 0)
-		s_csqc.vm.globals[s_csqc.in_sequence] = s_inlast_seq;
+	unsigned int seq;
+
+	seq = (unsigned int)cls.netchan.outgoing_sequence;
+	s_last_seq = seq;
+	s_inhist[seq % CSQC_INHIST].seq = seq;
+	s_inhist[seq % CSQC_INHIST].cmd = *cmd;
+	if (s_csqc.loaded && !s_csqc.errored)
+	{
+		if (s_csqc.in_sequence >= 0)
+			s_csqc.vm.globals[s_csqc.in_sequence] = seq;
+		if (s_csqc.g_ccframe >= 0)
+			s_csqc.vm.globals[s_csqc.g_ccframe] = seq;
+	}
 }
 
 static void CSQC_Client_FillInputFromCmd (usercmd_t *cmd)
@@ -1544,10 +1633,18 @@ int CSQC_Client_ApplyInput (unsigned int seq)
 
 	if (!s_csqc.loaded || s_csqc.errored)
 		return 0;
+	if (!seq)
+		return 0;
+	// C5-A: paused-guard как FTE (pr_csqc.c:4142) — на серверной паузе кадры
+	// окна не применяются. Диапазон (servercommandframe, clientcommandframe]
+	// движок не проверяет (контракт модуля; спека ext_csqc_1.txt:262) — здесь
+	// только живучесть кольца.
+	if ((cl.paused & PAUSED_SERVER) && seq >= (unsigned)CSQC_Client_ServerCmdFrame ())
+		return 0;
 	for (i = 0; i < CSQC_INHIST; i++)
 	{
 		r = &s_inhist[i];
-		if (r->seq == seq && seq)
+		if (r->seq == seq)
 		{
 			CSQC_Client_FillInputFromCmd (&r->cmd);
 			if (s_csqc.in_sequence >= 0)
@@ -1644,10 +1741,10 @@ void CSQC_Client_RunPlayerPhysics (int entnum)
 
 	base = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
 
-	// Последний отправленный usercmd (RecordInput) — команда для физики.
-	if (!s_inlast_seq)
+	// Последний записанный usercmd (RecordInput) — команда для физики.
+	if (!s_last_seq)
 		return;
-	uc = &s_inhist[s_inlast_seq % CSQC_INHIST].cmd;
+	uc = &s_inhist[s_last_seq % CSQC_INHIST].cmd;
 
 	// Собираем pmove (глобальный playermove_t) как FTE: поля ent + input cmd.
 	// Размеры игрока — глобальные player_mins/player_maxs pmove.c (стандарт).
@@ -1954,8 +2051,10 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
 	s_csqc.in_sequence = -1;
+	s_csqc.g_ccframe = s_csqc.g_scframe = -1;
+	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
-	s_inlast_seq = 0;
+	s_last_seq = 0;
 }
 
 #endif // !CLIENTONLY

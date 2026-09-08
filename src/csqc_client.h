@@ -50,7 +50,10 @@ void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once 
 // изменения (см. csqc_client.c; механика FTE pr_csqc.c:9418).
 void CSQC_Client_InputFrame (struct usercmd_s *cmd);
 
-// C1.3 #345: локальная история отправленных usercmd (QW без ack движения).
+// C5-A #345: история отправленных usercmd. seq = зеркало cls.netchan.outgoing_
+// sequence (номер клиентского сообщения на момент записи); servercommandframe =
+// cl.parsecount (incoming_acknowledged) — окно предикции (servercommandframe,
+// clientcommandframe] в одной нумерации (QW эхает подтверждение на netchan/кадре).
 void CSQC_Client_RecordInput (struct usercmd_s *cmd);	// запись из CL_SendCmd
 int CSQC_Client_ApplyInput (unsigned int seq);			// заполнить input_* по seq; 0/1
 void CSQC_Client_RunPlayerPhysics (int entnum);			// #347 runstandardplayerphysics (C1.4)
