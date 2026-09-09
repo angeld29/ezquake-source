@@ -1110,8 +1110,8 @@ PR1_LoadProgs
 void PF_clear_strtbl(void);
 
 #ifdef WITH_NQPROGS
-// NQ-ремап field-оффсетов (0..105; >105 — identity). Значения — NQ-ветка
-// формулы PR_InitPatchTables. Используется инстансом серверного PR1 при NQ.
+// NQ remap of field offsets (0..105; >105 — identity). Values are the NQ branch
+// of the PR_InitPatchTables formula. Used by the server PR1 instance under NQ.
 static const int fieldofs_nq[106] = {
 	  0,  1,  2,  3,  4,  5,  6,  7,  9, 10,
 	 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -1157,9 +1157,9 @@ void PR_InitPatchTables (void)
 =================
 PR1VM_FillAndSwapLumps
 
-PR1VM: из уже байтсвопнутого заголовка заполняет зеркала инстанса и делает
-байтсвоп lumps. Общий для v6 и v7 (первые 15 полей заголовка совпадают;
-v7 дополняет их полями отладки/типов после entityfields).
+PR1VM: from an already byte-swapped header fills the instance mirrors and
+byte-swaps the lumps. Common for v6 and v7 (the first 15 header fields match;
+v7 extends them with debug/type fields after entityfields).
 =================
 */
 static void PR1VM_FillAndSwapLumps (pr1vm_t *vm, dprograms_t *p)
@@ -1216,8 +1216,8 @@ static void PR1VM_FillAndSwapLumps (pr1vm_t *vm, dprograms_t *p)
 =================
 PR1VM_LoadData
 
-PR1VM (S2): заполняет инстанс из файла progs (v6). Байтсвоп заголовка и lumps;
-валидацию версии/CRC и тексты ошибок оставляет серверной обёртке PR1_LoadProgs.
+PR1VM (S2): fills the instance from a progs (v6) file. Byte-swaps the header and
+lumps; version/CRC validation and error text are left to the PR1_LoadProgs wrapper.
 =================
 */
 void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
@@ -1236,8 +1236,8 @@ void PR1VM_LoadData (pr1vm_t *vm, dprograms_t *hdr)
 =================
 PR1VM_CommitServer
 
-PR1VM (S2): сервер — зеркала инстанса -> общие «модульные» глобалы (их читают
-PR2 и sv_*.c). Зовётся после успешной PR1VM_LoadData.
+PR1VM (S2): server — instance mirrors -> shared "module" globals (read by
+PR2 and sv_*.c). Called after a successful PR1VM_LoadData.
 =================
 */
 void PR1VM_CommitServer (pr1vm_t *vm)
@@ -1258,7 +1258,7 @@ char *PR1VM_GetString (pr1vm_t *vm, int num)
 	if (!vm)
 		return NULL;
 
-	// dual: серверный инстанс делегирует глобальным таблицам (их читают PR2/sv_*)
+	// dual: the server instance delegates to the global tables (read by PR2/sv_*)
 	if (vm == PR1VM_Server())
 		return PR1_GetString (num);
 
@@ -1284,7 +1284,7 @@ void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
 	if (!address)
 		return;
 
-	// dual: серверный инстанс — глобальная таблица (как раньше)
+	// dual: server instance — global table (as before)
 	if (vm == PR1VM_Server())
 	{
 		PR1_SetString (address, s);
@@ -1300,21 +1300,21 @@ void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
 	if (!vm->strings)
 		return;
 
-	// Модульная строковая область [strings, strings+numstrings) постоянна
-	// (время жизни = загрузка модуля) — храним смещение как раньше.
+	// The module string area [strings, strings+numstrings) is constant
+	// (lifetime = module load) — store an offset as before.
 	if (s >= vm->strings && s < vm->strings + vm->progs->numstrings)
 	{
 		*address = (int)(s - vm->strings);
 		return;
 	}
 
-	// Временная строка: deep-copy в следующий слот кольца per-instance
-	// (PR1VM_TEMP_STRINGS слотов, см. pr1vm.h). Каждый вызов получает свой
-	// буфер — результат builtin не алиасится ни с источником, ни с прошлыми
-	// результатами (аналог FTE PR_AllocTempString, initlib.c:1398; без GC
-	// строка живёт, пока её слот не перезаписан следующими вызовами).
-	// Адреса слотов стабильны на время жизни инстанса → индекс в strtbl
-	// (записей <= PR1VM_TEMP_STRINGS, тихий отказ по MAX_PRSTR не достижим).
+	// Temp string: deep-copy into the next per-instance ring slot
+	// (PR1VM_TEMP_STRINGS slots, see pr1vm.h). Each call gets its own buffer —
+	// a builtin result aliases neither its source nor previous results
+	// (analog of FTE PR_AllocTempString, initlib.c:1398; without GC the string
+	// lives until its slot is overwritten by following calls). Slot addresses
+	// are stable for the instance lifetime -> index into strtbl (entries
+	// <= PR1VM_TEMP_STRINGS, the silent MAX_PRSTR bail is unreachable).
 	{
 		char *dst = vm->tmpstr[vm->tmpstr_cur];
 		vm->tmpstr_cur = (vm->tmpstr_cur + 1) % PR1VM_TEMP_STRINGS;
@@ -1329,7 +1329,7 @@ void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
 			}
 		}
 		if (vm->numstr + 1 >= MAX_PRSTR)
-			return;	// клиент: без фатала
+			return;	// client: no fatal
 		vm->strtbl[++vm->numstr] = dst;
 		*address = -vm->numstr;
 	}
@@ -1418,13 +1418,13 @@ void PR1_LoadProgs (void)
 	snprintf (num, sizeof(num), "%i", CRC_Block ((byte *)progs, filesize));
 	Info_SetValueForStarKey (svs.info, "*progs", num, MAX_SERVERINFO_STRING);
 
-	// PR1VM (S2): загрузка в инстанс (swap заголовка+lumps) + проверки,
-	// затем коммит зеркал в общие глобалы.
+	// PR1VM (S2): load into the instance (swap header+lumps) + checks,
+	// then commit the mirrors into the shared globals.
 	{
 		pr1vm_t *vm = PR1VM_Server();
 
-		// S6: каждая загрузка (включая повторные/после ошибок) начинается с
-		// чистого инстанса — чинит стейл-зеркала после неудачного load.
+		// S6: every load (incl. repeats/after errors) starts from a clean
+		// instance — fixes stale mirrors after a failed load.
 		PR1VM_UnLoad (vm);
 
 		num_prstr = 0;
@@ -1440,8 +1440,8 @@ void PR1_LoadProgs (void)
 			if (vm->fielddefs[i].type & DEF_SAVEGLOBAL)
 				SV_Error ("PR1_LoadProgs: pr_fielddefs[i].type & DEF_SAVEGLOBAL");
 
-		// Поле-оффсетная карта по диалекту модуля: классика — raw (NULL),
-		// NQ — NQ-ремап (ADR 0017 P2, per-instance).
+		// Field-offset map per module dialect: classic — raw (NULL),
+		// NQ — NQ remap (ADR 0017 P2, per-instance).
 #ifdef WITH_NQPROGS
 		vm->fieldofs_patch = pr_nqprogs ? fieldofs_nq : NULL;
 #else
@@ -1479,7 +1479,7 @@ void PR1_Init (void)
 
 	memset(pr_newstrtbl, 0, sizeof(pr_newstrtbl));
 
-	// PR1VM: серверный инстанс исполнения (S1) — обнуляем состояние.
+	// PR1VM: server execution instance (S1) — zero its state.
 	PR1VM_Reset(PR1VM_Server());
 }
 

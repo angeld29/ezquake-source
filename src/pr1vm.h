@@ -1,15 +1,15 @@
 /*
 pr1vm.h -- PR1 engine instance (ezquake PR1 refactor, S1)
 
-PR1-интерпретатор переводится с глобального состояния на per-instance:
-состояние исполнения (стеки вызовов/локальных переменных, xfunction/
-xstatement) живёт в pr1vm_t. «Модульные» глобалы (progs/pr_functions/...)
-в ezquake общие для PR1 и PR2 и читаются внешним кодом (sv_*.c) — они остаются
-как есть; в pr1vm_t они зеркалятся через PR1VM_BindServer() и полноценно
-переводятся на инстанс в слайсах S2-S4.
+The PR1 interpreter is moved from global state to per-instance state:
+execution state (call/local-variable stacks, xfunction/xstatement) lives in
+pr1vm_t. The "module" globals (progs/pr_functions/...) are shared between
+PR1 and PR2 in ezquake and are read by external code (sv_*.c) — they stay as
+they are; pr1vm_t mirrors them through PR1VM_BindServer() and they are fully
+moved onto the instance in slices S2-S4.
 
-Пока PR1 исполняется под CLIENTONLY-гейтом (серверный билд). API для
-клиентского инстанса добавится вместе с loader/обвязкой (S3/S5).
+PR1 runs under the CLIENTONLY gate (server build). The API for a client
+instance is added together with the loader/wiring (S3/S5).
 */
 
 #ifndef PR1VM_H
@@ -20,13 +20,13 @@ xstatement) живёт в pr1vm_t. «Модульные» глобалы (progs/
 #define PR1VM_MAX_STACK	32
 #define PR1VM_LOCALSTACK	2048
 
-// Кольцо per-instance temp-строк клиентского инстанса (число слотов и размер —
-// как серверные MAX_PR_STRINGS/MAX_PR_STRING_SIZE в pr_cmds.c). Результаты
-// строковых builtins deep-копируются в слоты кольца (PR1VM_SetString), поэтому
-// у каждого вызова свой буфер: нет алиасинга/самопересечения (ср. FTE
-// PR_AllocTempString). Строка живёт, пока её слот не перезаписан следующими
-// вызовами; кросс-кадровые текстовые глобалы QC не гарантированы (позже:
-// FTE-механизм — пул temp + GC, см. PR1VM_SetString).
+// Per-instance temp-string ring of the client instance (slot count and size
+// match the server MAX_PR_STRINGS/MAX_PR_STRING_SIZE in pr_cmds.c). String
+// builtin results are deep-copied into ring slots (PR1VM_SetString), so each
+// call gets its own buffer: no aliasing/self-overlap (cf. FTE
+// PR_AllocTempString). A string lives until its slot is overwritten by later
+// calls; cross-frame QC text globals are not guaranteed (later: FTE mechanism
+// — temp pool + GC, see PR1VM_SetString).
 #define PR1VM_TEMP_STRINGS		64
 #define PR1VM_TEMP_STRING_SIZE	2048
 
@@ -40,8 +40,8 @@ typedef struct
 
 struct pr1vm_s
 {
-	// Зеркала «модульных» глобалов (сервер = общие символы через BindServer;
-	// клиентский инстанс получит собственные буферы в S3).
+	// Mirrors of the "module" globals (server = shared symbols via BindServer;
+	// a client instance gets its own buffers in S3).
 	dprograms_t		*progs;
 	dfunction_t		*functions;
 	ddef_t			*fielddefs;
@@ -52,19 +52,19 @@ struct pr1vm_s
 	float			*globals;
 	int				edict_size;		// bytes per entvars block
 
-	// Edict-модель (сервер: sv.edicts / sv.game_edicts). S5b: state зеркалит sv.state.
+	// Edict model (server: sv.edicts / sv.game_edicts). S5b: state mirrors sv.state.
 	edict_t			*edicts;
 	int				num_edicts;
 	int				max_edicts;
 	int				state;
-	void			*game_edicts;	// entvars-база для STOREP_*/EDICT_TO_PROG
+	void			*game_edicts;	// entvars base for STOREP_*/EDICT_TO_PROG
 
-	// Поле-оффсетная карта диалекта модуля (ADR 0017 P2): NULL = raw/identity
-	// (classic QW, FTE CSQC csprogs), иначе — таблица ремапа (NQ progs).
-	// Зависит только от типа инстанса/модуля; ставится при (пере)загрузке.
+	// Module dialect field-offset map (ADR 0017 P2): NULL = raw/identity
+	// (classic QW, FTE CSQC csprogs), otherwise a remap table (NQ progs).
+	// Depends only on the instance/module type; set on (re)load.
 	const int		*fieldofs_patch;
 
-	// Состояние исполнения (перенесено из глобалов pr_exec.c).
+	// Execution state (moved from pr_exec.c globals).
 	pr1vm_stack_t	stack[PR1VM_MAX_STACK];
 	int				depth;
 	int				localstack[PR1VM_LOCALSTACK];
@@ -72,66 +72,66 @@ struct pr1vm_s
 	dfunction_t		*xfunction;
 	int				xstatement;
 
-	// Builtin-контейнер (S5): диспетчер по номеру -first_statement.
+	// Builtin container (S5): dispatch by number -first_statement.
 	int				numbuiltins;
 	builtin_t		*builtins;
-	// Текущий вызов (S5): число аргументов + флаг трассы.
+	// Current call (S5): arg count + trace flag.
 	int				argc;
 	qbool			trace;
 
-	// Клиентские (per-instance) динамические строки. Для серверного инстанса
-	// не используются: он делегирует глобальным таблицам (PR1_GetString/...),
-	// т.к. их читают PR2 и sv_*.
+	// Client (per-instance) dynamic strings. Unused by the server instance:
+	// it delegates to the global tables (PR1_GetString/...), since they are
+	// read by PR2 and sv_*.
 	char			*strtbl[MAX_PRSTR];
 	char			*newstrtbl[MAX_PRSTR];
 	int				numstr;
 
-	// Кольцо temp-строк (см. PR1VM_TEMP_* выше): deep-copy буферы для
-	// результатов строковых builtins клиентского инстанса + индекс записи.
+	// Temp-string ring (see PR1VM_TEMP_* above): deep-copy buffers for
+	// client-instance string builtin results + write index.
 	char			tmpstr[PR1VM_TEMP_STRINGS][PR1VM_TEMP_STRING_SIZE];
 	int				tmpstr_cur;
 
-	// Host-интерфейс (S4): колбэки получают готовую строку.
+	// Host interface (S4): callbacks receive a ready string.
 	void (*host_error)(pr1vm_t *vm, const char *msg);
 	void (*host_print)(pr1vm_t *vm, const char *msg);
 	void *host_udata;
 };
 
-// Активный инстанс (тот, внутри которого сейчас исполняется PR1; NULL вне вызова).
+// Active instance (the one PR1 is currently executing inside; NULL outside a call).
 pr1vm_t *PR1VM_Active(void);
 
-// ADR 0019: true, пока исполняется НЕ серверный инстанс (клиентская CSQC-VM).
-// В этом состоянии глобальные серверные хелперы (PR1_Get/SetString и пр.) не
-// вызывать — клиент работает со своими per-instance строками.
+// ADR 0019: true while a NON-server instance (the client CSQC-VM) runs.
+// In this state do not call the global server helpers (PR1_Get/SetString etc.)
+// — the client works with its own per-instance strings.
 qbool PR1VM_ClientContext(void);
 
-// Серверный инстанс (sv_pr1vm) — «default» для PR_* обёрток.
+// Server instance (sv_pr1vm) — default target of the PR_* wrappers.
 pr1vm_t *PR1VM_Server(void);
 
-// Обнулить инстанс и (для сервера) заполнить зеркала из общих глобалов и sv.*.
+// Zero the instance and (for the server) fill mirrors from shared globals and sv.*.
 void PR1VM_Reset(pr1vm_t *vm);
 void PR1VM_BindServer(pr1vm_t *vm);
-// S6: освободить инстанс от модуля — очистить зеркала lumps и exec-состояние,
-// сохранив host-колбэки (пере)задаются BindServer/клиентом.
+// S6: detach the instance from the module — clear lump mirrors and exec state,
+// keeping host callbacks (re)set by BindServer/client.
 void PR1VM_UnLoad(pr1vm_t *vm);
 
-// Загрузка: байтсвоп заголовка+lumps и заполнение зеркал инстанса (без
-// валидации версии/CRC — их делает серверная обёртка).
+// Load: byte-swap header+lumps and fill the instance mirrors (without
+// version/CRC validation — done by the server wrapper).
 void PR1VM_LoadData(pr1vm_t *vm, dprograms_t *hdr);
-// Сервер: зеркала инстанса -> общие «модульные» глобалы (PR2/sv_*.c читают их).
+// Server: instance mirrors -> shared "module" globals (read by PR2/sv_*.c).
 void PR1VM_CommitServer(pr1vm_t *vm);
 
-// Резолв по имени на инстансе (в отличие от ED_Find* — по зеркалам vm).
+// Resolve by name on the instance (unlike ED_Find* — against vm mirrors).
 dfunction_t *PR1VM_FindFunction(pr1vm_t *vm, const char *name);
 int PR1VM_FindGlobal(pr1vm_t *vm, const char *name);
 char *PR1VM_GetString(pr1vm_t *vm, int num);
 void PR1VM_SetString(pr1vm_t *vm, string_t *address, char *s);
 
-// Регистрация builtin по номеру (клиентская/любая таблица на инстансе).
-// Таблица растёт до num+1 слотов; незаполненные слоты = NULL (диспетчер ошибётся).
+// Register a builtin by number (client/any instance table). The table grows to
+// num+1 slots; unfilled slots = NULL (dispatcher errors out).
 void PR1VM_RegisterBuiltin(pr1vm_t *vm, int num, builtin_t fn);
 
-// S4 debug: провокация PR_RunError на серверном инстансе (pr1vm_test_error).
+// S4 debug: provoke PR_RunError on the server instance (pr1vm_test_error).
 void PR1VM_TestError_f(void);
 
 int  PR1VM_EnterFunction(pr1vm_t *vm, dfunction_t *f);

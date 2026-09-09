@@ -24,16 +24,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pr1vm.h"
 #include <limits.h>
 
-// Состояние исполнения PR1 перенесено в pr1vm_t (pr1vm.h). Остаются общими:
-// pr_trace (флаг отладки) и pr_argc (число аргументов вызова builtin) — до S5.
+// PR1 execution state moved into pr1vm_t (pr1vm.h). Still shared here:
+// pr_trace (debug flag) and pr_argc (builtin call arg count) — until S5.
 
-static pr1vm_t sv_pr1vm;	// серверный инстанс (default для PR_* обёрток)
-static pr1vm_t *g_active;	// инстанс, внутри которого сейчас исполняется PR1
+static pr1vm_t sv_pr1vm;	// server instance (default for PR_* wrappers)
+static pr1vm_t *g_active;	// instance PR1 is currently executing inside
 
-// ADR 0019 (Этап 0): true, пока исполняется НЕ серверный инстанс (клиентская
-// CSQC-VM). В этом состоянии «классические» серверные хелперы (PR1_GetString/
-// PR1_SetString/...), завязанные на глобальные таблицы серверного модуля, вызывать
-// нельзя — клиент работает со своими per-instance строками (PR1VM_Get/SetString).
+// ADR 0019 (Step 0): true while a NON-server instance (the client CSQC-VM) runs.
+// In this state the "classic" server helpers (PR1_GetString/PR1_SetString/...)
+// tied to the server module's global tables must not be called — the client
+// works with its own per-instance strings (PR1VM_Get/SetString).
 static qbool g_client_ctx;
 
 pr1vm_t *PR1VM_Active(void)
@@ -56,15 +56,15 @@ void PR1VM_Reset(pr1vm_t *vm)
 	memset(vm, 0, sizeof(*vm));
 }
 
-// S6: полный сброс зеркал/exec-состояния, host-колбэки сохраняются.
+// S6: full reset of mirrors/exec state; host callbacks are kept.
 void PR1VM_UnLoad (pr1vm_t *vm)
 {
 	void (*host_error)(pr1vm_t *, const char *) = vm->host_error;
 	void (*host_print)(pr1vm_t *, const char *) = vm->host_print;
 	void *host_udata = vm->host_udata;
 
-	// Builtin-таблицы выделяются Q_malloc (server PR_InitBuiltins / клиентская
-	// регистрация) — освобождаем; следующая загрузка создаст заново.
+	// Builtin tables are Q_malloc'd (server PR_InitBuiltins / client
+	// registration) — free them; the next load recreates them.
 	if (vm->builtins)
 	{
 		Q_free (vm->builtins);
@@ -77,7 +77,7 @@ void PR1VM_UnLoad (pr1vm_t *vm)
 	vm->host_udata = host_udata;
 }
 
-// P2.1: регистрация builtin по номеру (растущая таблица инстанса).
+// P2.1: register a builtin by number (growing per-instance table).
 void PR1VM_RegisterBuiltin (pr1vm_t *vm, int num, builtin_t fn)
 {
 	if (num < 0 || !vm)
@@ -99,12 +99,12 @@ void PR1VM_RegisterBuiltin (pr1vm_t *vm, int num, builtin_t fn)
 	vm->builtins[num] = fn;
 }
 
-// forward decls (определены ниже в этом файле)
+// forward decls (defined below in this file)
 void PR_PrintStatement (dstatement_t *s);
 void PR_StackTrace (void);
 
-// Серверный host_error: печатает statement/стек и завершает как раньше
-// (PR_RunError-поведение до S4). Клиентский инстанс получит свой колбэк в S5.
+// Server host_error: prints the statement/stack and exits as before
+// (PR_RunError behavior up to S4). A client instance gets its own callback in S5.
 static void PR1VM_ServerHostError (pr1vm_t *vm, const char *msg)
 {
 	sv_error = true;
@@ -120,8 +120,8 @@ static void PR1VM_ServerHostError (pr1vm_t *vm, const char *msg)
 
 void PR1VM_BindServer(pr1vm_t *vm)
 {
-	// Зеркала общих «модульных» глобалов (см. pr1vm.h). Exec-состояние не трогаем:
-	// BindServer может вызываться и на вложенном (рекурсивном) PR_ExecuteProgram.
+	// Mirrors of the shared "module" globals (see pr1vm.h). Exec state is not
+	// touched: BindServer may run on a nested (recursive) PR_ExecuteProgram.
 	vm->progs = progs;
 	vm->functions = pr_functions;
 	vm->fielddefs = pr_fielddefs;
@@ -139,7 +139,7 @@ void PR1VM_BindServer(pr1vm_t *vm)
 	vm->host_error = PR1VM_ServerHostError;
 }
 
-// S4 debug: провокация PR_RunError на серверном инстансе (проверка host_error).
+// S4 debug: provoke PR_RunError on the server instance (host_error check).
 void PR1VM_TestError_f (void)
 {
 	pr1vm_t *vm = PR1VM_Server ();
@@ -148,7 +148,7 @@ void PR1VM_TestError_f (void)
 	PR_RunError ("PR1VM test error (host_error path)");
 }
 
-// pr_argc/pr_trace перенесены в pr1vm_t (S5): vm->argc / vm->trace.
+// pr_argc/pr_trace moved into pr1vm_t (S5): vm->argc / vm->trace.
 
 char *pr_opnames[] =
     {
@@ -382,7 +382,7 @@ void PR_RunError (char *error, ...)
 		return;
 	}
 
-	// fallback (vm==NULL или host_error не назначен): прежнее поведение
+	// fallback (vm==NULL or host_error not set): previous behavior
 	sv_error = true;
 	if (vm)
 	{
@@ -398,15 +398,15 @@ void PR_RunError (char *error, ...)
 	SV_Error ("Program error (PR_RunError)");
 }
 
-// PR1VM S5b: entity-адресация через зеркала инстанса (формулы из progs.h на vm).
+// PR1VM S5b: entity addressing through the instance mirrors (progs.h formulas on vm).
 static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
 {
 	return &vm->edicts[e / vm->edict_size];
 }
 
-// Поле-оффсетная карта диалекта модуля (ADR 0017 P2, per-instance):
-// NULL => raw/identity (classic QW, FTE CSQC); иначе NQ-ремап. Не используем
-// глобальный PR_FIELDOFS — он не инициализируется в этом билде (нули).
+// Module dialect field-offset map (ADR 0017 P2, per-instance):
+// NULL => raw/identity (classic QW, FTE CSQC); otherwise NQ remap. We do not
+// use the global PR_FIELDOFS — it is not initialized in this build (zeros).
 static int PR1VM_FieldOfs (pr1vm_t *vm, int i)
 {
 	return (i >= 0 && i <= 105 && vm->fieldofs_patch) ? vm->fieldofs_patch[i] : i;
@@ -491,7 +491,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 {
 	eval_t *a = NULL, *b = NULL, *c = NULL;
 	pr1vm_t *saved_active;
-	float *saved_prglobals;	// ADR 0019: контекст «классических» зеркал до attach
+	float *saved_prglobals;	// ADR 0019: "classic" mirror context before attach
 	qbool saved_client_ctx;
 	int s;
 	dstatement_t *st = NULL;
@@ -512,13 +512,13 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		SV_Error ("PR_ExecuteProgram: NULL function");
 	}
 
-	// ADR 0019 (Этап 0): attach исполняемой VM — на время цикла классические
-	// зеркала (pr_globals), которые читают/пишут builtins через G_* макросы,
-	// указывают на данные этой VM. Для серверного инстанса это identity (его
-	// зеркала и есть дефолт). Восстановление — в конце функции (в т.ч. после
-	// возвратного клиентского host_error). Вложенность (listen/PR_ExecuteProgram
-	// из клиентского контекста) безопасна: значения сохраняются в локальных
-	// переменных этого кадра и восстанавливаются по выходе.
+	// ADR 0019 (Step 0): attach the executing VM — for the duration of the loop
+	// the classic mirrors (pr_globals), which builtins read/write through the
+	// G_* macros, point at this VM's data. For the server instance this is
+	// identity (its mirrors are the default). Restored at the end of the
+	// function (incl. after a returning client host_error). Nesting
+	// (listen/PR_ExecuteProgram from client context) is safe: values are saved
+	// in this frame's locals and restored on exit.
 	saved_prglobals = pr_globals;
 	saved_client_ctx = g_client_ctx;
 	pr_globals = vm->globals;
@@ -725,8 +725,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
 			//need for checking 'cmd mmode player N', if N >= 0x10000000 =(signed)=> negative
-			// Field offset — через карту диалекта инстанса (PR1VM_FieldOfs):
-			// FTE/classic raw, NQ — ремап (ADR 0017 P2).
+			// Field offset — through the instance dialect map (PR1VM_FieldOfs):
+			// FTE/classic raw, NQ — remap (ADR 0017 P2).
 			if (b->_int >= 0)
 			{
 				a = (eval_t *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int));
@@ -800,8 +800,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
 			{
-				// ADR 0019 (Этап 0): detach — вернуть классические зеркала и
-				// флаг клиентского контекста, затем активный инстанс.
+				// ADR 0019 (Step 0): detach — restore the classic mirrors and
+				// the client-context flag, then the active instance.
 				pr_globals = saved_prglobals;
 				g_client_ctx = saved_client_ctx;
 				g_active = saved_active;
@@ -830,8 +830,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 ============
 PR_ExecuteProgram
 
-Server-facing wrapper: runs on the server PR1 instance (зеркала из общих
-глобалов обновляются перед каждым вызовом).
+Server-facing wrapper: runs on the server PR1 instance (mirrors from the shared
+globals are refreshed before each call).
 ============
 */
 void PR_ExecuteProgram (func_t fnum)
@@ -848,9 +848,9 @@ int num_prstr;
 
 char *PR1_GetString(int num)
 {
-	// ADR 0019 (Этап 0): глобальные строковые таблицы принадлежат серверному
-	// модулю — в клиентском контексте их не использовать (клиент читает строки
-	// через PR1VM_GetString). Guard ловит случайный вызов из клиента.
+	// ADR 0019 (Step 0): the global string tables belong to the server module —
+	// do not use them in a client context (the client reads strings through
+	// PR1VM_GetString). This guard catches an accidental call from the client.
 	if (g_client_ctx)
 	{
 		Con_Printf ("PR1_GetString: global string path in client context (ADR 0019) — ignored\n");
@@ -877,8 +877,8 @@ void PR1_SetString(string_t* address, char* s)
 {
 	int i;
 
-	// ADR 0019 (Этап 0): см. PR1_GetString — в клиентском контексте глобальные
-	// строковые таблицы серверного модуля не трогаем.
+	// ADR 0019 (Step 0): as in PR1_GetString — do not touch the server module's
+	// global string tables in a client context.
 	if (g_client_ctx)
 	{
 		Con_Printf ("PR1_SetString: global string path in client context (ADR 0019) — ignored\n");
@@ -1057,7 +1057,7 @@ void PR1_UnLoadProgs(void)
 #endif
 		progs = NULL;
 
-		// PR1VM S6: инстанс больше не ссылается на освобождаемый модуль.
+		// PR1VM S6: the instance no longer references the module being freed.
 		PR1VM_UnLoad (PR1VM_Server ());
 	}
 }
