@@ -121,10 +121,6 @@ void PR1VM_LoadData(pr1vm_t *vm, dprograms_t *hdr);
 // Сервер: зеркала инстанса -> общие «модульные» глобалы (PR2/sv_*.c читают их).
 void PR1VM_CommitServer(pr1vm_t *vm);
 
-// Клиентский v6-loader (классика QW, docs/ezquake_csqc_v6_migration_plan.md).
-// Возвращает false и печатает причину через Con_Printf (без SV_Error).
-qbool PR1VM_LoadClientV6(pr1vm_t *vm, const byte *data, int filesize);
-
 // Резолв по имени на инстансе (в отличие от ED_Find* — по зеркалам vm).
 dfunction_t *PR1VM_FindFunction(pr1vm_t *vm, const char *name);
 int PR1VM_FindGlobal(pr1vm_t *vm, const char *name);
@@ -135,11 +131,6 @@ void PR1VM_SetString(pr1vm_t *vm, string_t *address, char *s);
 // Таблица растёт до num+1 слотов; незаполненные слоты = NULL (диспетчер ошибётся).
 void PR1VM_RegisterBuiltin(pr1vm_t *vm, int num, builtin_t fn);
 
-// Клиентские builtins нашего csprogs (слой C; csqc_builtins.c).
-void CSQCVM_RegisterBuiltins(pr1vm_t *vm);
-
-// S3 debug: консольная команда csqc_smoke (регистрируется в PR2_Init).
-void PR1VM_CSQCSmoke_f(void);
 // S4 debug: провокация PR_RunError на серверном инстансе (pr1vm_test_error).
 void PR1VM_TestError_f(void);
 

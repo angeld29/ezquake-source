@@ -1253,36 +1253,6 @@ void PR1VM_CommitServer (pr1vm_t *vm)
 	pr_edict_size = vm->edict_size;
 }
 
-/*
-=================
-PR1VM_LoadClientV6
-
-PR1VM (v6-миграция, P1): клиентский v6-loader (наш csprogs.dat, классика QW
-version 6). CRC не проверяется; ошибки -> false + Con_Printf (без SV_Error).
-=================
-*/
-qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize)
-{
-	int version;
-
-	if (!data || filesize < (int)sizeof(dprograms_t))
-	{
-		Con_Printf ("PR1VM_LoadClientV6: file too small (%d bytes)\n", filesize);
-		return false;
-	}
-
-	// смотрим сырую LE-версию до байтсвопа
-	version = LittleLong (((int *)(void *)data)[0]);
-	if (version != PROG_VERSION)
-	{
-		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", version);
-		return false;
-	}
-
-	PR1VM_LoadData (vm, (dprograms_t *)data);
-	return true;
-}
-
 char *PR1VM_GetString (pr1vm_t *vm, int num)
 {
 	if (!vm)
@@ -1395,91 +1365,6 @@ int PR1VM_FindGlobal (pr1vm_t *vm, const char *name)
 			return vm->globaldefs[i].ofs;
 	}
 	return -1;
-}
-
-/*
-=================
-PR1VM_CSQCSmoke_f
-
-PR1VM (S3, debug): загружает csprogs.dat (классика v6, миграция P1) из текущего
-gamedir в статический клиентский инстанс, резолвит CSQC-функции и исполняет
-CSQC_WorldLoaded (пустое тело — builtins клиента ещё не подключены, S5).
-=================
-*/
-static pr1vm_t csqc_smoke_vm;
-
-void PR1VM_CSQCSmoke_f (void)
-{
-	byte *data;
-	int filesize;
-	pr1vm_t *vm = &csqc_smoke_vm;
-	dfunction_t *f;
-	func_t idx;
-
-	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
-	if (!data)
-	{
-		Con_Printf ("csqc_smoke: couldn't load csprogs.dat from gamedir\n");
-		return;
-	}
-
-	// S6/P2.1: очистка (в т.ч. Q_free builtin-таблицы), затем загрузка заново
-	PR1VM_UnLoad (vm);
-	if (!PR1VM_LoadClientV6 (vm, data, filesize))
-	{
-		Con_Printf ("csqc_smoke: v6 load failed\n");
-		return;
-	}
-
-	Con_Printf ("csqc_smoke: client (v6): statements=%d functions=%d globals=%d"
-		" (server PR1: statements=%d functions=%d)\n",
-		vm->progs->numstatements, vm->progs->numfunctions, vm->progs->numglobals,
-		progs ? progs->numstatements : -1, progs ? progs->numfunctions : -1);
-
-	// P2.1: builtin-таблица клиента (слой C)
-	CSQCVM_RegisterBuiltins (vm);
-
-	f = PR1VM_FindFunction (vm, "CSQC_Init");
-	Con_Printf ("csqc_smoke: CSQC_Init %s\n", f ? "found" : "MISSING");
-	if (f)
-	{
-		idx = (func_t)(f - vm->functions);
-		vm->globals[OFS_PARM0] = 0;
-		vm->globals[OFS_PARM1] = 0;
-		vm->globals[OFS_PARM2] = 0;
-		PR1VM_ExecuteProgram (vm, idx);
-		Con_Printf ("csqc_smoke: CSQC_Init executed ok (registercommand builtins)\n");
-	}
-	f = PR1VM_FindFunction (vm, "CSQC_WorldLoaded");
-	Con_Printf ("csqc_smoke: CSQC_WorldLoaded %s\n", f ? "found" : "MISSING");
-	if (f)
-	{
-		idx = (func_t)(f - vm->functions);
-		PR1VM_ExecuteProgram (vm, idx);
-		Con_Printf ("csqc_smoke: CSQC_WorldLoaded executed ok (server PR1 still alive)\n");
-	}
-	f = PR1VM_FindFunction (vm, "CSQC_ConsoleCommand");
-	Con_Printf ("csqc_smoke: CSQC_ConsoleCommand %s\n", f ? "found" : "MISSING");
-	if (f)
-	{
-		idx = (func_t)(f - vm->functions);
-		vm->globals[OFS_PARM0] = 0;	// пустая команда
-		vm->globals[OFS_RETURN] = -1;
-		PR1VM_ExecuteProgram (vm, idx);
-		Con_Printf ("csqc_smoke: CSQC_ConsoleCommand ok (ret=%.0f, tokenize/argv builtins)\n",
-			vm->globals[OFS_RETURN]);
-	}
-	// P2.2: weapon_name(0) -> ftos(0)="0" (builtin ftos + string return)
-	f = PR1VM_FindFunction (vm, "weapon_name");
-	if (f)
-	{
-		idx = (func_t)(f - vm->functions);
-		vm->globals[OFS_PARM0] = 0;
-		vm->globals[OFS_RETURN] = 0;
-		PR1VM_ExecuteProgram (vm, idx);
-		Con_Printf ("csqc_smoke: weapon_name(0) -> \"%s\" (ftos builtin)\n",
-			PR1VM_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
-	}
 }
 
 void PR1_LoadProgs (void)

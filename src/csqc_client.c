@@ -83,6 +83,11 @@ typedef struct csqc_client_state_s
 
 static csqc_client_state_t s_csqc;
 
+// Client PR1VM helpers (rule "client parts live outside shared core files"):
+// LoadClientV6 + CSQCSmoke are implemented here (used to be in pr_edict.c/pr1vm.h).
+static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize);
+static void PR1VM_CSQCSmoke_f (void);
+
 // C5-A #345: кольцевой буфер отправленных usercmd (запись из CL_SendCmd).
 // seq = зеркало cls.netchan.outgoing_sequence (номер клиентского сообщения на
 // момент записи; Netchan_Transmit инкрементирует ПОСЛЕ записи заголовка —
@@ -497,6 +502,21 @@ void CSQC_Client_RegisterCommand (const char *cmd)
 	// Узел/имя переживают Host_ClearMemory и корректно удаляются RemoveCommand.
 	if (Cmd_AddRemCommand (s_csqc.cmds[s_csqc.numcmds], CSQC_Client_ConsoleCommand_f))
 		s_csqc.numcmds++;
+}
+
+/*
+=================
+CSQC_Client_RegisterCommands
+
+Registers client debug commands for PR1VM (csqc_smoke, etc.). Called from
+CL_InitLocal (cl_main.c) — commands available in the client console. csqc_smoke
+used to be registered in PR2_Init (server); moved here per the rule "client parts
+live outside shared core files" (docs/ezquake_csqc_client_pr1vm_plan.md).
+=================
+*/
+void CSQC_Client_RegisterCommands (void)
+{
+	Cmd_AddCommand ("csqc_smoke", PR1VM_CSQCSmoke_f);	// PR1VM S3 debug
 }
 
 /*
@@ -971,6 +991,124 @@ void CSQC_Client_UpdateLocalEntnum (void)
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.g_localentnum < 0)
 		return;
 	vm->globals[s_csqc.g_localentnum] = (cl.viewplayernum >= 0) ? cl.viewplayernum + 1 : 0;
+}
+
+/*
+=================
+PR1VM_LoadClientV6
+
+Client v6-loader (our csprogs.dat, classic QW version 6; v6 migration).
+No CRC check; errors -> false + Con_Printf (no SV_Error). Implemented in the
+client file (rule "client parts live outside shared core files").
+=================
+*/
+static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize)
+{
+	int version;
+
+	if (!data || filesize < (int)sizeof(dprograms_t))
+	{
+		Con_Printf ("PR1VM_LoadClientV6: file too small (%d bytes)\n", filesize);
+		return false;
+	}
+
+	// peek the raw LE version before byte-swapping
+	version = LittleLong (((int *)(void *)data)[0]);
+	if (version != PROG_VERSION)
+	{
+		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", version);
+		return false;
+	}
+
+	PR1VM_LoadData (vm, (dprograms_t *)data);
+	return true;
+}
+
+/*
+=================
+PR1VM_CSQCSmoke_f
+
+PR1VM (S3, debug): loads csprogs.dat (classic v6, migration P1) from the current
+gamedir into a static client instance, resolves CSQC functions and runs
+CSQC_WorldLoaded (empty body — client builtins not wired yet, S5).
+Debug command lives in the client file (rule "client parts live outside shared");
+registered from CSQC_Client_RegisterCommands (cl_main.c: CL_InitLocal).
+=================
+*/
+static pr1vm_t csqc_smoke_vm;
+
+static void PR1VM_CSQCSmoke_f (void)
+{
+	byte *data;
+	int filesize;
+	pr1vm_t *vm = &csqc_smoke_vm;
+	dfunction_t *f;
+	func_t idx;
+
+	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
+	if (!data)
+	{
+		Con_Printf ("csqc_smoke: couldn't load csprogs.dat from gamedir\n");
+		return;
+	}
+
+	// S6/P2.1: cleanup (incl. Q_free of builtin table), then reload
+	PR1VM_UnLoad (vm);
+	if (!PR1VM_LoadClientV6 (vm, data, filesize))
+	{
+		Con_Printf ("csqc_smoke: v6 load failed\n");
+		return;
+	}
+
+	Con_Printf ("csqc_smoke: client (v6): statements=%d functions=%d globals=%d"
+		" (server PR1: statements=%d functions=%d)\n",
+		vm->progs->numstatements, vm->progs->numfunctions, vm->progs->numglobals,
+		progs ? progs->numstatements : -1, progs ? progs->numfunctions : -1);
+
+	// P2.1: client builtin table (layer C)
+	CSQCVM_RegisterBuiltins (vm);
+
+	f = PR1VM_FindFunction (vm, "CSQC_Init");
+	Con_Printf ("csqc_smoke: CSQC_Init %s\n", f ? "found" : "MISSING");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;
+		vm->globals[OFS_PARM1] = 0;
+		vm->globals[OFS_PARM2] = 0;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_Init executed ok (registercommand builtins)\n");
+	}
+	f = PR1VM_FindFunction (vm, "CSQC_WorldLoaded");
+	Con_Printf ("csqc_smoke: CSQC_WorldLoaded %s\n", f ? "found" : "MISSING");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_WorldLoaded executed ok (server PR1 still alive)\n");
+	}
+	f = PR1VM_FindFunction (vm, "CSQC_ConsoleCommand");
+	Con_Printf ("csqc_smoke: CSQC_ConsoleCommand %s\n", f ? "found" : "MISSING");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;	// empty command
+		vm->globals[OFS_RETURN] = -1;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: CSQC_ConsoleCommand ok (ret=%.0f, tokenize/argv builtins)\n",
+			vm->globals[OFS_RETURN]);
+	}
+	// P2.2: weapon_name(0) -> ftos(0)="0" (builtin ftos + string return)
+	f = PR1VM_FindFunction (vm, "weapon_name");
+	if (f)
+	{
+		idx = (func_t)(f - vm->functions);
+		vm->globals[OFS_PARM0] = 0;
+		vm->globals[OFS_RETURN] = 0;
+		PR1VM_ExecuteProgram (vm, idx);
+		Con_Printf ("csqc_smoke: weapon_name(0) -> \"%s\" (ftos builtin)\n",
+			PR1VM_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
+	}
 }
 
 /*

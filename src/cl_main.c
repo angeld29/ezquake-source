@@ -2206,6 +2206,11 @@ static void CL_InitLocal(void)
 
 	CL_InitCommands ();
 
+#ifndef CLIENTONLY
+	// CSQC client debug commands for PR1VM (csqc_smoke, etc.; csqc_client.c).
+	CSQC_Client_RegisterCommands ();
+#endif
+
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f);
 	Cmd_AddCommand ("connect", CL_Connect_f);
 	Cmd_AddCommand ("connectbr", CL_Connect_BestRoute_f);

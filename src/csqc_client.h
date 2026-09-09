@@ -125,4 +125,11 @@ void CSQC_Client_ParseEntities (qbool sized);
 // Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.
 void CSQC_Client_ParseEvent (void);
 
+// Register the builtin table of the client instance (implemented in csqc_builtins.c).
+void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
+
+// Register client debug commands for PR1VM (csqc_smoke, etc.; csqc_client.c) —
+// called from CL_InitLocal (cl_main.c).
+void CSQC_Client_RegisterCommands (void);
+
 #endif /* CSQC_CLIENT_H */
