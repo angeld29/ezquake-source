@@ -116,22 +116,9 @@ int CSQC_Client_InputEvent (int evtype, float a, float b, float c);	// возв�
 #define IE_JOYAXIS		6
 #endif
 
-// Wire-номер клиентского sendevent (client -> server; в qwprot его нет —
-// как в mvdsv server.h: локально, #ifndef-защищено). Пишется первым байтом
-// клиентского сообщения (см. csqc_builtins.c csqc_sendevent).
-#ifndef clcfte_qcrequest
-#define clcfte_qcrequest	81	// CSQC sendevent (client -> server)
-#endif
-
-// Размер-варианты CSQC-сообщений (только от mvdsv под sv_csqcdebug; в qwprot
-// нет — как в mvdsv server.h, локально): 92 = 76 + short-длина payload на
-// каждую сущность, 90 = 83 + short-длина payload в начале.
-#ifndef svc_fte_csqcentities_sized
-#define svc_fte_csqcentities_sized	92
-#endif
-#ifndef svc_fte_cgamepacket_sized
-#define svc_fte_cgamepacket_sized	90
-#endif
+// CSQC wire-номера (svc_fte_cgamepacket 83, svc_fte_cgamepacket_sized 90,
+// svc_fte_csqcentities_sized 92, clcfte_qcrequest 81) приходят из qwprot
+// src/protocol.h под #ifdef FTE_PEXT_CSQC (upstream master dd211a5+).
 
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — E3).
 void CSQC_Client_ParseEntities (qbool sized);
