@@ -1025,9 +1025,9 @@ static qbool CSQC_Client_Load (const char *path)
 	vm->host_error = CSQC_Client_HostError;
 	vm->host_print = CSQC_Client_HostPrint;
 
-	if (!PR1VM_LoadClientV7 (vm, data, filesize))
+	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{
-		Con_Printf ("CSQC: %s load failed (v7)\n", path);
+		Con_Printf ("CSQC: %s load failed (v6)\n", path);
 		return false;
 	}
 

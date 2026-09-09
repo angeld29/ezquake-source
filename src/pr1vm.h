@@ -121,9 +121,9 @@ void PR1VM_LoadData(pr1vm_t *vm, dprograms_t *hdr);
 // Сервер: зеркала инстанса -> общие «модульные» глобалы (PR2/sv_*.c читают их).
 void PR1VM_CommitServer(pr1vm_t *vm);
 
-// Клиентский v7-secondary16 loader («пустой» extended). Возвращает false и
-// печатает причину через Con_Printf (без SV_Error).
-qbool PR1VM_LoadClientV7(pr1vm_t *vm, const byte *data, int filesize);
+// Клиентский v6-loader (классика QW, docs/ezquake_csqc_v6_migration_plan.md).
+// Возвращает false и печатает причину через Con_Printf (без SV_Error).
+qbool PR1VM_LoadClientV6(pr1vm_t *vm, const byte *data, int filesize);
 
 // Резолв по имени на инстансе (в отличие от ED_Find* — по зеркалам vm).
 dfunction_t *PR1VM_FindFunction(pr1vm_t *vm, const char *name);

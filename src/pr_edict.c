@@ -1255,57 +1255,31 @@ void PR1VM_CommitServer (pr1vm_t *vm)
 
 /*
 =================
-PR1VM_LoadClientV7
+PR1VM_LoadClientV6
 
-PR1VM (S3): клиентский v7-secondary16 loader (наш csprogs.dat, «пустой»
-extended). CRC не проверяется; ошибки -> false + Con_Printf (без SV_Error).
+PR1VM (v6-миграция, P1): клиентский v6-loader (наш csprogs.dat, классика QW
+version 6). CRC не проверяется; ошибки -> false + Con_Printf (без SV_Error).
 =================
 */
-#define PR1VM_SECONDARYVERSION16 0x021b1461
-
-qbool PR1VM_LoadClientV7 (pr1vm_t *vm, const byte *data, int filesize)
+qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize)
 {
-	int i;
-	int *h = (int *)(void *)data;
-	int numtypes, numbodylessfuncs, blockscompressed, secondaryversion;
+	int version;
 
-	if (!data || filesize < 23 * (int)sizeof(int))
+	if (!data || filesize < (int)sizeof(dprograms_t))
 	{
-		Con_Printf ("PR1VM_LoadClientV7: file too small (%d bytes)\n", filesize);
+		Con_Printf ("PR1VM_LoadClientV6: file too small (%d bytes)\n", filesize);
 		return false;
 	}
 
 	// смотрим сырую LE-версию до байтсвопа
-	if (LittleLong(h[0]) != 7)
+	version = LittleLong (((int *)(void *)data)[0]);
+	if (version != PROG_VERSION)
 	{
-		Con_Printf ("PR1VM_LoadClientV7: not a v7 progs (version=%d)\n", LittleLong(h[0]));
+		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", version);
 		return false;
 	}
 
-	// byte swap the (23-int) header
-	for (i = 0; i < 23; i++)
-		h[i] = LittleLong (h[i]);
-
-	// поля за пределами классического dprograms_t (индексы v7-заголовка)
-	numbodylessfuncs = h[18];
-	numtypes = h[20];
-	blockscompressed = h[21];
-	secondaryversion = h[22];
-
-	if (secondaryversion != PR1VM_SECONDARYVERSION16)
-	{
-		Con_Printf ("PR1VM_LoadClientV7: not an FTE-16 progs (secondaryversion=0x%x)\n", secondaryversion);
-		return false;
-	}
-	if (numtypes != 0 || numbodylessfuncs != 0 || blockscompressed != 0)
-	{
-		Con_Printf ("PR1VM_LoadClientV7: non-empty extended progs unsupported "
-			"(numtypes=%d numbodylessfuncs=%d blockscompressed=%d)\n",
-			numtypes, numbodylessfuncs, blockscompressed);
-		return false;
-	}
-
-	PR1VM_FillAndSwapLumps (vm, (dprograms_t *)data);
+	PR1VM_LoadData (vm, (dprograms_t *)data);
 	return true;
 }
 
@@ -1427,8 +1401,8 @@ int PR1VM_FindGlobal (pr1vm_t *vm, const char *name)
 =================
 PR1VM_CSQCSmoke_f
 
-PR1VM (S3, debug): загружает csprogs.dat (v7) из текущего gamedir в
-статический клиентский инстанс, резолвит CSQC-функции и исполняет
+PR1VM (S3, debug): загружает csprogs.dat (классика v6, миграция P1) из текущего
+gamedir в статический клиентский инстанс, резолвит CSQC-функции и исполняет
 CSQC_WorldLoaded (пустое тело — builtins клиента ещё не подключены, S5).
 =================
 */
@@ -1451,13 +1425,13 @@ void PR1VM_CSQCSmoke_f (void)
 
 	// S6/P2.1: очистка (в т.ч. Q_free builtin-таблицы), затем загрузка заново
 	PR1VM_UnLoad (vm);
-	if (!PR1VM_LoadClientV7 (vm, data, filesize))
+	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{
-		Con_Printf ("csqc_smoke: v7 load failed\n");
+		Con_Printf ("csqc_smoke: v6 load failed\n");
 		return;
 	}
 
-	Con_Printf ("csqc_smoke: client v7: statements=%d functions=%d globals=%d"
+	Con_Printf ("csqc_smoke: client (v6): statements=%d functions=%d globals=%d"
 		" (server PR1: statements=%d functions=%d)\n",
 		vm->progs->numstatements, vm->progs->numfunctions, vm->progs->numglobals,
 		progs ? progs->numstatements : -1, progs ? progs->numfunctions : -1);
