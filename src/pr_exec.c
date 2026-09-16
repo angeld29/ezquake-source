@@ -30,20 +30,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static pr1vm_t sv_pr1vm;	// server instance (default for PR_* wrappers)
 static pr1vm_t *g_active;	// instance PR1 is currently executing inside
 
-// ADR 0019 (Step 0): true while a NON-server instance (the client CSQC-VM) runs.
-// In this state the "classic" server helpers (PR1_GetString/PR1_SetString/...)
-// tied to the server module's global tables must not be called — the client
-// works with its own per-instance strings (PR1VM_Get/SetString).
-static qbool g_client_ctx;
-
 pr1vm_t *PR1VM_Active(void)
 {
 	return g_active;
-}
-
-qbool PR1VM_ClientContext(void)
-{
-	return g_client_ctx;
 }
 
 pr1vm_t *PR1VM_Server(void)
@@ -136,6 +125,11 @@ void PR1VM_BindServer(pr1vm_t *vm)
 	vm->max_edicts = sv.max_edicts;
 	vm->state = sv.state;
 	vm->game_edicts = sv.game_edicts;
+	// String tables: the server instance points at the global tables (shared
+	// with PR2/sv_*), so the shared string code needs no VM-type condition.
+	vm->strtbl = pr_strtbl;
+	vm->newstrtbl = pr_newstrtbl;
+	vm->numstr = &num_prstr;
 	vm->host_error = PR1VM_ServerHostError;
 }
 
@@ -492,7 +486,6 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	eval_t *a = NULL, *b = NULL, *c = NULL;
 	pr1vm_t *saved_active;
 	float *saved_prglobals;	// ADR 0019: "classic" mirror context before attach
-	qbool saved_client_ctx;
 	int s;
 	dstatement_t *st = NULL;
 	dfunction_t *f, *newf;
@@ -520,9 +513,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	// (listen/PR_ExecuteProgram from client context) is safe: values are saved
 	// in this frame's locals and restored on exit.
 	saved_prglobals = pr_globals;
-	saved_client_ctx = g_client_ctx;
 	pr_globals = vm->globals;
-	g_client_ctx = (vm != PR1VM_Server());
 
 	f = &vm->functions[fnum];
 
@@ -800,10 +791,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
 			{
-				// ADR 0019 (Step 0): detach — restore the classic mirrors and
-				// the client-context flag, then the active instance.
+				// ADR 0019 (Step 0): detach — restore the classic mirror
+				// context, then the active instance.
 				pr_globals = saved_prglobals;
-				g_client_ctx = saved_client_ctx;
 				g_active = saved_active;
 				return;		// all done
 			}
@@ -848,14 +838,6 @@ int num_prstr;
 
 char *PR1_GetString(int num)
 {
-	// ADR 0019 (Step 0): the global string tables belong to the server module —
-	// do not use them in a client context (the client reads strings through
-	// PR1VM_GetString). This guard catches an accidental call from the client.
-	if (g_client_ctx)
-	{
-		Con_Printf ("PR1_GetString: global string path in client context (ADR 0019) — ignored\n");
-		return NULL;
-	}
 	if (num < 0)
 	{
 		//Con_DPrintf("GET:%d == %s\n", num, pr_strtbl[-num]);
@@ -877,13 +859,6 @@ void PR1_SetString(string_t* address, char* s)
 {
 	int i;
 
-	// ADR 0019 (Step 0): as in PR1_GetString — do not touch the server module's
-	// global string tables in a client context.
-	if (g_client_ctx)
-	{
-		Con_Printf ("PR1_SetString: global string path in client context (ADR 0019) — ignored\n");
-		return;
-	}
 	if (!address) {
 		return;
 	}

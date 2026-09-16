@@ -31,6 +31,24 @@ csprogs.dat.
 #define CSQC_MAX_NUM	4096
 #define CSQC_MAX_EDICTS	4096
 
+// Клиентские строковые таблицы + temp-кольцо инстанса клиентской VM. Держатся
+// вне shared pr1vm_t (ядро хранит только указатели на них в vm->), чтобы в
+// shared-ядре не было клиентских данных/логики (mvdsv копирует ядро дословно).
+// Размер кольца = числу уникальных temp-строк, живущих до перезаписи слота.
+#define CSQC_TEMP_STRINGS		64
+#define CSQC_TEMP_STRING_SIZE	2048
+typedef struct csqc_strpool_s
+{
+	char	*strtbl[MAX_PRSTR];
+	char	*newstrtbl[MAX_PRSTR];
+	int		numstr;
+	// Temp-строки deep-copy в следующий слот кольца: каждый вызов получает
+	// собственный стабильный буфер (результат builtin не алиасит ни источник,
+	// ни прошлые результаты; слот перезаписывается последующими вызовами).
+	char	tmpstr[CSQC_TEMP_STRINGS][CSQC_TEMP_STRING_SIZE];
+	int		tmpstr_cur;
+} csqc_strpool_t;
+
 typedef struct csqc_client_state_s
 {
 	pr1vm_t		vm;
@@ -79,6 +97,9 @@ typedef struct csqc_client_state_s
 	// Disconnect/Load-start; bind в vm->edicts/game_edicts (entity-опкоды).
 	edict_t		*edicts;
 	byte		*game_edicts;
+	// Клиентские строковые таблицы инстанса (см. csqc_strpool_t): при загрузке
+	// vm->strtbl/newstrtbl/numstr указывают сюда.
+	csqc_strpool_t strpool;
 } csqc_client_state_t;
 
 static csqc_client_state_t s_csqc;
@@ -87,6 +108,54 @@ static csqc_client_state_t s_csqc;
 // LoadClientV6 + CSQCSmoke are implemented here (used to be in pr_edict.c/pr1vm.h).
 static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize);
 static void PR1VM_CSQCSmoke_f (void);
+
+/*
+=================
+PR1VM_ClientSetString
+
+Клиентская обёртка над единым PR1VM_SetString (core): temp-строки deep-copy в
+per-instance кольцо (стабильный буфер), затем core регистрирует указатель в
+vm->strtbl. Переполнение — клиентская политика (silent bail). Строки из области
+строк модуля передаются в core без копии (offset). Имя с PR1VM- — работа с PR1-VM
+(в отличие от PR2).
+=================
+*/
+void PR1VM_ClientSetString (pr1vm_t *vm, int *address, char *s)
+{
+	csqc_strpool_t *pool;
+	char *dst;
+
+	if (!address)
+		return;
+
+	if (!s || !s[0])
+	{
+		*address = 0;
+		return;
+	}
+
+	pool = (csqc_strpool_t *)vm->host_udata;
+	if (!pool || !vm->strings || !vm->strtbl || !vm->numstr)
+		return;
+
+	// Уже область строк модуля — core запишет offset сам.
+	if (s >= vm->strings && s < vm->strings + vm->progs->numstrings)
+	{
+		PR1VM_SetString (vm, (string_t *)address, s);
+		return;
+	}
+
+	// Temp-строка: deep-copy в следующий слот кольца (буфер стабилен для
+	// инстанса; слот перезаписывается последующими вызовами).
+	dst = pool->tmpstr[pool->tmpstr_cur];
+	pool->tmpstr_cur = (pool->tmpstr_cur + 1) % CSQC_TEMP_STRINGS;
+	strlcpy (dst, s, CSQC_TEMP_STRING_SIZE);
+
+	if (*vm->numstr + 1 >= MAX_PRSTR)
+		return;	// клиент: без fatal
+
+	PR1VM_SetString (vm, (string_t *)address, dst);
+}
 
 // C5-A #345: кольцевой буфер отправленных usercmd (запись из CL_SendCmd).
 // seq = зеркало cls.netchan.outgoing_sequence (номер клиентского сообщения на
@@ -612,7 +681,7 @@ static void CSQC_Client_ConsoleCommand_f (void)
 		line = Cmd_Argv (0);
 
 	CSQC_Client_SetTime ();
-	PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)line);
+	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)line);
 	vm->globals[OFS_RETURN] = 0;
 	PR1VM_ExecuteProgram (vm, (func_t)s_csqc.func_console);
 }
@@ -1036,6 +1105,8 @@ registered from CSQC_Client_RegisterCommands (cl_main.c: CL_InitLocal).
 =================
 */
 static pr1vm_t csqc_smoke_vm;
+// Отдельный строковый пул для debug-инстанса csqc_smoke (свой к vm).
+static csqc_strpool_t csqc_smoke_strpool;
 
 static void PR1VM_CSQCSmoke_f (void)
 {
@@ -1059,6 +1130,13 @@ static void PR1VM_CSQCSmoke_f (void)
 		Con_Printf ("csqc_smoke: v6 load failed\n");
 		return;
 	}
+
+	// Строковые таблицы debug-инстанса: свой пул (back-pointer в host_udata).
+	memset (&csqc_smoke_strpool, 0, sizeof (csqc_smoke_strpool));
+	vm->host_udata = &csqc_smoke_strpool;
+	vm->strtbl = csqc_smoke_strpool.strtbl;
+	vm->newstrtbl = csqc_smoke_strpool.newstrtbl;
+	vm->numstr = &csqc_smoke_strpool.numstr;
 
 	Con_Printf ("csqc_smoke: client (v6): statements=%d functions=%d globals=%d"
 		" (server PR1: statements=%d functions=%d)\n",
@@ -1169,6 +1247,13 @@ static qbool CSQC_Client_Load (const char *path)
 		return false;
 	}
 
+	// Строковые таблицы клиентского инстанса: vm->strtbl/newstrtbl/numstr ->
+	// пул инстанса; host_udata — back-pointer для PR1VM_ClientSetString.
+	vm->host_udata = &s_csqc.strpool;
+	vm->strtbl = s_csqc.strpool.strtbl;
+	vm->newstrtbl = s_csqc.strpool.newstrtbl;
+	vm->numstr = &s_csqc.strpool.numstr;
+
 	CSQCVM_RegisterBuiltins (vm);
 
 	// P1/D2: арена edicts клиентского инстанса (edict_size известен после load).
@@ -1254,7 +1339,7 @@ static qbool CSQC_Client_Load (const char *path)
 	if (s_csqc.func_init > 0)
 	{
 		vm->globals[OFS_PARM0] = 0;	// apiver (float)
-		PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_PARM1], "ezquake-orig");
+		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM1], "ezquake-orig");
 		vm->globals[OFS_PARM2] = 0;	// enginever (float в нашем модуле)
 		CSQC_Client_Exec (s_csqc.func_init);
 		s_csqc.inited = !s_csqc.errored;

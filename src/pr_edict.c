@@ -1255,14 +1255,7 @@ void PR1VM_CommitServer (pr1vm_t *vm)
 
 char *PR1VM_GetString (pr1vm_t *vm, int num)
 {
-	if (!vm)
-		return NULL;
-
-	// dual: the server instance delegates to the global tables (read by PR2/sv_*)
-	if (vm == PR1VM_Server())
-		return PR1_GetString (num);
-
-	if (!vm->strings)
+	if (!vm || !vm->strings)
 		return NULL;
 
 	if (num < 0)
@@ -1271,8 +1264,8 @@ char *PR1VM_GetString (pr1vm_t *vm, int num)
 		if (idx >= 2 * MAX_PRSTR)
 			return NULL;
 		if (idx >= MAX_PRSTR)
-			return vm->newstrtbl[idx - MAX_PRSTR];
-		return vm->strtbl[idx];
+			return vm->newstrtbl ? vm->newstrtbl[idx - MAX_PRSTR] : NULL;
+		return vm->strtbl ? vm->strtbl[idx] : NULL;
 	}
 	return vm->strings + num;
 }
@@ -1284,55 +1277,41 @@ void PR1VM_SetString (pr1vm_t *vm, string_t *address, char *s)
 	if (!address)
 		return;
 
-	// dual: server instance — global table (as before)
-	if (vm == PR1VM_Server())
-	{
-		PR1_SetString (address, s);
-		return;
-	}
-
 	if (!s || !s[0])
 	{
 		*address = 0;
 		return;
 	}
 
-	if (!vm->strings)
+	if (!vm || !vm->strings || !vm->strtbl || !vm->numstr)
 		return;
 
 	// The module string area [strings, strings+numstrings) is constant
-	// (lifetime = module load) — store an offset as before.
+	// (lifetime = module load) — store an offset.
 	if (s >= vm->strings && s < vm->strings + vm->progs->numstrings)
 	{
 		*address = (int)(s - vm->strings);
 		return;
 	}
 
-	// Temp string: deep-copy into the next per-instance ring slot
-	// (PR1VM_TEMP_STRINGS slots, see pr1vm.h). Each call gets its own buffer —
-	// a builtin result aliases neither its source nor previous results
-	// (analog of FTE PR_AllocTempString, initlib.c:1398; without GC the string
-	// lives until its slot is overwritten by following calls). Slot addresses
-	// are stable for the instance lifetime -> index into strtbl (entries
-	// <= PR1VM_TEMP_STRINGS, the silent MAX_PRSTR bail is unreachable).
+	// Temp string: register the caller's pointer in the instance table. The
+	// client deep-copies temp strings into its own ring first (client part,
+	// outside the shared core); the server instance is not a caller (it uses
+	// PR1_SetString on the global tables).
+	for (i = 0; i < *vm->numstr; i++)
 	{
-		char *dst = vm->tmpstr[vm->tmpstr_cur];
-		vm->tmpstr_cur = (vm->tmpstr_cur + 1) % PR1VM_TEMP_STRINGS;
-		strlcpy (dst, s, PR1VM_TEMP_STRING_SIZE);
-
-		for (i = 0; i < vm->numstr; i++)
+		if (vm->strtbl[i] == s)
 		{
-			if (vm->strtbl[i] == dst)
-			{
-				*address = -i;
-				return;
-			}
+			*address = -i;
+			return;
 		}
-		if (vm->numstr + 1 >= MAX_PRSTR)
-			return;	// client: no fatal
-		vm->strtbl[++vm->numstr] = dst;
-		*address = -vm->numstr;
 	}
+
+	if (*vm->numstr + 1 >= MAX_PRSTR)
+		return;
+
+	vm->strtbl[++(*vm->numstr)] = s;
+	*address = -(*vm->numstr);
 }
 
 dfunction_t *PR1VM_FindFunction (pr1vm_t *vm, const char *name)

@@ -3,7 +3,7 @@ csqc_builtins.c -- клиентские builtins PR1VM (наш csprogs.dat, сл
 
 Builtins для клиентского инстанса: номера — baked из TF2003 csdefs.qc (= #N),
 аргументы читаются из vm->globals[OFS_PARM0..], возврат в OFS_RETURN,
-строки — через PR1VM_GetString/PR1VM_SetString (S4) на активном инстансе.
+строки — через PR1VM_GetString/PR1VM_ClientSetString (S4) на активном инстансе.
 
 P2.1: dprint/ftos/registercommand/tokenize/argv. Layers A/B are added here as
 implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
@@ -76,7 +76,7 @@ static void CSQCVM_SetRetStr (char *s)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (vm)
-		PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
+		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
 }
 
 /*
@@ -1117,7 +1117,7 @@ static void csqc_readstring (void)
 	if (!vm)
 		return;
 	s = MSG_ReadString ();
-	PR1VM_SetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
+	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
 }
 
 /*
@@ -2625,7 +2625,7 @@ static void csqc_calltimeofday (void)
 /*
 Phase 1 L1 P1b — строки/конверсии. Client-handlers на per-instance строки
 (PR1VM_Get/SetString). #118/#119: без GC — strzone = deep-copy в per-instance
-кольцо (PR1VM_SetString), strunzone = no-op (документированное отклонение).
+кольцо (PR1VM_ClientSetString), strunzone = no-op (документированное отклонение).
 */
 
 /*
@@ -2744,7 +2744,7 @@ static void csqc_stov (void)
 
 /*
 string(string s) strzone = #118
-Отклонение (нет GC на клиенте): deep-copy в per-instance кольцо (PR1VM_SetString).
+Отклонение (нет GC на клиенте): deep-copy в per-instance кольцо (PR1VM_ClientSetString).
 */
 static void csqc_strzone (void)
 {
@@ -3008,7 +3008,7 @@ static void csqc_setmodel (void)
 	slot = csqc_ent_slot (vm, e);
 	if (!slot)
 		return;
-	PR1VM_SetString (vm, (string_t *)&slot[ofs], s);
+	PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s);
 }
 
 /* void(entity e, vector min, vector max) setsize = #4 */
@@ -4074,7 +4074,7 @@ static void csqc_putentityfieldstring (void)
 	switch (type)
 	{
 	case ev_string:
-		PR1VM_SetString (vm, (string_t *)&slot[ofs], s ? s : "");
+		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s ? s : "");
 		break;
 	case ev_vector:
 		{

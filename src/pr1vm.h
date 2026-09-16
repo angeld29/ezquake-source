@@ -20,16 +20,6 @@ instance is added together with the loader/wiring (S3/S5).
 #define PR1VM_MAX_STACK	32
 #define PR1VM_LOCALSTACK	2048
 
-// Per-instance temp-string ring of the client instance (slot count and size
-// match the server MAX_PR_STRINGS/MAX_PR_STRING_SIZE in pr_cmds.c). String
-// builtin results are deep-copied into ring slots (PR1VM_SetString), so each
-// call gets its own buffer: no aliasing/self-overlap (cf. FTE
-// PR_AllocTempString). A string lives until its slot is overwritten by later
-// calls; cross-frame QC text globals are not guaranteed (later: FTE mechanism
-// — temp pool + GC, see PR1VM_SetString).
-#define PR1VM_TEMP_STRINGS		64
-#define PR1VM_TEMP_STRING_SIZE	2048
-
 typedef struct pr1vm_s pr1vm_t;
 
 typedef struct
@@ -79,17 +69,15 @@ struct pr1vm_s
 	int				argc;
 	qbool			trace;
 
-	// Client (per-instance) dynamic strings. Unused by the server instance:
-	// it delegates to the global tables (PR1_GetString/...), since they are
-	// read by PR2 and sv_*.
-	char			*strtbl[MAX_PRSTR];
-	char			*newstrtbl[MAX_PRSTR];
-	int				numstr;
-
-	// Temp-string ring (see PR1VM_TEMP_* above): deep-copy buffers for
-	// client-instance string builtin results + write index.
-	char			tmpstr[PR1VM_TEMP_STRINGS][PR1VM_TEMP_STRING_SIZE];
-	int				tmpstr_cur;
+	// Per-instance string tables, held as pointers to the owner's storage:
+	//   server instance -> the global pr_strtbl/pr_newstrtbl/num_prstr
+	//     (bound in PR1VM_BindServer);
+	//   client instance -> its own arrays (bound on load).
+	// The shared string code (PR1VM_Get/SetString) uses only vm-> data, so the
+	// core has no VM-type condition.
+	char			**strtbl;
+	char			**newstrtbl;
+	int				*numstr;
 
 	// Host interface (S4): callbacks receive a ready string.
 	void (*host_error)(pr1vm_t *vm, const char *msg);
@@ -99,11 +87,6 @@ struct pr1vm_s
 
 // Active instance (the one PR1 is currently executing inside; NULL outside a call).
 pr1vm_t *PR1VM_Active(void);
-
-// ADR 0019: true while a NON-server instance (the client CSQC-VM) runs.
-// In this state do not call the global server helpers (PR1_Get/SetString etc.)
-// — the client works with its own per-instance strings.
-qbool PR1VM_ClientContext(void);
 
 // Server instance (sv_pr1vm) — default target of the PR_* wrappers.
 pr1vm_t *PR1VM_Server(void);

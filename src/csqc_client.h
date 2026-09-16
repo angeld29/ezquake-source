@@ -128,6 +128,12 @@ void CSQC_Client_ParseEvent (void);
 // Register the builtin table of the client instance (implemented in csqc_builtins.c).
 void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
 
+// Клиентская обёртка над единым PR1VM_SetString (core, pr_edict.c): temp-строки
+// deep-copy в клиентское кольцо инстанса (стабильный буфер) и регистрируются
+// через vm->strtbl. Строки из области модуля передаются в core без копии.
+// Работает с PR1-VM (в отличие от PR2). address — string_t* (int*).
+void PR1VM_ClientSetString (struct pr1vm_s *vm, int *address, char *s);
+
 // Register client debug commands for PR1VM (csqc_smoke, etc.; csqc_client.c) —
 // called from CL_InitLocal (cl_main.c).
 void CSQC_Client_RegisterCommands (void);
