@@ -204,8 +204,12 @@ static int s_numslot[CSQC_MAX_NUM];
 
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
-// (см. CSQC_Client_GetStat/SetStat).
+// (см. CSQC_Client_GetStat/SetStat). Stat wire 78/79 кладёт float/string-статы:
+// statsf — точное значение (приём и из 79, и из int-пути svc_updatestat), statss —
+// строка (Q_strdup, освобождается в CSQC_Client_Disconnect).
 static int s_csqc_stat[128];
+static float s_csqc_statsf[128];
+static char *s_csqc_statss[128];
 
 /*
 =================
@@ -222,10 +226,59 @@ float CSQC_Client_GetStat (int idx)
 	return 0;
 }
 
+int CSQC_Client_GetStatInt (int idx)
+{
+	if (idx >= 0 && idx < 32)
+		return cl.stats[idx];
+	if (idx >= 32 && idx < 128)
+		return s_csqc_stat[idx];
+	return 0;
+}
+
+float CSQC_Client_GetStatFloat (int idx)
+{
+	if (idx >= 0 && idx < 32)
+		return (float)cl.stats[idx];
+	if (idx >= 32 && idx < 128)
+		return s_csqc_statsf[idx];
+	return 0;
+}
+
+const char *CSQC_Client_GetStatString (int idx)
+{
+	if (idx >= 32 && idx < 128 && s_csqc_statss[idx])
+		return s_csqc_statss[idx];
+	return "";
+}
+
 void CSQC_Client_SetStat (int idx, int value)
 {
 	if (idx >= 32 && idx < 128)
+	{
 		s_csqc_stat[idx] = value;
+		// Сервер при int-эмиссии float-стата держит int-кэш в синхроне
+		// (sv_send.c:1199 client->stats[i]=iv) — getstatf должен видеть то же.
+		s_csqc_statsf[idx] = (float)value;
+	}
+}
+
+void CSQC_Client_SetStatFloat (int idx, float value)
+{
+	if (idx >= 32 && idx < 128)
+	{
+		// Паритет FTE CL_SetStatNumeric (cl_parse.c:6110): int=(int)fvalue.
+		s_csqc_statsf[idx] = value;
+		s_csqc_stat[idx] = (int)value;
+	}
+}
+
+void CSQC_Client_SetStatString (int idx, const char *s)
+{
+	if (idx >= 32 && idx < 128)
+	{
+		Q_free (s_csqc_statss[idx]);
+		s_csqc_statss[idx] = Q_strdup (s ? s : "");
+	}
 }
 
 void CSQC_Client_GetScreenSize (int *w, int *h)
@@ -2241,6 +2294,8 @@ CSQC_Client_Disconnect
 */
 void CSQC_Client_Disconnect (void)
 {
+	int i;
+
 	if (s_csqc.loaded)
 	{
 		if (s_csqc.inited && !s_csqc.errored)
@@ -2260,6 +2315,13 @@ void CSQC_Client_Disconnect (void)
 	CSQC_Client_BufReset ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
+	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
+	// Stat wire 78/79: строковые статы — глубокие копии (Q_strdup).
+	for (i = 0; i < 128; i++)
+	{
+		Q_free (s_csqc_statss[i]);
+		s_csqc_statss[i] = NULL;
+	}
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;

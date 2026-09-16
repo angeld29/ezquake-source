@@ -565,33 +565,67 @@ static void csqc_drawstring (void)
 }
 
 /*
-float(float stnum) getstati = #330 / float(float stnum, ...) getstatf = #331
-Стандартные статы 0..31 — из cl.stats; 32..127 (кастомные серверные) — 0 до
-подшага «статы 32–127». Бит-выборки getstatf(stnum, firstbit, bitcount) не
-используются нашим модулем — не реализованы.
+float(float stnum) getstati = #330
+int-значение стата: 0..31 — cl.stats, 32..127 — ext-хранилище (CSQC_Client_GetStat).
 */
-static float csqc_getstat_value (pr1vm_t *vm, int idx)
-{
-	(void)vm;
-	// Стандартные статы 0..31; 32..127 (кастомные серверные) — 0 до подшага
-	// «статы 32–127» (реализация доступа — в CSQC_Client_GetStat).
-	return CSQC_Client_GetStat (idx);
-}
-
 static void csqc_getstati (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	vm->globals[OFS_RETURN] = csqc_getstat_value (vm, (int)vm->globals[OFS_PARM0]);
+	vm->globals[OFS_RETURN] = CSQC_Client_GetStat ((int)vm->globals[OFS_PARM0]);
 }
 
+/*
+float(float stnum, optional float firstbit, optional float bitcount) getstatf = #331
+Паритет FTE PF_cs_getstat_float (pr_csqc.c:2814-2843):
+  без доп. аргументов — float-значение стата (statsf, приём stat wire 79);
+  при firstbit/bitcount — бит-выборка из int-значения стата (getstatbits).
+*/
 static void csqc_getstatf (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int stnum;
+	if (!vm)
+		return;
+	stnum = (int)vm->globals[OFS_PARM0];
+	if (stnum < 0 || stnum >= 128)
+	{
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
+	if (vm->argc > 1)
+	{
+		// Точный int (не float-путь): большие int теряют младшие биты в float32
+		// (FTE pr_csqc.c:2826 читает stats[] как int).
+		int val = CSQC_Client_GetStatInt (stnum);
+		int first = (int)vm->globals[OFS_PARM1];
+		int count = (vm->argc > 2) ? (int)vm->globals[OFS_PARM2] : 1;
+		if (first < 0)
+			first = 0;
+		if (count < 0)
+			count = 0;
+		if (count > 31)	// FTE делает (1<<count); clamp без UB
+			count = 31;
+		vm->globals[OFS_RETURN] = (float)((((unsigned int)val) & (((1u << count) - 1u) << first)) >> first);
+	}
+	else
+		vm->globals[OFS_RETURN] = CSQC_Client_GetStatFloat (stnum);
+}
+
+/*
+string(float firststnum) getstats = #332
+Паритет FTE PF_cs_getstat_string при PEXT_CSQC (pr_csqc.c:2844-2854):
+statsstr[stnum], приём stat wire 78 (svcfte_updatestatstring). Legacy packed-int
+вариант (4 int-стата, старые движки) не реализован — наш клиент всегда на
+FTE_PEXT_CSQC (модуль запускается только при нём).
+*/
+static void csqc_getstats (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	vm->globals[OFS_RETURN] = csqc_getstat_value (vm, (int)vm->globals[OFS_PARM0]);
+	CSQCVM_SetRetStr ((char *)CSQC_Client_GetStatString ((int)vm->globals[OFS_PARM0]));
 }
 
 // ---------------------------------------------------------------- Слой D, шаг 1
@@ -4329,7 +4363,7 @@ static void csqc_changepitch (void)
 	/* no-op (документировано; как changeyaw #49) */
 }
 
-/* #332 getstats / #355 getentitytoken — deprecated/не нужны: возврат "" (""). */
+/* #355 getentitytoken — deprecated/не нужен: возврат "" (""). */
 static void csqc_nop_str (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -4543,7 +4577,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 485, (builtin_t)csqc_strireplace); // #485 string(string search, string replace, string subject) strireplace
 
 	// L2 — «Система/VM простые» (2026-09-07): #65/#338/#339/#350/#353/#512 +
-	// no-op #63/#332/#355.
+	// no-op #63/#355.
 	PR1VM_RegisterBuiltin (vm, 65,  (builtin_t)csqc_etos); // #65 string(entity ent) etos (DP_QC_ETOS)
 	PR1VM_RegisterBuiltin (vm, 338, (builtin_t)csqc_cprint); // #338 void(string s) cprint (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 339, (builtin_t)csqc_print); // #339 void(string s) print (EXT_CSQC)
@@ -4551,7 +4585,6 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 353, (builtin_t)csqc_wasfreed); // #353 float(entity ent) wasfreed (EXT_CSQC) (should be availabe on server too)
 	PR1VM_RegisterBuiltin (vm, 512, (builtin_t)csqc_num_for_edict); // #512 float(entity ent) num_for_edict
 	PR1VM_RegisterBuiltin (vm, 63,  (builtin_t)csqc_changepitch); // #63 void(entity ent) changepitch (DP_QC_CHANGEPITCH)
-	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_nop_str); // #332 string(float firststnum) getstats (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 355, (builtin_t)csqc_nop_str); // #355 string() getentitytoken;
 
 	// L2 ST — строки/токенизация (2026-09-07): #478/#514/#479/#515/#516.
@@ -4654,6 +4687,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 329, (builtin_t)csqc_drawrotpic_dp); // #329 void(vector pivot, string picname, vector size, vector mins, float angle, vector rgb, float alpha, optional float drawflag) drawrotpic_dp
 	PR1VM_RegisterBuiltin (vm, 330, (builtin_t)csqc_getstati); // #330 int(float stnum) getstati (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 331, (builtin_t)csqc_getstatf); // #331 float(float stnum) getstatf (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 332, (builtin_t)csqc_getstats); // #332 string(float firststnum) getstats (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 359, (builtin_t)csqc_sendevent); // #359 void(string evname, string evargs, ...) (EXT_CSQC_1)
 	PR1VM_RegisterBuiltin (vm, 627, (builtin_t)csqc_sprintf); // #627 string(string fmt, ...) sprintf
 

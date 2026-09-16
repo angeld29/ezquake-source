@@ -15,8 +15,18 @@ struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); без зави
 struct pr1vm_s;		// PR1 инстанс (pr1vm.h); здесь — только opaque-указатель
 
 // Доступ к клиентскому состоянию/выводу (реализация в csqc_client.c):
-float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы
+float CSQC_Client_GetStat (int idx);				// 0..31 -> cl.stats, 32..127 -> ext-статы (int)
 void CSQC_Client_SetStat (int idx, int value);		// приём ext-статов 32..127 (CL_SetStat)
+// Stat wire 78/79 (float/string CSQC-статы 32..127): приём из svcfte_updatestatfloat/string
+// и выдача через #331 getstatf / #332 getstats. В FTE — per-player statsf[]/statsstr[]
+// (pr_csqc.c CL_SetStatNumeric/CL_SetStatString); здесь — единое CSQC-хранилище модуля.
+// GetStatInt — точное int-значение для бит-выборки #331 (getstatbits): float-путь теряет
+// младшие биты больших int (паритет FTE pr_csqc.c:2826 читает stats[] как int).
+int CSQC_Client_GetStatInt (int idx);			// 0..31 -> cl.stats, 32..127 -> ext (int)
+float CSQC_Client_GetStatFloat (int idx);			// 0..31 -> cl.stats, 32..127 -> statsf
+const char *CSQC_Client_GetStatString (int idx);	// 32..127 -> statss, иначе ""
+void CSQC_Client_SetStatFloat (int idx, float value);		// svcfte_updatestatfloat (79)
+void CSQC_Client_SetStatString (int idx, const char *s);	// svcfte_updatestatstring (78)
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
@@ -119,6 +129,16 @@ int CSQC_Client_InputEvent (int evtype, float a, float b, float c);	// возв�
 // CSQC wire-номера (svc_fte_cgamepacket 83, svc_fte_cgamepacket_sized 90,
 // svc_fte_csqcentities_sized 92, clcfte_qcrequest 81) приходят из qwprot
 // src/protocol.h под #ifdef FTE_PEXT_CSQC (upstream master dd211a5+).
+//
+// 78/79 в qwprot нет (upstream master dd211a5), поэтому определяем локально —
+// как mvdsv/src/server.h:152-156; значения и формат — FTE protocol.h:351-352,
+// fteqw/engine/client/cl_parse.c:8031-8040.
+#ifndef svcfte_updatestatstring
+#define svcfte_updatestatstring	78	// [byte statnum] [string]
+#endif
+#ifndef svcfte_updatestatfloat
+#define svcfte_updatestatfloat	79	// [byte statnum] [float]
+#endif
 
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — E3).
 void CSQC_Client_ParseEntities (qbool sized);

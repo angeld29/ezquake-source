@@ -4127,6 +4127,21 @@ void CL_ParseServerMessage (void)
 					CSQC_Client_ParseEntities (true);
 					break;
 				}
+			case svcfte_updatestatstring:
+				{
+					// CSQC string-стат 32..127 (mvdsv PR228 rev [18]): [byte][string].
+					i = MSG_ReadByte();
+					s = MSG_ReadString();
+					CSQC_Client_SetStatString(i, s);
+					break;
+				}
+			case svcfte_updatestatfloat:
+				{
+					// CSQC float-стат 32..127: [byte][float].
+					i = MSG_ReadByte();
+					CSQC_Client_SetStatFloat(i, MSG_ReadFloat());
+					break;
+				}
 #endif
 			case svc_download:
 				{
