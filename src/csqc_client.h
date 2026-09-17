@@ -68,6 +68,10 @@ void CSQC_Client_ResetViewProps (void);	// #300 clearscene: сброс view-св
 // `#310 project` / `#311 unproject`.
 qbool CSQC_Client_Project (const float *world, float *sx, float *sy, float *sz);
 qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world);
+// `#504 getentity` (C5-E Ф2): интерп. состояние engine-сущности по серверному номеру
+// (cl_entities/lerp_origin + player-state). out[3] заполняется (float -> out[0],
+// vector -> все три); поля без ezq-источника -> FTE-дефолт (отклонение, parity).
+void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3]);
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке

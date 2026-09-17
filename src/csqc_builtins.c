@@ -4376,10 +4376,29 @@ static void csqc_getlight_approx (void)
 	vm->globals[OFS_RETURN + 2] = 0;
 }
 
-/* no-op: #64/#240/#278/#279/#504 — серверно-мировые/нет аналога (см. parity) */
+/* no-op: #64/#240/#278/#279 — серверно-мировые/нет аналога (см. parity) */
 static void csqc_vmrest_nop (void)
 {
 	/* no-op (документировано) */
+}
+
+/*
+__variant(float entnum, float fieldnum) getentity = #504 (C5-E Ф2).
+FTE PF_getentity (pr_csqc.c:5862): интерп. состояние engine-сетевой сущности по
+серверному номеру. Реализация — CSQC_Client_GetEntity (csqc_client.c); сюда
+пишем 3 слова возврата (float-поля занимают первое). Поля без ezq-источника —
+FTE-дефолт (отклонения в parity-audit).
+*/
+static void csqc_getentity (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float out[3];
+	if (!vm)
+		return;
+	CSQC_Client_GetEntity ((int)vm->globals[OFS_PARM0], (int)vm->globals[OFS_PARM1], out);
+	vm->globals[OFS_RETURN + 0] = out[0];
+	vm->globals[OFS_RETURN + 1] = out[1];
+	vm->globals[OFS_RETURN + 2] = out[2];
 }
 
 /*
@@ -4702,14 +4721,14 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 632, (builtin_t)csqc_setbindmaps); // #632 float(vector bindmaps) setbindmaps
 
 	// L2 — «Система/VM остаток» (2026-09-07, минимум): #98 + #92-аппрокс + no-op
-	// #64/#240/#278/#279/#504 (рефлексия #496-500/#206 — отдельным шагом).
+	// #64/#240/#278/#279 (рефлексия #496-500/#206 — отдельным шагом).
 	PR1VM_RegisterBuiltin (vm, 98,  (builtin_t)csqc_findfloat); // #98 entity(entity start, .float fld, float match) findfloat (DP_QC_FINDFLOAT)
 	PR1VM_RegisterBuiltin (vm, 92,  (builtin_t)csqc_getlight_approx); // #92 vector(vector org) getlight (DP_QC_GETLIGHT)
 	PR1VM_RegisterBuiltin (vm, 64,  (builtin_t)csqc_vmrest_nop); // #64 void(entity ent, entity ignore) tracetoss (DP_QC_TRACETOSS)
 	PR1VM_RegisterBuiltin (vm, 240, (builtin_t)csqc_vmrest_nop); // #240 float(vector viewpos, entity entity) checkpvs
 	PR1VM_RegisterBuiltin (vm, 278, (builtin_t)csqc_vmrest_nop); // #278 void(float action, vector pos, float radius, float quant) terrain_edit
 	PR1VM_RegisterBuiltin (vm, 279, (builtin_t)csqc_vmrest_nop); // #279 void() touchtriggers
-	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_vmrest_nop); // #504 __variant(float entnum, fload fieldnum) getentity
+	PR1VM_RegisterBuiltin (vm, 504, (builtin_t)csqc_getentity); // #504 __variant(float entnum, float fieldnum) getentity (C5-E Ф2)
 
 	// L2 — «Звук» (2026-09-07): #483 + no-op #351/#371/#533/#534.
 	PR1VM_RegisterBuiltin (vm, 483, (builtin_t)csqc_pointsound); // #483 void(vector origin, string sample, float volume, float attenuation) pointsound

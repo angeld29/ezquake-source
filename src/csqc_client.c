@@ -24,6 +24,7 @@ csprogs.dat.
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
 #include "common_draw.h"	// CachePic_Find/Remove, Draw_EnableScissorRectangle/DisableScissor
 #include "r_matrix.h"		// R_Project3DCoordinates/R_Get*Matrix (#310/#311)
+#include "gl_model.h"		// model_t mins/maxs (#504 getentity)
 
 // FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
@@ -1649,6 +1650,217 @@ qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world)
 	world[1] = res[1] / res[3];
 	world[2] = res[2] / res[3];
 	return true;
+}
+
+/*
+=================
+CSQC_Client_GetEntity
+
+#504 getentity — FTE PF_getentity (pr_csqc.c:5862-6170): read interpolated state
+of non-csqc (engine-networked) entities by server number. ezq has no
+cl.lerpents/cl.lerpplayers; the source is cl_entities[] (current entity_state_t +
+per-frame lerp_origin, filled by CL_LinkPacketEntities before the HUD/CSQC phase)
+and, for players, player_state_t / player bbox / player colours. "Active" = present
+in the current packet (cent->sequence == cl.validsequence), the analog of FTE
+"le->sequence == cl.lerpentssequence".
+
+out[3] is always zeroed then filled (float fields use out[0]; vector fields use all
+three). Fields with no ezq data source return the FTE default (0, or '1 1 1' for
+GLOWMOD/RTCOLOUR) — documented deviation (parity audit).
+=================
+*/
+#define CSQC_GE_MAXENTS		(-1)
+#define CSQC_GE_ACTIVE		0
+#define CSQC_GE_ORIGIN		1
+#define CSQC_GE_FORWARD		2
+#define CSQC_GE_RIGHT		3
+#define CSQC_GE_UP		4
+#define CSQC_GE_SCALE		5
+#define CSQC_GE_ORIGINANDVECTORS 6
+#define CSQC_GE_ALPHA		7
+#define CSQC_GE_COLORMOD	8
+#define CSQC_GE_PANTSCOLOR	9
+#define CSQC_GE_SHIRTCOLOR	10
+#define CSQC_GE_SKIN		11
+#define CSQC_GE_MINS		12
+#define CSQC_GE_MAXS		13
+#define CSQC_GE_ABSMIN		14
+#define CSQC_GE_ABSMAX		15
+#define CSQC_GE_LIGHT		16
+#define CSQC_GE_MODELINDEX	200
+#define CSQC_GE_EFFECTS		202
+#define CSQC_GE_FRAME		203
+#define CSQC_GE_ANGLES		204
+#define CSQC_GE_GLOWMOD		208
+#define CSQC_GE_RTCOLOUR	213
+
+void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
+{
+	centity_t *cent;
+	entity_state_t *es;
+	player_state_t *ps;
+	qbool is_player = false;
+	qbool active;
+	int pnum = -1, modelindex;
+	const model_t *model;
+	vec3_t org;
+
+	if (out)
+		out[0] = out[1] = out[2] = 0;
+
+	if (cls.state != ca_active)
+		return;
+
+	if (fldnum == CSQC_GE_MAXENTS)
+	{
+		out[0] = (float)CL_MAX_EDICTS;
+		return;
+	}
+
+	if (entnum < 0 || entnum >= CL_MAX_EDICTS)
+		return;		// invalid entity -> 0 (FTE: "not valid")
+
+	cent = &cl_entities[entnum];
+	es = &cent->current;
+
+	// Players are tracked through playerinfo (SetupPlayerEntity: cent->sequence =
+	// state->messagenum) and are "present" when playerstate was updated this frame
+	// (same test as CL_LinkPlayers); map entities use the packet-entity frame
+	// sequence (CL_SetupPacketEntity: cent->sequence = cl.validsequence).
+	ps = (entnum >= 1 && entnum <= MAX_CLIENTS)
+		? &cl.frames[cl.parsecount & UPDATE_MASK].playerstate[entnum - 1] : NULL;
+	if (ps && ps->messagenum == cl.parsecount)
+		is_player = true, pnum = entnum - 1;
+
+	active = is_player
+		? true
+		: (cent->sequence != 0 && cent->sequence == cl.validsequence);
+	if (!active)
+		return;
+
+	modelindex = es->modelindex;
+
+	// Interpolated origin: CL_LinkPlayers writes cent->lerp_origin for every drawn
+	// player except the first-person local player (cl_ents.c:2163), and
+	// CL_LinkPacketEntities writes it for drawn map entities. When it is unset
+	// (local player, entity not drawn yet), fall back to the authoritative
+	// cent->current.origin (playerinfo / last packet) — no lerp (deviation).
+	if (!VectorCompare (cent->lerp_origin, vec3_origin))
+		VectorCopy (cent->lerp_origin, org);
+	else
+		VectorCopy (es->origin, org);
+
+	switch (fldnum)
+	{
+	case CSQC_GE_ACTIVE:
+		out[0] = 1;
+		break;
+	case CSQC_GE_ORIGIN:
+		VectorCopy (org, out);
+		break;
+	case CSQC_GE_ANGLES:
+		// ezq keeps no lerped angles; return the target state (deviation).
+		VectorCopy (es->angles, out);
+		break;
+	case CSQC_GE_FORWARD:
+	case CSQC_GE_RIGHT:
+	case CSQC_GE_UP:
+		AngleVectors (es->angles,
+			(fldnum == CSQC_GE_FORWARD) ? out : NULL,
+			(fldnum == CSQC_GE_RIGHT) ? out : NULL,
+			(fldnum == CSQC_GE_UP) ? out : NULL);
+		break;
+	case CSQC_GE_ORIGINANDVECTORS:
+		VectorCopy (org, out);
+		CSQC_Client_MakeVectors (es->angles);	// module v_forward/v_right/v_up
+		break;
+	case CSQC_GE_MINS:
+	case CSQC_GE_MAXS:
+	case CSQC_GE_ABSMIN:
+	case CSQC_GE_ABSMAX:
+		{
+			vec3_t mn, mx;
+			if (is_player)
+			{
+				// FTE uses ps->szmins/szmaxs (hull); ezq keeps the prediction hull.
+				extern vec3_t player_mins, player_maxs;
+				VectorCopy (player_mins, mn);
+				VectorCopy (player_maxs, mx);
+			}
+			else
+			{
+				// FTE decodes es->solidsize; ezq has none — approximate with the
+				// model bounding box.
+				model = (modelindex > 0 && modelindex < MAX_MODELS)
+					? cl.model_precache[modelindex] : NULL;
+				if (model)
+				{
+					VectorCopy (model->mins, mn);
+					VectorCopy (model->maxs, mx);
+				}
+				else
+					VectorClear (mn), VectorClear (mx);
+			}
+			if (fldnum == CSQC_GE_MINS)
+				VectorCopy (mn, out);
+			else if (fldnum == CSQC_GE_MAXS)
+				VectorCopy (mx, out);
+			else if (fldnum == CSQC_GE_ABSMIN)
+				VectorAdd (org, mn, out);
+			else
+				VectorAdd (org, mx, out);
+		}
+		break;
+	case CSQC_GE_SCALE:
+		out[0] = 1;		// no scale in ezq state (FTE default 16/16) — deviation
+		break;
+	case CSQC_GE_ALPHA:
+#ifdef FTE_PEXT_TRANS
+		out[0] = es->trans / 255.0f;
+#else
+		out[0] = 1;
+#endif
+		break;
+	case CSQC_GE_COLORMOD:
+#ifdef FTE_PEXT_COLOURMOD
+		out[0] = es->colourmod[0] / 8.0f;
+		out[1] = es->colourmod[1] / 8.0f;
+		out[2] = es->colourmod[2] / 8.0f;
+#endif
+		break;
+	case CSQC_GE_PANTSCOLOR:
+		out[0] = is_player ? (float)cl.players[pnum].bottomcolor
+			: (float)(es->colormap & 15);
+		break;
+	case CSQC_GE_SHIRTCOLOR:
+		out[0] = is_player ? (float)cl.players[pnum].topcolor
+			: (float)((es->colormap >> 4) & 15);
+		break;
+	case CSQC_GE_SKIN:
+		out[0] = (float)es->skinnum;
+		break;
+	case CSQC_GE_LIGHT:
+		out[0] = 0;
+		break;
+	case CSQC_GE_MODELINDEX:
+		out[0] = (float)es->modelindex;
+		break;
+	case CSQC_GE_EFFECTS:
+		out[0] = (float)es->effects;
+		break;
+	case CSQC_GE_FRAME:
+		out[0] = (float)es->frame;
+		break;
+	default:
+		// GE_MODELINDEX2/GE_FATNESS/GE_DRAWFLAGS/GE_ABSLIGHT/GE_GLOWSIZE/
+		// GE_GLOWCOLOUR/GE_RTSTYLE/GE_RTPFLAGS/GE_RTRADIUS/GE_TAGENTITY/
+		// GE_TAGINDEX/GE_GRAVITYDIR/GE_TRAILEFFECTNUM — no ezq data source
+		// (documented deviation); FTE default (vec3 defaults to '1 1 1' for the
+		// two glow/rt colour fields, 0 otherwise).
+		if (fldnum == CSQC_GE_GLOWMOD || fldnum == CSQC_GE_RTCOLOUR)
+			out[0] = out[1] = out[2] = 1;
+		break;
+	}
 }
 
 /*
