@@ -85,7 +85,9 @@ static void CSQCVM_SetRetStr (char *s)
 // returns through these helpers; a float cast/assignment corrupts the bits.
 // Defined below (entity section); forward-declared for the #347/#459/te_beam users.
 static int csqc_ent_of (pr1vm_t *vm, int parmofs);
+static float *csqc_ent_field (pr1vm_t *vm, int entnum, const char *name);
 static void csqc_ret_entity (pr1vm_t *vm, int entnum);
+static void csqc_add_one_entity (int e);	// Ф3: arena-эдикт -> ezq entity_t
 
 /*
 void(string s, ...) dprint = #25
@@ -571,10 +573,40 @@ No-op: 3D-рендер модуля не делаем (движок рисует
 */
 static void csqc_clearscene (void)
 {
-	// FTE: clearscene сбрасывает view-свойства (#303 setproperty).
+	// FTE: clearscene сбрасывает view-свойства (#303 setproperty) и rentity-список.
 	CSQC_Client_ResetViewProps ();
+	if (CSQC_Client_SceneActive ())
+		CL_ClearScene ();
 }
-static void csqc_addentities (void) { }
+/*
+void(float mask) addentities = #301 (Ф3 takeover).
+FTE PF_R_AddEntityMask (pr_csqc.c:1380): mask&1 (MASK_DELTA=MASK_ENGINE) —
+движковая сцена (CL_EmitEntities: мир/игроки/энтити); прочие биты — CSQC-эдикты
+арены с `drawmask & mask` (единый arena-обход). mask&2 (MASK_STDVIEWMODEL) в ezq
+no-op: вьюмодель рисует движок сам (отклонение, parity). predraw пока не зовём
+(документированное отклонение — отдельным шагом).
+*/
+static void csqc_addentities (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int mask, e;
+	if (!vm || !CSQC_Client_SceneActive ())
+		return;
+	mask = (int)vm->globals[OFS_PARM0];
+	if (mask & 1)
+		CL_EmitEntities ();
+	if (mask & ~1)
+		for (e = 1; e < vm->num_edicts; e++)
+		{
+			float *dm;
+			if (!CSQC_Client_EntUsed (e))
+				continue;
+			dm = csqc_ent_field (vm, e, "drawmask");
+			if (!dm || !((int)dm[0] & mask))
+				continue;
+			csqc_add_one_entity (e);
+		}
+}
 /*
 float(float property, ...) setproperty = #303 (C5-E Ф1: подмножество view).
 Обрабатываются VF_MIN/SIZE/VIEWPORT/FOV/ORIGIN/ANGLES (и _X/_Y/_Z); значения
@@ -601,7 +633,13 @@ static void csqc_setproperty (void)
 	CSQC_Client_SetViewProperty (prop, words, args);
 	vm->globals[OFS_RETURN] = 0;
 }
-static void csqc_renderscene (void) { }
+static void csqc_renderscene (void)
+{
+	// Ф3 (takeover): #304 renderscene выполняет 3D-рендер кадра (как FTE
+	// PF_R_RenderScene -> R_RenderView). Вне takeover — no-op (движок рисует сам).
+	if (CSQC_Client_SceneActive ())
+		CSQC_Client_RenderScene ();
+}
 
 /*
 float(vector position, string text, vector size, vector rgb,
@@ -3061,6 +3099,59 @@ static void csqc_ret_entity (pr1vm_t *vm, int entnum)
 	*(int *)&vm->globals[OFS_RETURN] = entnum * vm->edict_size;
 }
 
+/*
+Ф3 (takeover): arena-эдикт -> ezq entity_t -> cl_visents (#301 arena / #302).
+FTE CopyCSQCEdictToEntity берёт .modelindex; у нас modelindex-библиотека ещё
+заглушки (#200/#333), поэтому модель берём по `.model`-строке через Mod_ForName
+(отклонение, отдельный шаг). .scale/.renderflags/.predraw не применяются (откл.).
+*/
+static void csqc_add_one_entity (int e)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	entity_t ent;
+	float *slot, *f;
+	char *mname;
+	model_t *model;
+	int ofs;
+
+	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
+		return;
+	slot = csqc_ent_slot (vm, e);
+	if (!slot)
+		return;
+	if ((ofs = CSQC_Client_FindField (vm, "model")) < 0)
+		return;
+	mname = PR1VM_GetString (vm, (string_t)*(int *)&slot[ofs]);
+	if (!mname || !mname[0])
+		return;
+	model = Mod_ForName (mname, false);
+	if (!model)
+		return;
+
+	memset (&ent, 0, sizeof (ent));
+	ent.model = model;
+	ent.colormap = vid.colormap;
+	ent.oldframe = ent.frame;
+	ent.framelerp = -1;
+	if ((f = csqc_ent_field (vm, e, "origin")))		VectorCopy (f, ent.origin);
+	if ((f = csqc_ent_field (vm, e, "angles")))		VectorCopy (f, ent.angles);
+	if ((f = csqc_ent_field (vm, e, "frame")))		ent.frame = ent.oldframe = (int)f[0];
+	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
+	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
+	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];
+
+	CL_AddEntity (&ent);
+}
+
+/* void(entity ent) addentity = #302 (Ф3 takeover) */
+static void csqc_addentity (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm || !CSQC_Client_SceneActive ())
+		return;
+	csqc_add_one_entity (csqc_ent_of (vm, OFS_PARM0));
+}
+
 /* entity() spawn = #14 */
 static void csqc_spawn (void)
 {
@@ -4839,7 +4930,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 288, (builtin_t)csqc_vmrest_nop); // #288 void(hashtable table) hash_destroytab
 	PR1VM_RegisterBuiltin (vm, 289, (builtin_t)csqc_vmrest_nop); // #289 void(hashtable table, string name, __variant value, optional float typeandflags) hash_add
 	PR1VM_RegisterBuiltin (vm, 293, (builtin_t)csqc_vmrest_nop); // #293 void() hash_getcb
-	PR1VM_RegisterBuiltin (vm, 302, (builtin_t)csqc_vmrest_nop); // #302 void(entity ent) addentity (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 302, (builtin_t)csqc_addentity); // #302 void(entity ent) addentity (EXT_CSQC; Ф3 takeover)
 	PR1VM_RegisterBuiltin (vm, 306, (builtin_t)csqc_vmrest_nop); // #306 void(string texturename) R_BeginPolygon (EXT_CSQC_???)
 	PR1VM_RegisterBuiltin (vm, 307, (builtin_t)csqc_vmrest_nop); // #307 void(vector org, vector texcoords, vector rgb, float alpha) R_PolygonVertex (EXT_CSQC_???)
 	PR1VM_RegisterBuiltin (vm, 308, (builtin_t)csqc_vmrest_nop); // #308 void() R_EndPolygon (EXT_CSQC_???)

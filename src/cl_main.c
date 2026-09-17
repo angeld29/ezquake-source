@@ -2572,7 +2572,10 @@ void CL_LinkEntities (void)
 		}
 
 		// build a refresh entity list
-		CL_EmitEntities();
+		// Ф3 (takeover): при активной CSQC-сцене движок список не строит —
+		// это делает модуль через #300 clearscene + #301 addentities (#304 renderscene).
+		if (!CSQC_Client_SceneActive ())
+			CL_EmitEntities();
 	}
 }
 

@@ -840,7 +840,10 @@ static void SCR_DrawElements(void)
 				DemoControls_Draw();
 #ifndef CLIENTONLY
 				// CSQC-оверлей (наш csprogs.dat): поверх движкового HUD.
-				CSQC_Client_Update ();
+				// Ф3 (takeover): при активной сцене модуль уже вызван в 3D-фазе
+				// (SCR_UpdateScreenPlayerView) — второй вызов в кадре не нужен.
+				if (!CSQC_Client_SceneActive())
+					CSQC_Client_Update ();
 #endif
 			}
 		}
@@ -948,7 +951,19 @@ void SCR_UpdateScreenPlayerView(int flags)
 		if (V_PreRenderView()) {
 			R_SetupFrame();
 
-			R_RenderView();
+			// Ф3 (takeover): при активном CSQC-модуле он владеет 3D-сценой —
+			// CSQC_UpdateView вызывается здесь (до отрисовки), #304 renderscene
+			// выполняет R_RenderView. Если модуль renderscene не позвал — движковый
+			// fallback (защита от чёрного экрана). Иначе — прежний путь.
+			if (CSQC_Client_SceneActive()) {
+				CSQC_Client_BeginScene();
+				CSQC_Client_Update();
+				if (!CSQC_Client_SceneRendered())
+					R_RenderView();
+			}
+			else {
+				R_RenderView();
+			}
 
 			if (flags & UPDATESCREEN_POSTPROCESS) {
 				R_PostProcessScene();

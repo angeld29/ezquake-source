@@ -79,6 +79,14 @@ void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: l
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + выгрузка + снятие команд
 void CSQC_Client_Update (void);			// каждый 2D-кадр: WorldLoaded-once + UpdateView
 
+// Ф3 (renderscene takeover): когда CSQC-модуль активен, модуль владеет
+// 3D-сценой как в FTE — CSQC_UpdateView вызывается в 3D-фазе, #300/#301 строят
+// cl_visents, #304 renderscene вызывает R_RenderView(). Иначе — движковый путь.
+qbool CSQC_Client_SceneActive (void);	// модуль активен && есть CSQC_UpdateView
+void CSQC_Client_BeginScene (void);		// сброс флага «renderscene вызван в этом кадре»
+void CSQC_Client_RenderScene (void);	// #304 renderscene -> R_RenderView()
+qbool CSQC_Client_SceneRendered (void);	// вызывался ли renderscene в текущем кадре
+
 // CSQC_Input_Frame: перед отправкой каждого usercmd (CL_SendCmd, cl_input.c).
 // Движок заполняет input_* глобалы из cmd, исполняет модуль и пишет обратно
 // изменения (см. csqc_client.c; механика FTE pr_csqc.c:9418).

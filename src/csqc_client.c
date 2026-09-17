@@ -756,6 +756,40 @@ int CSQC_Client_Active (void)
 
 /*
 =================
+Ф3 (renderscene takeover)
+
+Модуль владеет 3D-сценой как в FTE: когда модуль активен, CSQC_UpdateView
+вызывается в 3D-фазе (SCR_UpdateScreenPlayerView) вместо R_RenderView();
+#300 clearscene / #301 addentities наполняют cl_visents; #304 renderscene
+выполняет R_RenderView(). Флаг s_scene_rendered — защита от чёрного экрана:
+если модуль не позвал renderscene, движок рисует кадр сам (fallback).
+=================
+*/
+static qbool s_scene_rendered = false;
+
+qbool CSQC_Client_SceneActive (void)
+{
+	return s_csqc.loaded && s_csqc.inited && !s_csqc.errored && s_csqc.func_update > 0;
+}
+
+void CSQC_Client_BeginScene (void)
+{
+	s_scene_rendered = false;
+}
+
+void CSQC_Client_RenderScene (void)
+{
+	s_scene_rendered = true;
+	R_RenderView ();
+}
+
+qbool CSQC_Client_SceneRendered (void)
+{
+	return s_scene_rendered;
+}
+
+/*
+=================
 CSQC_Client_ValidateFile
 
 Проверяет локальный файл csprogs по серверным ключам: размер == *csprogssize
@@ -3177,6 +3211,7 @@ void CSQC_Client_Disconnect (void)
 	// E1a #371: снять регистрации deltalisten/карту player-моста.
 	CSQC_Client_DeltaReset ();
 	CSQC_Client_ViewReset ();
+	s_scene_rendered = false;	// Ф3: takeover-сцена сброшена
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
