@@ -26,7 +26,7 @@ csprogs.dat.
 #include "r_matrix.h"		// R_Project3DCoordinates/R_Get*Matrix (#310/#311)
 #include "gl_model.h"		// model_t mins/maxs (#504 getentity)
 
-// FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
+// FTE-пул (слот ≠ серверный номер; план docs/plans/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
 // edict-слотов арены (слот 0 = world, не управляется). .entnum (поле модуля) = серверный
 // номер; модульные spawn-сущности номера не имеют (.entnum=0).
@@ -352,7 +352,7 @@ static qbool CSQC_Client_ClipDest (float *x, float *y, float *w, float *h)
 
 /*
 =================
-Слой D, шаг 1 — 2D-графика (docs/ezquake_csqc_client_layerd_2d_plan.md).
+Слой D, шаг 1 — 2D-графика (docs/archive/ezquake_csqc_client_layerd_2d_plan.md).
 Координаты/размеры — сырые пиксели видео (как DrawText). drawpic: rgb-tint
 игнорируется (только alpha; решение R2), масштаб = size / нативный размер.
 =================
@@ -638,7 +638,7 @@ CSQC_Client_RegisterCommands
 Registers client debug commands for PR1VM (csqc_smoke, etc.). Called from
 CL_InitLocal (cl_main.c) — commands available in the client console. csqc_smoke
 used to be registered in PR2_Init (server); moved here per the rule "client parts
-live outside shared core files" (docs/ezquake_csqc_client_pr1vm_plan.md).
+live outside shared core files" (docs/plans/ezquake_csqc_client_pr1vm_plan.md).
 =================
 */
 void CSQC_Client_RegisterCommands (void)

@@ -34,7 +34,7 @@ static pr1vm_t *CSQCVM_Active (void)
 	return PR1VM_Active ();
 }
 
-// Phase 1 L1 P1a (ADR 0019 / docs/ezquake_csqc_client_corebuiltins_plan.md):
+// Phase 1 L1 P1a (ADR 0019 / docs/plans/ezquake_csqc_client_corebuiltins_plan.md):
 // реюз чистых float/vector-тел серверных builtins на клиентском инстансе.
 // Тела не трогают строки/edict/sv-состояние, а аргументы/возврат читают через
 // G_* макросы (pr_globals) — attach в PR1VM_ExecuteProgram делает pr_globals
@@ -736,7 +736,7 @@ static void csqc_getstats (void)
 
 // ---------------------------------------------------------------- Слой D, шаг 1
 // 2D-графика. Раскладка параметров — 3-словные ячейки от OFS_PARM0 (см.
-// docs/ezquake_csqc_client_layerd_2d_plan.md §ABI). Возвраты draw*/drawcharacter = 0.
+// docs/archive/ezquake_csqc_client_layerd_2d_plan.md §ABI). Возвраты draw*/drawcharacter = 0.
 
 /*
 float(vector position, float character, vector size, vector rgb, float alpha,
@@ -3807,7 +3807,7 @@ static void csqc_movetogoal (void)
 }
 
 /*
-L2 ST — строки/токенизация (2026-09-07; см. docs/ezquake_csqc_client_l2_roadmap.md).
+L2 ST — строки/токенизация (2026-09-07; см. docs/archive/ezquake_csqc_client_l2_roadmap.md).
 FTE-эталон — pr_bgcmd.c: strftime 5088, tokenize_console 6214, tokenizebyseparator
 6219, argv_start_index 6307, argv_end_index 6321. Отдельное хранилище span'ов для
 #514/#479/#515/#516; существующие #441/#442 работают через Cmd-контекст и НЕ меняются
