@@ -49,6 +49,13 @@ int CSQC_Client_FindField (struct pr1vm_s *vm, const char *name);	// offset по
 // до CSQC_UpdateView. Сущности игроков НЕ фабрикуются (см. csqc_client.c).
 void CSQC_Client_UpdateLocalEntnum (void);
 
+// E1a #371 deltalisten: реестр callback'ов на обновление сущностей по модели
+// (FTE PF_DeltaListen). Callback модуля вызывается как CSQC_Ent_Update: `self`
+// и `.entnum` выставлены движком, PARM0 = isnew. name=="*" — все модели;
+// func<=0 — снятие регистрации. Слушатель игроков получает авторитетное
+// (no-lerp) состояние player_state.
+void CSQC_Client_DeltaListen (const char *model, int func, int flags);
+
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке
 void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: load + CSQC_Init

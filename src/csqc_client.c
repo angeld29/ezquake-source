@@ -68,6 +68,8 @@ typedef struct csqc_client_state_s
 	// C1.4/C5-B #347: field-offset'ы стандартной физики (или -1).
 	int			f_origin, f_velocity, f_angles, f_mins, f_maxs;
 	int			f_movetype, f_flags, f_gravity, f_pmove_flags;
+	int			f_modelindex, f_skin;	// #371 player/delta bridge (raw state fields)
+	int			f_frame, f_effects, f_drawmask;	// #371 delta-entity bridge
 	// FTE-пул Шаг 7 (часть 2): поля классификации трасс и зеркала игроков —
 	// удалены вместе с зеркалом (окружение = FTE: без серверной эмиссии игроков
 	// ezquake сущности игроков не фабрикует). Публикация player_localentnum (FTE).
@@ -1096,6 +1098,234 @@ int CSQC_Client_MapNumber (int number, int slot)
 
 /*
 =================
+E1a #371 deltalisten: движковый мост player_state → arena-edict (FTE-путь,
+pr_csqc.c `CSQC_DeltaPlayer`/`CSQC_PlayerStateToCSQC`). Мост отдаёт модулю
+авторитетное (no-lerp) состояние игроков: `self`/`.entnum` = pnum+1, поля
+origin/velocity/angles (+modelindex/skin). Модуль-калбэк зовётся как
+CSQC_Ent_Update (PARM0 = isnew) раз на новый acked-кадр (cl.parsecount).
+=================
+*/
+static int s_delta_func[MAX_MODELS];
+static int s_delta_flags[MAX_MODELS];
+// Личный маппинг player-bridge (pnum → arena slot), чтобы отличать владение от
+// svc76 (CSQC_Client_NumToSlot). num = pnum+1 (серверный entnum игрока).
+static int s_player_slot[MAX_CLIENTS];
+// E1b: delta-entity мост — номер пакетной сущности → arena slot + «виден в кадре».
+static int s_delta_slot[CSQC_MAX_NUM];
+static byte s_delta_seen[CSQC_MAX_NUM];
+
+static void CSQC_Client_DeltaReset (void)
+{
+	memset (s_delta_func, 0, sizeof (s_delta_func));
+	memset (s_delta_flags, 0, sizeof (s_delta_flags));
+	memset (s_player_slot, 0, sizeof (s_player_slot));
+	memset (s_delta_slot, 0, sizeof (s_delta_slot));
+	memset (s_delta_seen, 0, sizeof (s_delta_seen));
+}
+
+void CSQC_Client_DeltaListen (const char *model, int func, int flags)
+{
+	int i;
+	if (!model)
+		return;
+	if (!strcmp (model, "*"))
+	{
+		for (i = 0; i < MAX_MODELS; i++)
+		{
+			s_delta_func[i] = (func > 0) ? func : 0;
+			s_delta_flags[i] = flags;
+		}
+		return;
+	}
+	for (i = 1; i < MAX_MODELS; i++)
+	{
+		if (!cl.model_name[i][0])
+			break;
+		if (!strcmp (cl.model_name[i], model))
+		{
+			s_delta_func[i] = (func > 0) ? func : 0;
+			s_delta_flags[i] = flags;
+			break;
+		}
+	}
+}
+
+static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
+{
+	int pnum;
+
+	if (!vm || !vm->game_edicts || !vm->edict_size)
+		return;
+	if (cls.demoplayback || cls.mvdplayback)
+		return;		// предикция — только живая игра (как C5-A)
+	for (pnum = 0; pnum < MAX_CLIENTS; pnum++)
+	{
+		player_state_t *st = &cl.frames[cl.parsecount & UPDATE_MASK].playerstate[pnum];
+		int num = pnum + 1;
+		int slot = s_player_slot[pnum];
+		int func = 0, isnew = 0;
+
+		if (st->messagenum == cl.parsecount && st->modelindex > 0
+			&& st->modelindex < MAX_MODELS)
+			func = s_delta_func[st->modelindex];
+
+		if (!func)
+		{
+			// сущность отсутствует/без слушателя — убрать, если она была
+			if (slot)
+			{
+				if (s_csqc.func_entremove > 0)
+				{
+					CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
+					CSQC_Client_Exec (s_csqc.func_entremove);
+				}
+				CSQC_Client_NetFreeSlot (slot, num);
+				s_player_slot[pnum] = 0;
+			}
+			continue;
+		}
+
+		// svc76 уже владеет номером — не перетираем (FTE csqcent[]-guard)
+		if (!slot && CSQC_Client_NumToSlot (num))
+			continue;
+
+		if (!slot)
+		{
+			slot = CSQC_Client_NetAllocSlot ();
+			if (!slot)
+				continue;
+			CSQC_Client_MapNumber (num, slot);
+			s_player_slot[pnum] = slot;
+			isnew = 1;
+		}
+
+		CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
+
+		// Поля player_state (no-lerp: сырые значения, как FTE RSES_NOLERP).
+		{
+			float *base = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
+			if (s_csqc.f_origin >= 0)
+				VectorCopy (st->origin, base + s_csqc.f_origin);
+			if (s_csqc.f_velocity >= 0)
+				VectorCopy (st->velocity, base + s_csqc.f_velocity);
+			if (s_csqc.f_angles >= 0)
+			{
+				// viewangles сервер шлёт только в демо; локальному игроку —
+				// свежие cl.viewangles (обновляются из usercmd).
+				const float *ang = (pnum == cl.playernum) ? cl.viewangles : st->viewangles;
+				VectorCopy (ang, base + s_csqc.f_angles);
+			}
+			if (s_csqc.f_modelindex >= 0)
+				base[s_csqc.f_modelindex] = (float)st->modelindex;
+			if (s_csqc.f_skin >= 0)
+				base[s_csqc.f_skin] = (float)st->skinnum;
+			if (s_csqc.f_drawmask >= 0)
+				base[s_csqc.f_drawmask] = 1;	// MASK_DELTA (FTE pr_csqc.c:5697)
+		}
+
+		vm->globals[OFS_PARM0] = isnew ? 1 : 0;
+		CSQC_Client_Exec (func);
+		if (s_csqc.errored)
+			return;
+	}
+}
+
+/*
+=================
+E1b #371 delta-entity мост (FTE CSQC_DeltaStart/Update/End, pr_csqc.c:5719+):
+пакетные сущности кадра (entity_state_t) с зарегистрированным по модели callback'ом
+отдаются модулю как CSQC_Ent_Update (self/.entnum, PARM0 = isnew). Пропавшие в
+кадре — remove-путь. RSES_NOLERP/NOROTATE: сырое состояние (интерполяции нет);
+NOTRAILS/NOLIGHTS недействительны (в ezq CSQC нет трейлов/динамического света).
+=================
+*/
+static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
+{
+	packet_entities_t *pack;
+	int i, num;
+
+	if (!vm || !vm->game_edicts || !vm->edict_size)
+		return;
+	if (cls.demoplayback || cls.mvdplayback)
+		return;
+	if (!cl.validsequence)
+		return;
+
+	memset (s_delta_seen, 0, sizeof (s_delta_seen));
+	pack = &cl.frames[cl.validsequence & UPDATE_MASK].packet_entities;
+
+	for (i = 0; i < pack->num_entities; i++)
+	{
+		entity_state_t *es = &pack->entities[i];
+		int slot, func, isnew = 0;
+		float *base;
+
+		num = es->number;
+		if (num <= 0 || num >= CSQC_MAX_NUM)
+			continue;
+		if (es->modelindex <= 0 || es->modelindex >= MAX_MODELS)
+			continue;
+		func = s_delta_func[es->modelindex];
+		if (!func)
+			continue;
+
+		s_delta_seen[num] = 1;
+		slot = s_delta_slot[num];
+		if (!slot)
+		{
+			// svc76 уже владеет номером — не перетираем
+			if (CSQC_Client_NumToSlot (num))
+				continue;
+			slot = CSQC_Client_NetAllocSlot ();
+			if (!slot)
+				continue;
+			CSQC_Client_MapNumber (num, slot);
+			s_delta_slot[num] = slot;
+			isnew = 1;
+		}
+
+		CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
+		base = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
+		if (s_csqc.f_origin >= 0)
+			VectorCopy (es->origin, base + s_csqc.f_origin);
+		if (s_csqc.f_angles >= 0)
+			VectorCopy (es->angles, base + s_csqc.f_angles);
+		if (s_csqc.f_modelindex >= 0)
+			base[s_csqc.f_modelindex] = (float)es->modelindex;
+		if (s_csqc.f_frame >= 0)
+			base[s_csqc.f_frame] = (float)es->frame;
+		if (s_csqc.f_skin >= 0)
+			base[s_csqc.f_skin] = (float)es->skinnum;
+		if (s_csqc.f_effects >= 0)
+			base[s_csqc.f_effects] = (float)es->effects;
+		if (s_csqc.f_drawmask >= 0)
+			base[s_csqc.f_drawmask] = 1;	// MASK_DELTA (FTE pr_common.h:901)
+
+		vm->globals[OFS_PARM0] = isnew ? 1 : 0;
+		CSQC_Client_Exec (func);
+		if (s_csqc.errored)
+			return;
+	}
+
+	// пропавшие в этом кадре — remove-путь
+	for (num = 1; num < CSQC_MAX_NUM; num++)
+	{
+		int slot = s_delta_slot[num];
+		if (slot && !s_delta_seen[num])
+		{
+			if (s_csqc.func_entremove > 0)
+			{
+				CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
+				CSQC_Client_Exec (s_csqc.func_entremove);
+			}
+			CSQC_Client_NetFreeSlot (slot, num);
+			s_delta_slot[num] = 0;
+		}
+	}
+}
+
+/*
+=================
 player_localentnum (FTE pr_csqc.c:136-145)
 =================
 
@@ -1269,6 +1499,8 @@ static qbool CSQC_Client_Load (const char *path)
 	CSQC_Client_FreeArena ();
 	// C2.2: string-buffers чистить при новой загрузке модуля.
 	CSQC_Client_BufReset ();
+	// E1a #371: снять регистрации deltalisten/карту player-моста.
+	CSQC_Client_DeltaReset ();
 
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
@@ -1281,6 +1513,8 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
+	s_csqc.f_modelindex = s_csqc.f_skin = -1;
+	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
@@ -1357,6 +1591,11 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.f_flags = CSQC_Client_FindField (vm, "flags");
 	s_csqc.f_gravity = CSQC_Client_FindField (vm, "gravity");
 	s_csqc.f_pmove_flags = CSQC_Client_FindField (vm, "pmove_flags");
+	s_csqc.f_modelindex = CSQC_Client_FindField (vm, "modelindex");
+	s_csqc.f_skin = CSQC_Client_FindField (vm, "skin");
+	s_csqc.f_frame = CSQC_Client_FindField (vm, "frame");
+	s_csqc.f_effects = CSQC_Client_FindField (vm, "effects");
+	s_csqc.f_drawmask = CSQC_Client_FindField (vm, "drawmask");
 	s_csqc.g_localentnum = PR1VM_FindGlobal (vm, "player_localentnum");
 
 	// input_* глобалы для CSQC_Input_Frame (csdefs.qc: input_timelength/angles/
@@ -1598,6 +1837,13 @@ void CSQC_Client_Update (void)
 	CSQC_Client_UpdateLocalEntnum ();
 	// C5-A: окно предикции модулю (перед CSQC_UpdateView; FTE pr_csqc.c:8837-8844).
 	CSQC_Client_PatchFrames ();
+
+	// E1a/E1b #371 deltalisten: мост player_state/entity_state → arena-edict
+	// каждый кадр (FTE-модель: CL_LinkPlayers/CL_LinkPacketEntities per-frame).
+	// Модуль получает авторитетное (no-lerp) состояние игроков и delta-сущностей.
+	CSQC_Client_DeltaPlayers (vm);
+	if (!s_csqc.errored)
+		CSQC_Client_DeltaEntities (vm);
 
 	if (s_csqc.func_update > 0)
 	{
@@ -2401,6 +2647,8 @@ void CSQC_Client_Disconnect (void)
 	s_sens_scale = 1;
 	// C2.2: string-buffers очистить (deep-copy строки).
 	CSQC_Client_BufReset ();
+	// E1a #371: снять регистрации deltalisten/карту player-моста.
+	CSQC_Client_DeltaReset ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
@@ -2420,6 +2668,8 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
+	s_csqc.f_modelindex = s_csqc.f_skin = -1;
+	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;

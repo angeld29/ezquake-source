@@ -3962,16 +3962,30 @@ static void csqc_pointsound (void)
 		S_StartSound (0, 0, sfx, org, vm->globals[OFS_PARM0 + 6], vm->globals[OFS_PARM0 + 9]);
 }
 
-/* #351 SetListener / #371 deltalisten — no-op (нет аналога) */
+/* #351 SetListener / #371 deltalisten */
 static void csqc_setlistener (void)
 {
 	/* no-op (аудио-листенер фиксирован у камеры) */
 }
+/*
+float(string modelname, float(float isnew) updatecallback, float flags) deltalisten = #371
+E1a: реальная регистрация (FTE PF_DeltaListen, pr_csqc.c:5810) — реестр callback'ов
+по modelindex; движок вызывает их при обновлении сущностей (player_state-мост в
+CSQC_Client_DeltaPlayers; delta-entities — E1b). modelname="*" — все модели;
+func<=0/невалидный — снятие регистрации.
+*/
 static void csqc_deltalisten (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
+	char *model;
+	int func;
 	if (!vm)
 		return;
+	model = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	func = *(int *)&vm->globals[OFS_PARM1];
+	if (func < 0 || func >= vm->progs->numfunctions)
+		func = 0;	// невалидный указатель — снятие/no-op
+	CSQC_Client_DeltaListen (model, func, (int)vm->globals[OFS_PARM2]);
 	vm->globals[OFS_RETURN] = 0;
 }
 
