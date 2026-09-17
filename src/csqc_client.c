@@ -3086,6 +3086,7 @@ int CSQC_Client_BufGetSize (int handle)
 static int CSQC_Client_BufPush (csqc_buf_t *b, const char *s)
 {
 	char **ns;
+	int idx;
 	if (b->num >= b->cap)
 	{
 		int ncap = b->cap ? b->cap * 2 : 8;
@@ -3095,8 +3096,10 @@ static int CSQC_Client_BufPush (csqc_buf_t *b, const char *s)
 		b->str = ns;
 		b->cap = ncap;
 	}
-	b->str[b->num] = Q_strdup (s ? s : "");
-	return b->num;
+	idx = b->num;
+	b->str[idx] = Q_strdup (s ? s : "");
+	b->num++;
+	return idx;
 }
 
 int CSQC_Client_BufAdd (int handle, const char *s, int order)
