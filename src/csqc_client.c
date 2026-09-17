@@ -65,8 +65,8 @@ typedef struct csqc_client_state_s
 	int			global_time;	// смещение глобала time (или -1)
 	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
-	// C1.4 #347: field-offset'ы стандартной физики (или -1).
-	int			f_origin, f_velocity, f_mins, f_maxs;
+	// C1.4/C5-B #347: field-offset'ы стандартной физики (или -1).
+	int			f_origin, f_velocity, f_angles, f_mins, f_maxs;
 	int			f_movetype, f_flags, f_gravity, f_pmove_flags;
 	// FTE-пул Шаг 7 (часть 2): поля классификации трасс и зеркала игроков —
 	// удалены вместе с зеркалом (окружение = FTE: без серверной эмиссии игроков
@@ -1279,7 +1279,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
-	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_mins = s_csqc.f_maxs = -1;
+	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
@@ -1350,6 +1350,7 @@ static qbool CSQC_Client_Load (const char *path)
 	// C1.4 #347: поля стандартной физики (если есть в схеме модуля).
 	s_csqc.f_origin = CSQC_Client_FindField (vm, "origin");
 	s_csqc.f_velocity = CSQC_Client_FindField (vm, "velocity");
+	s_csqc.f_angles = CSQC_Client_FindField (vm, "angles");
 	s_csqc.f_mins = CSQC_Client_FindField (vm, "mins");
 	s_csqc.f_maxs = CSQC_Client_FindField (vm, "maxs");
 	s_csqc.f_movetype = CSQC_Client_FindField (vm, "movetype");
@@ -1991,49 +1992,105 @@ int CSQC_Client_InputEvent (int evtype, float a, float b, float c)
 =================
 CSQC_Client_RunPlayerPhysics
 
-C1.4 #347 runstandardplayerphysics(ent): минимум-паритет — гоняет клиентский
-PM_PlayerMove на сущности модуля из её полей + последнего отправленного usercmd
-(как FTE PF_cs_runplayerphysics, но по cl_pred-пути ezquake). Поля сущности,
-которых нет в схеме, берутся дефолтами. Полная физика/предикция — C5.
+C5-B #347 runstandardplayerphysics(ent): FTE-семантика (PF_cs_runplayerphysics,
+pr_csqc.c:4185-4299) на клиентском PM-пути ezquake (PM_PlayerMove, как cl_pred.c):
+
+- B1: команда движения — из input_*-глобалов (модуль зовёт getinputstate(seq)
+  перед #347); fallback — последний записанный usercmd (если input_* не объявлены);
+- B2: solid-набор пересобирается внутри вызова (CL_SetSolidEntities + Players);
+  поля ent .mins/.maxs/.gravity/.pmove_flags/.flags; запись .origin/.velocity/
+  .angles, .flags (FL_ONGROUND), .pmove_flags (PMF_JUMP_HELD);
+- B3: чанки ≤50 мс (как cl_pred.c:76-88) + deprec pmove_org/vel/onground.
+
+Отклонения от FTE (в ezq pmove нет соответствующих полей): skipent, .gravitydir,
+onladder → PMF_LADDER недостижим; .waterlevel/.groundent в csdefs нет; box ent
+мапится на глобальные player_mins/maxs (box других игроков — тот же глобальный).
 =================
 */
 #define CSQC_MV_WALK	3	// csdefs.qc MOVETYPE_* (FTE-нумерация)
 #define CSQC_MV_FLY		5
 #define CSQC_MV_NOCLIP	8
+#define CSQC_PMF_JUMP_HELD	1	// fteqw/engine/common/pmove.h:36
+#define CSQC_FL_ONGROUND	512	// csdefs.qc:270
 
 void CSQC_Client_RunPlayerPhysics (int entnum)
 {
+	extern vec3_t player_mins, player_maxs;
 	pr1vm_t *vm = &s_csqc.vm;
 	float *base, *o, *v;
-	int msecs, mt;
-	usercmd_t *uc;
+	vec3_t saved_mins, saved_maxs;
+	int msecs, mt, i;
 
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
 		return;
-	if (entnum < 0 || entnum >= CSQC_MAX_EDICTS || cls.state != ca_active)
-		return;
+	if (entnum <= 0 || entnum >= CSQC_MAX_EDICTS || cls.state != ca_active)
+		return;		// slot 0 = world (FTE: readonly-guard, pr_csqc.c:4197)
 	if (cls.demoplayback || cls.mvdplayback)
 		return;		// только живая игра (physents из cl)
 
 	base = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
 
-	// Последний записанный usercmd (RecordInput) — команда для физики.
-	if (!s_last_seq)
-		return;
-	uc = &s_inhist[s_last_seq % CSQC_INHIST].cmd;
-
-	// Собираем pmove (глобальный playermove_t) как FTE: поля ent + input cmd.
-	// Размеры игрока — глобальные player_mins/player_maxs pmove.c (стандарт).
 	memset (&pmove, 0, sizeof (pmove));
-	pmove.cmd = *uc;
+
+	// --- B1: вход из input_* (fallback — последний записанный usercmd) ---
+	if (s_csqc.in_timelength >= 0 || s_csqc.in_angles >= 0 || s_csqc.in_movevalues >= 0)
+	{
+		int m = (s_csqc.in_timelength >= 0)
+			? (int)(vm->globals[s_csqc.in_timelength] * 1000.0f) : 1;
+		if (m < 1)
+			m = 1;
+		else if (m > 255)
+			m = 255;
+		pmove.cmd.msec = (byte)m;
+		if (s_csqc.in_angles >= 0)
+		{
+			VectorCopy (&vm->globals[s_csqc.in_angles], pmove.cmd.angles);
+			VectorCopy (pmove.cmd.angles, pmove.angles);
+		}
+		if (s_csqc.in_movevalues >= 0)
+		{
+			pmove.cmd.forwardmove = (short)vm->globals[s_csqc.in_movevalues + 0];
+			pmove.cmd.sidemove = (short)vm->globals[s_csqc.in_movevalues + 1];
+			pmove.cmd.upmove = (short)vm->globals[s_csqc.in_movevalues + 2];
+		}
+		if (s_csqc.in_buttons >= 0)
+			pmove.cmd.buttons = (byte)vm->globals[s_csqc.in_buttons];
+		if (s_csqc.in_impulse >= 0)
+			pmove.cmd.impulse = (byte)vm->globals[s_csqc.in_impulse];
+	}
+	else
+	{
+		if (!s_last_seq)
+			return;
+		pmove.cmd = s_inhist[s_last_seq % CSQC_INHIST].cmd;
+		VectorCopy (pmove.cmd.angles, pmove.angles);
+	}
+
+	// --- B2: состояние ent ---
 	if (s_csqc.f_origin >= 0)
-		memcpy (pmove.origin, base + s_csqc.f_origin, sizeof (pmove.origin));
+		VectorCopy (base + s_csqc.f_origin, pmove.origin);
 	else
 		VectorClear (pmove.origin);
 	if (s_csqc.f_velocity >= 0)
-		memcpy (pmove.velocity, base + s_csqc.f_velocity, sizeof (pmove.velocity));
+		VectorCopy (base + s_csqc.f_velocity, pmove.velocity);
 	else
 		VectorClear (pmove.velocity);
+	if (s_csqc.f_flags >= 0)
+		pmove.onground = (((int)base[s_csqc.f_flags]) & CSQC_FL_ONGROUND) != 0;
+
+	// box ent -> глобальные player_mins/maxs (в ezq PM/SetSolidPlayers используют
+	// глобальный бокс); сохраняем и восстанавливаем после вызова.
+	VectorCopy (player_mins, saved_mins);
+	VectorCopy (player_maxs, saved_maxs);
+	if (s_csqc.f_mins >= 0 && s_csqc.f_maxs >= 0)
+	{
+		float *mn = base + s_csqc.f_mins, *mx = base + s_csqc.f_maxs;
+		if (mn[0] || mn[1] || mn[2] || mx[0] || mx[1] || mx[2])
+		{
+			VectorCopy (mn, player_mins);
+			VectorCopy (mx, player_maxs);
+		}
+	}
 
 	mt = (s_csqc.f_movetype >= 0) ? (int)base[s_csqc.f_movetype] : CSQC_MV_WALK;
 	switch (mt)
@@ -2048,33 +2105,64 @@ void CSQC_Client_RunPlayerPhysics (int entnum)
 		pmove.pm_type = PM_NORMAL;
 		break;
 	}
-	pmove.jump_held = (s_csqc.f_pmove_flags >= 0) ? (base[s_csqc.f_pmove_flags] != 0) : false;
+	pmove.jump_held = (s_csqc.f_pmove_flags >= 0)
+		? (((int)base[s_csqc.f_pmove_flags] & CSQC_PMF_JUMP_HELD) != 0) : false;
+	pmove.jump_msec = 0;
+	pmove.waterjumptime = 0;
 
 	movevars.entgravity = cl.entgravity;
 	movevars.maxspeed = cl.maxspeed;
 	movevars.bunnyspeedcap = cl.bunnyspeedcap;
+	if (s_csqc.f_gravity >= 0 && base[s_csqc.f_gravity] != 0)
+		movevars.entgravity = base[s_csqc.f_gravity];
 
-	// physents-минимум: мир + игроки (клиентский путь cl_pred).
+	// solid-набор: мир+BSP-энт (пересборка после memset) + игроки (cl_pred).
+	CL_SetSolidEntities ();
 	CL_SetSolidPlayers (cl.playernum);
 
-	msecs = uc->msec;
+	// --- B3: чанки ≤50 мс ---
+	msecs = pmove.cmd.msec;
 	if (msecs <= 0)
 		msecs = 1;
 	while (msecs > 0)
 	{
-		int step = (msecs > 255) ? 255 : msecs;
+		int step = (msecs > 50) ? 50 : msecs;
 		pmove.cmd.msec = step;
 		PM_PlayerMove ();
 		msecs -= step;
 	}
 
-	// Результат обратно в ent (доступные поля).
+	// --- результат обратно в ent ---
 	o = (s_csqc.f_origin >= 0) ? base + s_csqc.f_origin : NULL;
 	v = (s_csqc.f_velocity >= 0) ? base + s_csqc.f_velocity : NULL;
 	if (o)
-		memcpy (o, pmove.origin, 3 * sizeof (float));
+		VectorCopy (pmove.origin, o);
 	if (v)
-		memcpy (v, pmove.velocity, 3 * sizeof (float));
+		VectorCopy (pmove.velocity, v);
+	if (s_csqc.f_angles >= 0)
+		VectorCopy (pmove.angles, base + s_csqc.f_angles);
+	if (s_csqc.f_flags >= 0)
+	{
+		float *fl = base + s_csqc.f_flags;
+		*fl = (float)(pmove.onground
+			? (((int)*fl) | CSQC_FL_ONGROUND)
+			: (((int)*fl) & ~CSQC_FL_ONGROUND));
+	}
+	if (s_csqc.f_pmove_flags >= 0)
+		base[s_csqc.f_pmove_flags] = (float)(pmove.jump_held ? CSQC_PMF_JUMP_HELD : 0);
+
+	// deprec-глобалы (читает fo-модуль).
+	if (s_csqc.p_org >= 0)
+		for (i = 0; i < 3; i++)
+			vm->globals[s_csqc.p_org + i] = pmove.origin[i];
+	if (s_csqc.p_vel >= 0)
+		for (i = 0; i < 3; i++)
+			vm->globals[s_csqc.p_vel + i] = pmove.velocity[i];
+	if (s_csqc.p_onground >= 0)
+		vm->globals[s_csqc.p_onground] = pmove.onground ? 1 : 0;
+
+	VectorCopy (saved_mins, player_mins);
+	VectorCopy (saved_maxs, player_maxs);
 }
 
 /*
@@ -2330,7 +2418,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.global_time = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
-	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_mins = s_csqc.f_maxs = -1;
+	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;

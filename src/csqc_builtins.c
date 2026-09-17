@@ -1272,8 +1272,10 @@ static void csqc_getinputstate (void)
 
 /*
 void(entity ent) runstandardplayerphysics = #347
-Гоняет клиентскую стандартную физику игрока на сущности из её полей + последнего
-usercmd (C1.4, минимум-паритет по cl_pred-пути). Полная предикция — C5.
+C5-B: FTE-семантика (pr_csqc.c:4185-4299) — PM_PlayerMove по input_*-глобалам
+(модуль зовёт getinputstate(seq) перед вызовом), solid-набор мир+энт+игроки,
+поля ent (.mins/.maxs/.gravity/.pmove_flags/.flags), запись .flags/.pmove_flags +
+deprec pmove_org/vel/onground. Отклонения (нет полей в ezq pmove) — в csqc_client.c.
 */
 static void csqc_runstandardplayerphysics (void)
 {
