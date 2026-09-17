@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "mvd_utils.h"
 #include "r_matrix.h"
 #include "pmove.h"
+#include "csqc_client.h"	// C5-E Ф1: CSQC_Client_ApplyViewProps (#303)
 
 #ifdef X11_GAMMA_WORKAROUND
 #include "tr_types.h"
@@ -1030,6 +1031,10 @@ static void V_CalcRefdef(void)
 
 	//VULT CAMERAS
 	CameraUpdate(view_message.flags & PF_DEAD);
+
+	// C5-E Ф1 (#303): view-свойства CSQC-модуля применяем ДО размещения view-модели,
+	// иначе оружие берёт движковый origin и «отстаёт» от мира (V_AddViewWeapon ниже).
+	CSQC_Client_ApplyViewProps();
 
 	// meag: really viewheight shouldn't be here, but it was incorrectly passed for years instead of bob,
 	//       and so without it the gun is rendered too far forward if e.g. viewheight -6

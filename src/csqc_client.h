@@ -56,6 +56,19 @@ void CSQC_Client_UpdateLocalEntnum (void);
 // (no-lerp) состояние player_state.
 void CSQC_Client_DeltaListen (const char *model, int func, int flags);
 
+// C5-E Ф1 (no-op revision): view/listener/view_angles + project/unproject.
+// `#351 setlistener` — аудио-листенер модуля (используется в cl_main.c S_Update).
+void CSQC_Client_SetListener (const float *origin, const float *forward, const float *right, const float *up);
+qbool CSQC_Client_ListenerActive (void);
+void CSQC_Client_GetListener (float *origin, float *forward, float *right, float *up);
+// `#303 setproperty` (VF_*-подмножество): применяется после V_CalcRefdef (cl_view.c).
+void CSQC_Client_SetViewProperty (int prop, int argc, const float *args);
+void CSQC_Client_ApplyViewProps (void);
+void CSQC_Client_ResetViewProps (void);	// #300 clearscene: сброс view-свойств (FTE)
+// `#310 project` / `#311 unproject`.
+qbool CSQC_Client_Project (const float *world, float *sx, float *sy, float *sz);
+qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world);
+
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке
 void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: load + CSQC_Init

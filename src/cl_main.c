@@ -2583,7 +2583,16 @@ void CL_SoundFrame (void)
 	if (cls.state == ca_active)
 	{
 		if (!ISPAUSED) {
-			S_Update (r_origin, vpn, vright, vup);
+			// C5-E Ф1 (#351): при активном CSQC-модуле с заданным листенером
+			// звук позиционируется от него (иначе — движковый вид).
+			if (CSQC_Client_ListenerActive())
+			{
+				vec3_t lorg, lfwd, lrht, lup;
+				CSQC_Client_GetListener(lorg, lfwd, lrht, lup);
+				S_Update(lorg, lfwd, lrht, lup);
+			}
+			else
+				S_Update (r_origin, vpn, vright, vup);
 		}
 		else {
 			// do not play loop sounds (lifts etc.) when paused

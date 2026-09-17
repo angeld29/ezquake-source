@@ -23,6 +23,7 @@ csprogs.dat.
 #include "csqc_client.h"
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
 #include "common_draw.h"	// CachePic_Find/Remove, Draw_EnableScissorRectangle/DisableScissor
+#include "r_matrix.h"		// R_Project3DCoordinates/R_Get*Matrix (#310/#311)
 
 // FTE-пул (слот ≠ серверный номер; план docs/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
@@ -85,6 +86,7 @@ typedef struct csqc_client_state_s
 	int			p_org, p_vel, p_onground;
 	// #1 makevectors (C6.1): глобалы v_forward/v_right/v_up модуля (или -1).
 	int			g_vfwd, g_vright, g_vup;
+	int			g_view_angles;	// C5-E: глобал view_angles (или -1)
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -1347,6 +1349,310 @@ void CSQC_Client_UpdateLocalEntnum (void)
 
 /*
 =================
+C5-E Ф1 (no-op revision): view/listener/view_angles + project/unproject.
+
+- `view_angles` — глобал модуля, публикуется каждый кадр (FTE); значение — углы вида
+  движка (cl.viewangles).
+- `#351 setlistener` — модуль задаёт аудио-листенер; cl_main.c использует его в S_Update,
+  пока модуль активен (иначе — обычно).
+- `#303 setproperty` (подмножество VF_*) — view-origin/angles/vrect/fov модуля; применяется
+  к r_refdef после V_CalcRefdef (cl_view.c) при активном CSQC. Лаг 1 кадр: CSQC_UpdateView
+  вызывается в HUD-фазе (после 3D-рендера) — отличие от FTE, документировано.
+- `#310/#311 project/unproject` — экран↔мир через матрицы движка
+  (R_GetModelviewMatrix/R_GetProjectionMatrix/R_GetViewport, r_matrix.c).
+=================
+*/
+#define CSQC_VFP_MIN		1
+#define CSQC_VFP_MIN_X		2
+#define CSQC_VFP_MIN_Y		3
+#define CSQC_VFP_SIZE		4
+#define CSQC_VFP_SIZE_X		5
+#define CSQC_VFP_SIZE_Y		6
+#define CSQC_VFP_VIEWPORT	7
+#define CSQC_VFP_FOV		8
+#define CSQC_VFP_FOVX		9
+#define CSQC_VFP_FOVY		10
+#define CSQC_VFP_ORIGIN		11
+#define CSQC_VFP_ORIGIN_X	12
+#define CSQC_VFP_ORIGIN_Y	13
+#define CSQC_VFP_ORIGIN_Z	14
+#define CSQC_VFP_ANGLES		15
+#define CSQC_VFP_ANGLES_X	16
+#define CSQC_VFP_ANGLES_Y	17
+#define CSQC_VFP_ANGLES_Z	18
+
+static qbool s_listener_on;
+static vec3_t s_listener_org, s_listener_fwd, s_listener_rht, s_listener_up;
+
+static qbool s_vp_on;
+static qbool s_vp_origin_set, s_vp_angles_set, s_vp_vrect_set, s_vp_fovx_set, s_vp_fovy_set;
+static vec3_t s_vp_origin, s_vp_angles;
+static int s_vp_x, s_vp_y, s_vp_w, s_vp_h;
+static float s_vp_fovx, s_vp_fovy;
+
+static void CSQC_Client_ViewPropsReset (void)
+{
+	s_vp_on = false;
+	s_vp_origin_set = s_vp_angles_set = s_vp_vrect_set = false;
+	s_vp_fovx_set = s_vp_fovy_set = false;
+}
+
+static void CSQC_Client_ViewReset (void)
+{
+	s_listener_on = false;
+	VectorClear (s_listener_org);
+	VectorClear (s_listener_fwd);
+	VectorClear (s_listener_rht);
+	VectorClear (s_listener_up);
+	CSQC_Client_ViewPropsReset ();
+}
+
+// #300 clearscene: FTE сбрасывает view-свойства (модуль зовёт clearscene каждую
+// CSQC_UpdateView; без сброса #303-override «залипал» бы между кадрами).
+void CSQC_Client_ResetViewProps (void)
+{
+	CSQC_Client_ViewPropsReset ();
+}
+
+// #351 setlistener(origin, forward, right, up)
+void CSQC_Client_SetListener (const float *origin, const float *forward, const float *right, const float *up)
+{
+	VectorCopy (origin, s_listener_org);
+	VectorCopy (forward, s_listener_fwd);
+	VectorCopy (right, s_listener_rht);
+	VectorCopy (up, s_listener_up);
+	s_listener_on = true;
+}
+
+qbool CSQC_Client_ListenerActive (void)
+{
+	return s_listener_on && s_csqc.loaded && !s_csqc.errored;
+}
+
+void CSQC_Client_GetListener (float *origin, float *forward, float *right, float *up)
+{
+	VectorCopy (s_listener_org, origin);
+	VectorCopy (s_listener_fwd, forward);
+	VectorCopy (s_listener_rht, right);
+	VectorCopy (s_listener_up, up);
+}
+
+// #303 setproperty: VF_* подмножество (view). args — последовательные float-аргументы
+// после property (вектор — 3 значения, скаляр — 1).
+void CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
+{
+	switch (prop)
+	{
+	case CSQC_VFP_ORIGIN:
+		if (argc >= 3) { VectorCopy (args, s_vp_origin); s_vp_origin_set = true; }
+		break;
+	case CSQC_VFP_ORIGIN_X: s_vp_origin[0] = args[0]; s_vp_origin_set = true; break;
+	case CSQC_VFP_ORIGIN_Y: s_vp_origin[1] = args[0]; s_vp_origin_set = true; break;
+	case CSQC_VFP_ORIGIN_Z: s_vp_origin[2] = args[0]; s_vp_origin_set = true; break;
+	case CSQC_VFP_ANGLES:
+		if (argc >= 3) { VectorCopy (args, s_vp_angles); s_vp_angles_set = true; }
+		break;
+	case CSQC_VFP_ANGLES_X: s_vp_angles[0] = args[0]; s_vp_angles_set = true; break;
+	case CSQC_VFP_ANGLES_Y: s_vp_angles[1] = args[0]; s_vp_angles_set = true; break;
+	case CSQC_VFP_ANGLES_Z: s_vp_angles[2] = args[0]; s_vp_angles_set = true; break;
+	case CSQC_VFP_VIEWPORT:
+		if (argc >= 3)
+		{ s_vp_w = (int)args[0]; s_vp_h = (int)args[1]; s_vp_vrect_set = true; }
+		break;
+	case CSQC_VFP_MIN:
+		if (argc >= 2) { s_vp_x = (int)args[0]; s_vp_y = (int)args[1]; s_vp_vrect_set = true; }
+		break;
+	case CSQC_VFP_MIN_X: s_vp_x = (int)args[0]; s_vp_vrect_set = true; break;
+	case CSQC_VFP_MIN_Y: s_vp_y = (int)args[0]; s_vp_vrect_set = true; break;
+	case CSQC_VFP_SIZE:
+		if (argc >= 2) { s_vp_w = (int)args[0]; s_vp_h = (int)args[1]; s_vp_vrect_set = true; }
+		break;
+	case CSQC_VFP_SIZE_X: s_vp_w = (int)args[0]; s_vp_vrect_set = true; break;
+	case CSQC_VFP_SIZE_Y: s_vp_h = (int)args[0]; s_vp_vrect_set = true; break;
+	case CSQC_VFP_FOV:
+		if (argc >= 2) { s_vp_fovx = args[0]; s_vp_fovy = args[1]; s_vp_fovx_set = s_vp_fovy_set = true; }
+		break;
+	case CSQC_VFP_FOVX: s_vp_fovx = args[0]; s_vp_fovx_set = true; break;
+	case CSQC_VFP_FOVY: s_vp_fovy = args[0]; s_vp_fovy_set = true; break;
+	default:
+		break;	// set-флаги/без аналога — 0 (как FTE default)
+	}
+	s_vp_on = s_vp_origin_set || s_vp_angles_set || s_vp_vrect_set || s_vp_fovx_set || s_vp_fovy_set;
+}
+
+// Применяется после V_CalcRefdef (cl_view.c), только при активном CSQC-модуле.
+void CSQC_Client_ApplyViewProps (void)
+{
+	if (!s_vp_on || !s_csqc.loaded || s_csqc.errored)
+		return;
+	if (s_vp_origin_set)
+		VectorCopy (s_vp_origin, r_refdef.vieworg);
+	if (s_vp_angles_set)
+		VectorCopy (s_vp_angles, r_refdef.viewangles);
+	if (s_vp_vrect_set)
+	{
+		r_refdef.vrect.x = s_vp_x;
+		r_refdef.vrect.y = s_vp_y;
+		r_refdef.vrect.width = s_vp_w;
+		r_refdef.vrect.height = s_vp_h;
+	}
+	if (s_vp_fovx_set)
+		r_refdef.fov_x = s_vp_fovx;
+	if (s_vp_fovy_set)
+		r_refdef.fov_y = s_vp_fovy;
+}
+
+// C5-E: публикация глобала view_angles (перед CSQC_UpdateView).
+void CSQC_Client_PublishViewAngles (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.g_view_angles < 0)
+		return;
+	vm->globals[s_csqc.g_view_angles + 0] = cl.viewangles[0];
+	vm->globals[s_csqc.g_view_angles + 1] = cl.viewangles[1];
+	vm->globals[s_csqc.g_view_angles + 2] = cl.viewangles[2];
+}
+
+/*
+C5-E Ф1: #311 project / #310 unproject — семантика FTE (pr_csqc.c:1966/2012):
+clip = (model*proj) * v (наша композиция эквивалентна FTE proj*modelview),
+NDC -> экран с Y-флипом и r_refdef.vrect, глубина FTE (знак при w<0).
+Guard'ов нет (FTE-паритет); вырожденные случаи дают NaN/Inf — это диагностика.
+*/
+qbool CSQC_Client_Project (const float *world, float *sx, float *sy, float *sz)
+{
+	float model[16], proj[16], a[16], v[4], clip[4], sum;
+	float rx, ry, rw, rh;
+	int i, j, k;
+
+	R_GetModelviewMatrix (model);
+	R_GetProjectionMatrix (proj);
+
+	// a = model * proj (row-вектор)
+	for (i = 0; i < 4; i++)
+		for (j = 0; j < 4; j++)
+		{
+			sum = 0;
+			for (k = 0; k < 4; k++)
+				sum += model[i * 4 + k] * proj[k * 4 + j];
+			a[i * 4 + j] = sum;
+		}
+	v[0] = world[0]; v[1] = world[1]; v[2] = world[2]; v[3] = 1;
+	for (j = 0; j < 4; j++)
+	{
+		sum = 0;
+		for (k = 0; k < 4; k++)
+			sum += v[k] * a[k * 4 + j];
+		clip[j] = sum;
+	}
+	clip[0] /= clip[3];	// FTE: без guard (вырожденный w -> NaN/Inf)
+	clip[1] /= clip[3];
+	clip[2] /= clip[3];
+
+	rx = r_refdef.vrect.x;
+	ry = r_refdef.vrect.y;
+	rw = r_refdef.vrect.width;
+	rh = r_refdef.vrect.height;
+	*sx = (1 + clip[0]) / 2 * rw + rx;
+	*sy = (1 - (1 + clip[1]) / 2) * rh + ry;
+	*sz = clip[2];
+	if (clip[3] < 0)
+		*sz = -*sz;
+	return true;
+}
+
+// Обратная 4x4 (row-major) методом Гаусса-Жордана.
+static qbool csqc_mat4_invert (const float *m, float *out)
+{
+	float a[4][8];
+	int i, j, k;
+
+	for (i = 0; i < 4; i++)
+	{
+		for (j = 0; j < 4; j++)
+		{
+			a[i][j] = m[i * 4 + j];
+			a[i][j + 4] = (i == j) ? 1.0f : 0.0f;
+		}
+	}
+	for (i = 0; i < 4; i++)
+	{
+		int piv = i;
+		for (k = i + 1; k < 4; k++)
+			if (fabs (a[k][i]) > fabs (a[piv][i]))
+				piv = k;
+		if (fabs (a[piv][i]) < 1e-12f)
+			return false;
+		if (piv != i)
+			for (j = 0; j < 8; j++)
+			{
+				float t = a[i][j]; a[i][j] = a[piv][j]; a[piv][j] = t;
+			}
+		{
+			float d = a[i][i];
+			for (j = 0; j < 8; j++)
+				a[i][j] /= d;
+		}
+		for (k = 0; k < 4; k++)
+		{
+			float f;
+			if (k == i)
+				continue;
+			f = a[k][i];
+			for (j = 0; j < 8; j++)
+				a[k][j] -= f * a[i][j];
+		}
+	}
+	for (i = 0; i < 4; i++)
+		for (j = 0; j < 4; j++)
+			out[i * 4 + j] = a[i][j + 4];
+	return true;
+}
+
+// #310 unproject(screen x, y, depth) -> world (FTE-маппинг экран->NDC).
+qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world)
+{
+	float model[16], proj[16], a[16], inv[16], v[4], res[4], sum, tx, ty;
+	int i, j, k;
+
+	R_GetModelviewMatrix (model);
+	R_GetProjectionMatrix (proj);
+	for (i = 0; i < 4; i++)
+		for (j = 0; j < 4; j++)
+		{
+			sum = 0;
+			for (k = 0; k < 4; k++)
+				sum += model[i * 4 + k] * proj[k * 4 + j];
+			a[i * 4 + j] = sum;
+		}
+	if (!csqc_mat4_invert (a, inv))
+		return false;
+
+	tx = (sx - r_refdef.vrect.x) / r_refdef.vrect.width;
+	ty = (sy - r_refdef.vrect.y) / r_refdef.vrect.height;
+	ty = 1 - ty;
+	v[0] = tx * 2 - 1;
+	v[1] = ty * 2 - 1;
+	v[2] = sz * 2 - 1;
+	if (v[2] >= 1)
+		v[2] = 0.999999f;
+	v[3] = 1;
+	for (j = 0; j < 4; j++)
+	{
+		sum = 0;
+		for (k = 0; k < 4; k++)
+			sum += v[k] * inv[k * 4 + j];
+		res[j] = sum;
+	}
+	// FTE: деление на res[3] без guard
+	world[0] = res[0] / res[3];
+	world[1] = res[1] / res[3];
+	world[2] = res[2] / res[3];
+	return true;
+}
+
+/*
+=================
 PR1VM_LoadClientV6
 
 Client v6-loader (our csprogs.dat, classic QW version 6; v6 migration).
@@ -1501,6 +1807,7 @@ static qbool CSQC_Client_Load (const char *path)
 	CSQC_Client_BufReset ();
 	// E1a #371: снять регистрации deltalisten/карту player-моста.
 	CSQC_Client_DeltaReset ();
+	CSQC_Client_ViewReset ();
 
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
@@ -1522,6 +1829,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_ccframe = s_csqc.g_scframe = -1;
 	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
+	s_csqc.g_view_angles = -1;
 	s_last_seq = 0;
 
 	vm = &s_csqc.vm;
@@ -1616,6 +1924,8 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_vfwd = PR1VM_FindGlobal (vm, "v_forward");
 	s_csqc.g_vright = PR1VM_FindGlobal (vm, "v_right");
 	s_csqc.g_vup = PR1VM_FindGlobal (vm, "v_up");
+	// C5-E Ф1: глобал view_angles (публикуется каждый кадр).
+	s_csqc.g_view_angles = PR1VM_FindGlobal (vm, "view_angles");
 
 	s_csqc.loaded = true;
 
@@ -1837,6 +2147,8 @@ void CSQC_Client_Update (void)
 	CSQC_Client_UpdateLocalEntnum ();
 	// C5-A: окно предикции модулю (перед CSQC_UpdateView; FTE pr_csqc.c:8837-8844).
 	CSQC_Client_PatchFrames ();
+	// C5-E Ф1: view_angles модулю (FTE).
+	CSQC_Client_PublishViewAngles ();
 
 	// E1a/E1b #371 deltalisten: мост player_state/entity_state → arena-edict
 	// каждый кадр (FTE-модель: CL_LinkPlayers/CL_LinkPacketEntities per-frame).
@@ -1847,6 +2159,9 @@ void CSQC_Client_Update (void)
 
 	if (s_csqc.func_update > 0)
 	{
+		// FTE-семантика #351: листенер действует только если модуль задал его
+		// в этом кадре (иначе — движковый вид; сбрасываем перед UpdateView).
+		s_listener_on = false;
 		vm->globals[OFS_PARM0] = vid.width;
 		vm->globals[OFS_PARM1] = vid.height;
 		vm->globals[OFS_PARM2] = (key_dest == key_menu) ? 1 : 0;
@@ -2649,6 +2964,7 @@ void CSQC_Client_Disconnect (void)
 	CSQC_Client_BufReset ();
 	// E1a #371: снять регистрации deltalisten/карту player-моста.
 	CSQC_Client_DeltaReset ();
+	CSQC_Client_ViewReset ();
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
@@ -2677,6 +2993,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.g_ccframe = s_csqc.g_scframe = -1;
 	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
+	s_csqc.g_view_angles = -1;
 	s_last_seq = 0;
 }
 

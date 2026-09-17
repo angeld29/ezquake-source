@@ -533,13 +533,74 @@ static void csqc_getproperty (void)
 }
 
 /*
+vector(vector v) unproject = #310 / vector(vector v) project = #311 (C5-E Ф1).
+Экран↔мир через матрицы движка (R_GetModelviewMatrix/R_GetProjectionMatrix/
+R_GetViewport, r_matrix.c). Неудача/вырожденная матрица -> '0 0 0'.
+*/
+static void csqc_project (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float sx = 0, sy = 0, sz = 0;
+	if (!vm)
+		return;
+	if (!CSQC_Client_Project (&vm->globals[OFS_PARM0], &sx, &sy, &sz))
+		sx = sy = sz = 0;
+	vm->globals[OFS_RETURN + 0] = sx;
+	vm->globals[OFS_RETURN + 1] = sy;
+	vm->globals[OFS_RETURN + 2] = sz;
+}
+
+static void csqc_unproject (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float world[3] = { 0, 0, 0 };
+	if (!vm)
+		return;
+	if (!CSQC_Client_Unproject (vm->globals[OFS_PARM0], vm->globals[OFS_PARM0 + 1],
+		vm->globals[OFS_PARM0 + 2], world))
+		world[0] = world[1] = world[2] = 0;
+	vm->globals[OFS_RETURN + 0] = world[0];
+	vm->globals[OFS_RETURN + 1] = world[1];
+	vm->globals[OFS_RETURN + 2] = world[2];
+}
+
+/*
 void() clearscene = #300 / void(float mask) addentities = #301 /
 float(float property, ...) setproperty = #303 / void() renderscene = #304
 No-op: 3D-рендер модуля не делаем (движок рисует сам), HUD — поверх.
 */
-static void csqc_clearscene (void) { }
+static void csqc_clearscene (void)
+{
+	// FTE: clearscene сбрасывает view-свойства (#303 setproperty).
+	CSQC_Client_ResetViewProps ();
+}
 static void csqc_addentities (void) { }
-static void csqc_setproperty (void) { }
+/*
+float(float property, ...) setproperty = #303 (C5-E Ф1: подмножество view).
+Обрабатываются VF_MIN/SIZE/VIEWPORT/FOV/ORIGIN/ANGLES (и _X/_Y/_Z); значения
+применяются к r_refdef после V_CalcRefdef (cl_view.c) при активном CSQC
+(лаг 1 кадр — CSQC_UpdateView в HUD-фазе; документировано). Прочие свойства —
+no-op (как FTE default; 3D-сцена/ADR 0018 — Ф3).
+*/
+static void csqc_setproperty (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int prop, words, i;
+	float args[3];
+	if (!vm)
+		return;
+	prop = (int)vm->globals[OFS_PARM0];
+	// после property: (argc-1) QC-аргументов по 3 слова; для наших свойств <=3.
+	words = (vm->argc - 1) * 3;
+	if (words < 0)
+		words = 0;
+	if (words > 3)
+		words = 3;
+	for (i = 0; i < words; i++)
+		args[i] = vm->globals[OFS_PARM0 + 3 + i];
+	CSQC_Client_SetViewProperty (prop, words, args);
+	vm->globals[OFS_RETURN] = 0;
+}
 static void csqc_renderscene (void) { }
 
 /*
@@ -3963,9 +4024,18 @@ static void csqc_pointsound (void)
 }
 
 /* #351 SetListener / #371 deltalisten */
+/*
+void(vector origin, vector forward, vector right, vector up) setlistener = #351
+C5-E Ф1: модуль задаёт аудио-листенер; cl_main.c использует его в S_Update, пока
+модуль активен (иначе — движковый вид). FTE-паритет для предикции звука.
+*/
 static void csqc_setlistener (void)
 {
-	/* no-op (аудио-листенер фиксирован у камеры) */
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_SetListener (&vm->globals[OFS_PARM0 + 0], &vm->globals[OFS_PARM0 + 3],
+		&vm->globals[OFS_PARM0 + 6], &vm->globals[OFS_PARM0 + 9]);
 }
 /*
 float(string modelname, float(float isnew) updatecallback, float flags) deltalisten = #371
@@ -4866,8 +4936,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 244, (builtin_t)csqc_bsp_nop_vec); // #244 vector(entity ent, float tagnum) rotatevectorsbytag
 	PR1VM_RegisterBuiltin (vm, 269, (builtin_t)csqc_bsp_nop_vec); // #269 vector(float skel, float bonenum) skel_get_bonerel
 	PR1VM_RegisterBuiltin (vm, 270, (builtin_t)csqc_bsp_nop_vec); // #270 vector(float skel, float bonenum) skel_get_boneabs
-	PR1VM_RegisterBuiltin (vm, 310, (builtin_t)csqc_bsp_nop_vec); // #310 vector (vector v) unproject (EXT_CSQC)
-	PR1VM_RegisterBuiltin (vm, 311, (builtin_t)csqc_bsp_nop_vec); // #311 vector (vector v) project (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 310, (builtin_t)csqc_unproject); // #310 vector (vector v) unproject (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 311, (builtin_t)csqc_project); // #311 vector (vector v) project (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 452, (builtin_t)csqc_bsp_nop_vec); // #452 vector(entity ent, float tagindex) gettaginfo (DP_MD3_TAGSINFO)
 	PR1VM_RegisterBuiltin (vm, 493, (builtin_t)csqc_bsp_nop_vec); // #493 vector(string name)
 }
