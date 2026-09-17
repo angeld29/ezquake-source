@@ -79,6 +79,14 @@ static void CSQCVM_SetRetStr (char *s)
 		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
 }
 
+// Entity values in the client VM are raw int bit offsets (N*edict_size), the same
+// convention as the interpreter's entity opcodes (OP_STORE_ENT/PR1VM_ProgToEdict)
+// and FTE (G_EDICT/G_INT). All builtins must read entity args and write entity
+// returns through these helpers; a float cast/assignment corrupts the bits.
+// Defined below (entity section); forward-declared for the #347/#459/te_beam users.
+static int csqc_ent_of (pr1vm_t *vm, int parmofs);
+static void csqc_ret_entity (pr1vm_t *vm, int entnum);
+
 /*
 void(string s, ...) dprint = #25
 */
@@ -1276,6 +1284,8 @@ C5-B: FTE-семантика (pr_csqc.c:4185-4299) — PM_PlayerMove по input_
 (модуль зовёт getinputstate(seq) перед вызовом), solid-набор мир+энт+игроки,
 поля ent (.mins/.maxs/.gravity/.pmove_flags/.flags), запись .flags/.pmove_flags +
 deprec pmove_org/vel/onground. Отклонения (нет полей в ezq pmove) — в csqc_client.c.
+Entity-аргумент — сырые int-биты (csqc_ent_of, как FTE G_EDICT): float-чтение
+обращало значение spawn() (int-биты N*edict_size) в 0 — квирк C5-B.
 */
 static void csqc_runstandardplayerphysics (void)
 {
@@ -1283,15 +1293,14 @@ static void csqc_runstandardplayerphysics (void)
 	int entnum;
 	if (!vm)
 		return;
-	entnum = (int)vm->globals[OFS_PARM0];
-	if (vm->edict_size > 0)
-		entnum /= vm->edict_size;
+	entnum = csqc_ent_of (vm, OFS_PARM0);
 	CSQC_Client_RunPlayerPhysics (entnum);
 }
 
 /*
 entity(float entnum) edict_num = #459
-C2.1: entity-значение по номеру (N*edict_size), как self в SetEntityContext.
+C2.1: entity-значение по номеру — сырые int-биты N*edict_size (как self в
+SetEntityContext и spawn), FTE PF_edict_for_num пишет G_INT(OFS_RETURN), а не float.
 Вне диапазона арены -> 0 (world).
 */
 static void csqc_edict_num (void)
@@ -1303,10 +1312,10 @@ static void csqc_edict_num (void)
 	entnum = (int)vm->globals[OFS_PARM0];
 	if (entnum < 0 || vm->max_edicts <= 0 || entnum >= vm->max_edicts)
 	{
-		vm->globals[OFS_RETURN] = 0;
+		csqc_ret_entity (vm, 0);
 		return;
 	}
-	vm->globals[OFS_RETURN] = entnum * vm->edict_size;
+	csqc_ret_entity (vm, entnum);
 }
 
 /*
@@ -1723,7 +1732,7 @@ static void csqc_te_lavasplash (void)
 
 /*
 C3.3b — beams #428-431 (te_lightning1/2/3, te_beam): CL_CreateBeam(type, ent, start, end)
-(cl_tent.c:439). own-entity -> entnum (handle/edict_size, guard). Аппроксимация.
+(cl_tent.c:439). own-entity -> entnum (сырые int-биты через csqc_ent_of). Аппроксимация.
 #431-fix (C6.1): если модель эффекта отсутствует (напр. progs/beam.mdl в стенде) —
 Con_Printf-варн и no-op, БЕЗ host error/disconnect (Mod_CustomModel(crash=false);
 CL_CreateBeam сам грузит с crash=true и рвёт коннект).
@@ -1766,9 +1775,7 @@ static void csqc_te_beam_type (int type)
 			type, CSQC_BeamModelName (type));
 		return;
 	}
-	entnum = (int)g[OFS_PARM0];
-	if (vm->edict_size > 0)
-		entnum /= vm->edict_size;
+	entnum = csqc_ent_of (vm, OFS_PARM0);
 	CL_CreateBeam (type, entnum, &g[OFS_PARM0 + 3], &g[OFS_PARM0 + 6]);
 }
 static void csqc_te_lightning1 (void) { csqc_te_beam_type (1); }
