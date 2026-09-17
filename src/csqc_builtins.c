@@ -581,10 +581,10 @@ static void csqc_clearscene (void)
 /*
 void(float mask) addentities = #301 (Ф3 takeover).
 FTE PF_R_AddEntityMask (pr_csqc.c:1380): mask&1 (MASK_DELTA=MASK_ENGINE) —
-движковая сцена (CL_EmitEntities: мир/игроки/энтити); прочие биты — CSQC-эдикты
-арены с `drawmask & mask` (единый arena-обход). mask&2 (MASK_STDVIEWMODEL) в ezq
-no-op: вьюмодель рисует движок сам (отклонение, parity). predraw пока не зовём
-(документированное отклонение — отдельным шагом).
+движковая сцена (CL_EmitEntities: мир/игроки/энтити); затем обход CSQC-эдиктов
+арены по ВСЕМУ mask (`drawmask & mask`), как в FTE. mask&2 (MASK_STDVIEWMODEL)
+в ezq no-op: вьюмодель рисует движок сам (отклонение, parity). predraw пока не
+зовём (документированное отклонение — отдельным шагом).
 */
 static void csqc_addentities (void)
 {
@@ -595,17 +595,16 @@ static void csqc_addentities (void)
 	mask = (int)vm->globals[OFS_PARM0];
 	if (mask & 1)
 		CL_EmitEntities ();
-	if (mask & ~1)
-		for (e = 1; e < vm->num_edicts; e++)
-		{
-			float *dm;
-			if (!CSQC_Client_EntUsed (e))
-				continue;
-			dm = csqc_ent_field (vm, e, "drawmask");
-			if (!dm || !((int)dm[0] & mask))
-				continue;
-			csqc_add_one_entity (e);
-		}
+	for (e = 1; e < vm->num_edicts; e++)
+	{
+		float *dm;
+		if (!CSQC_Client_EntUsed (e))
+			continue;
+		dm = csqc_ent_field (vm, e, "drawmask");
+		if (!dm || !((int)dm[0] & mask))
+			continue;
+		csqc_add_one_entity (e);
+	}
 }
 /*
 float(float property, ...) setproperty = #303 (C5-E Ф1: подмножество view).
@@ -2975,8 +2974,27 @@ static void csqc_precache_model (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *n = CSQCVM_Str (OFS_PARM0);
 	if (vm && n && n[0])
-		Mod_ForName (n, false);
+		CSQC_Client_ModelIndex (n);	// Ф3: загрузка + регистрация в CSQC-реестре
 	CSQCVM_SetRetStr (n ? n : "");
+}
+
+/*
+float(string modelname, optional float queryonly) getmodelindex = #200 (Ф3).
+Индекс модели в CSQC-реестре (name→Mod_ForName); FTE PF_getmodelindex. queryonly!=0 —
+только поиск уже зарегистрированной (без загрузки); иначе — зарегистрировать.
+Отклонение: единый реестр поверх Mod_ForName (у FTE — отдельное пространство индексов).
+*/
+static void csqc_getmodelindex (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *n;
+	int queryonly;
+	if (!vm)
+		return;
+	n = CSQCVM_Str (OFS_PARM0);
+	queryonly = (vm->argc > 1) ? (int)vm->globals[OFS_PARM1] : 0;
+	vm->globals[OFS_RETURN] = (float)(queryonly
+		? CSQC_Client_ModelIndexKnown (n) : CSQC_Client_ModelIndex (n));
 }
 
 /*
@@ -3119,12 +3137,23 @@ static void csqc_add_one_entity (int e)
 	slot = csqc_ent_slot (vm, e);
 	if (!slot)
 		return;
-	if ((ofs = CSQC_Client_FindField (vm, "model")) < 0)
-		return;
-	mname = PR1VM_GetString (vm, (string_t)*(int *)&slot[ofs]);
-	if (!mname || !mname[0])
-		return;
-	model = Mod_ForName (mname, false);
+	// model: .modelindex (Ф3, FTE-паритет) с fallback на .model-строку
+	model = NULL;
+	if ((ofs = CSQC_Client_FindField (vm, "modelindex")) >= 0)
+	{
+		int mi = (int)slot[ofs];
+		if (mi > 0)
+			model = CSQC_Client_ModelForIndex (mi);
+	}
+	if (!model)
+	{
+		if ((ofs = CSQC_Client_FindField (vm, "model")) < 0)
+			return;
+		mname = PR1VM_GetString (vm, (string_t)*(int *)&slot[ofs]);
+		if (!mname || !mname[0])
+			return;
+		model = Mod_ForName (mname, false);
+	}
 	if (!model)
 		return;
 
@@ -3197,13 +3226,28 @@ static void csqc_setmodel (void)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
 	s = CSQCVM_Str (OFS_PARM0 + 3);
-	ofs = CSQC_Client_FindField (vm, "model");
-	if (ofs < 0 || !s)
-		return;
 	slot = csqc_ent_slot (vm, e);
-	if (!slot)
+	if (!slot || !s)
 		return;
-	PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s);
+	ofs = CSQC_Client_FindField (vm, "model");
+	if (ofs >= 0)
+		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s);
+	// Ф3: .modelindex из CSQC-реестра (рендер arena-эдиктов по индексу, FTE-паритет)
+	ofs = CSQC_Client_FindField (vm, "modelindex");
+	if (ofs >= 0)
+		slot[ofs] = (float)CSQC_Client_ModelIndex (s);
+}
+
+/* void(entity e, float mdlindex) setmodelindex = #333 (Ф3) */
+static void csqc_setmodelindex (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float *f;
+	if (!vm)
+		return;
+	f = csqc_ent_field (vm, csqc_ent_of (vm, OFS_PARM0), "modelindex");
+	if (f)
+		f[0] = (float)(int)vm->globals[OFS_PARM0 + 3];
 }
 
 /* void(entity e, vector min, vector max) setsize = #4 */
@@ -4934,7 +4978,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 306, (builtin_t)csqc_vmrest_nop); // #306 void(string texturename) R_BeginPolygon (EXT_CSQC_???)
 	PR1VM_RegisterBuiltin (vm, 307, (builtin_t)csqc_vmrest_nop); // #307 void(vector org, vector texcoords, vector rgb, float alpha) R_PolygonVertex (EXT_CSQC_???)
 	PR1VM_RegisterBuiltin (vm, 308, (builtin_t)csqc_vmrest_nop); // #308 void() R_EndPolygon (EXT_CSQC_???)
-	PR1VM_RegisterBuiltin (vm, 333, (builtin_t)csqc_vmrest_nop); // #333 void(entity e, float mdlindex) setmodelindex (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 333, (builtin_t)csqc_setmodelindex); // #333 void(entity e, float mdlindex) setmodelindex (EXT_CSQC; Ф3)
 	PR1VM_RegisterBuiltin (vm, 385, (builtin_t)csqc_vmrest_nop); // #385 void(__variant *ptr) memfree — no-op v6 (ADR 0020): типизированный указатель (нет pointer-модели в v6)
 	PR1VM_RegisterBuiltin (vm, 386, (builtin_t)csqc_vmrest_nop); // #386 void(__variant *dst, __variant *src, int size) memcpy — no-op v6 (ADR 0020): типизированный указатель (нет pointer-модели в v6)
 	PR1VM_RegisterBuiltin (vm, 387, (builtin_t)csqc_vmrest_nop); // #387 void(__variant *dst, int val, int size) memfill8 — no-op v6 (ADR 0020): типизированный указатель (нет pointer-модели в v6)
@@ -4975,7 +5019,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 742, (builtin_t)csqc_vmrest_nop); // #742 void() controller_rumbletriggers
 	// L2 заглушки: FLOAT0 (49) — тип-correct no-op.
 	PR1VM_RegisterBuiltin (vm, 110, (builtin_t)csqc_light_nop_ret0); // #110 float(string strname, float accessmode) fopen (FRIK_FILE)
-	PR1VM_RegisterBuiltin (vm, 200, (builtin_t)csqc_light_nop_ret0); // #200 float(string modelname, optional float queryonly) getmodelindex
+	PR1VM_RegisterBuiltin (vm, 200, (builtin_t)csqc_getmodelindex); // #200 float(string modelname, optional float queryonly) getmodelindex (Ф3)
 	PR1VM_RegisterBuiltin (vm, 201, (builtin_t)csqc_light_nop_ret0); // #201 __variant(float prnum, string funcname, ...) externcall — no-op v6 (ADR 0020): variant-обмен между VM (типов нет в v6)
 	PR1VM_RegisterBuiltin (vm, 202, (builtin_t)csqc_light_nop_ret0); // #202 float(string progsname) addprogs
 	PR1VM_RegisterBuiltin (vm, 203, (builtin_t)csqc_light_nop_ret0); // #203 __variant(float prnum, string varname) externvalue — no-op v6 (ADR 0020): variant-чтение другой проги (типов нет в v6)

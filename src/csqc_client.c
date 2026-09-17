@@ -790,6 +790,60 @@ qbool CSQC_Client_SceneRendered (void)
 
 /*
 =================
+Ф3: CSQC-реестр моделей
+
+#20/#75 precache_model регистрирует модель (имя→model_t*, индекс 1-based); #200
+getmodelindex / #333 setmodelindex и поле `.modelindex` работают с этим индексом
+(отклонение от FTE: у FTE отдельное пространство индексов для csqc-only моделей;
+у нас — единый реестр поверх Mod_ForName). Индекс module-opaque.
+=================
+*/
+#define CSQC_MAX_MODELS 512
+static struct model_s *s_models[CSQC_MAX_MODELS];
+static char s_modelnames[CSQC_MAX_MODELS][MAX_QPATH];
+static int s_nmodels;
+
+int CSQC_Client_ModelIndexKnown (const char *name)
+{
+	int i;
+	if (!name || !name[0])
+		return 0;
+	for (i = 0; i < s_nmodels; i++)
+		if (!strcmp (s_modelnames[i], name))
+			return i + 1;
+	return 0;
+}
+
+int CSQC_Client_ModelIndex (const char *name)
+{
+	struct model_s *m;
+	int idx = CSQC_Client_ModelIndexKnown (name);
+	if (idx || !name || !name[0])
+		return idx;
+	if (s_nmodels >= CSQC_MAX_MODELS)
+		return 0;
+	m = Mod_ForName (name, false);
+	if (!m)
+		return 0;
+	strlcpy (s_modelnames[s_nmodels], name, MAX_QPATH);
+	s_models[s_nmodels] = m;
+	return ++s_nmodels;
+}
+
+struct model_s *CSQC_Client_ModelForIndex (int idx)
+{
+	return (idx >= 1 && idx <= s_nmodels) ? s_models[idx - 1] : NULL;
+}
+
+void CSQC_Client_ModelReset (void)
+{
+	memset (s_modelnames, 0, sizeof (s_modelnames));
+	memset (s_models, 0, sizeof (s_models));
+	s_nmodels = 0;
+}
+
+/*
+=================
 CSQC_Client_ValidateFile
 
 Проверяет локальный файл csprogs по серверным ключам: размер == *csprogssize
@@ -2054,6 +2108,7 @@ static qbool CSQC_Client_Load (const char *path)
 	// E1a #371: снять регистрации deltalisten/карту player-моста.
 	CSQC_Client_DeltaReset ();
 	CSQC_Client_ViewReset ();
+	CSQC_Client_ModelReset ();	// Ф3: CSQC-реестр моделей чистится при загрузке
 
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
@@ -3212,6 +3267,7 @@ void CSQC_Client_Disconnect (void)
 	CSQC_Client_DeltaReset ();
 	CSQC_Client_ViewReset ();
 	s_scene_rendered = false;	// Ф3: takeover-сцена сброшена
+	CSQC_Client_ModelReset ();	// Ф3: CSQC-реестр моделей
 	memset (&s_csqc, 0, sizeof (s_csqc));
 	memset (s_csqc_stat, 0, sizeof (s_csqc_stat));
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));

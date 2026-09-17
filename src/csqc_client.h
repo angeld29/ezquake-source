@@ -73,6 +73,13 @@ qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world);
 // vector -> все три); поля без ezq-источника -> FTE-дефолт (отклонение, parity).
 void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3]);
 
+// Ф3: CSQC-реестр моделей (имя → model_t*, индекс 1-based для #200/#333 и поля
+// .modelindex). IndexKnown — только поиск (queryonly); Index — поиск или загрузка.
+int CSQC_Client_ModelIndexKnown (const char *name);	// 0 если не зарегистрирована
+int CSQC_Client_ModelIndex (const char *name);		// 0 если не загрузилась
+struct model_s *CSQC_Client_ModelForIndex (int idx);	// NULL если нет
+void CSQC_Client_ModelReset (void);
+
 // Точки вызова клиентского жизненного цикла CSQC-VM:
 int CSQC_Client_Active (void);			// модуль загружен и не в ошибке
 void CSQC_Client_ConnectCheck (void);	// после полного serverinfo: load + CSQC_Init
