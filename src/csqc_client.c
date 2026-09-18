@@ -766,6 +766,7 @@ int CSQC_Client_Active (void)
 =================
 */
 static qbool s_scene_rendered = false;
+static qbool s_scene_viewmodel = false;	// C4 Э2: #301 mask&MASK_STDVIEWMODEL запрошен
 
 qbool CSQC_Client_SceneActive (void)
 {
@@ -775,6 +776,18 @@ qbool CSQC_Client_SceneActive (void)
 void CSQC_Client_BeginScene (void)
 {
 	s_scene_rendered = false;
+	s_scene_viewmodel = false;
+}
+
+// C4 Э2 (#301 mask&2): модуль запросил движковую вьюмодель в сцене (FTE CL_LinkViewModel).
+void CSQC_Client_LinkViewModel (void)
+{
+	s_scene_viewmodel = true;
+}
+
+qbool CSQC_Client_SceneViewModel (void)
+{
+	return s_scene_viewmodel;
 }
 
 void CSQC_Client_RenderScene (void)

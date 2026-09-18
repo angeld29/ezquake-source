@@ -581,10 +581,9 @@ static void csqc_clearscene (void)
 /*
 void(float mask) addentities = #301 (Ф3 takeover).
 FTE PF_R_AddEntityMask (pr_csqc.c:1380): mask&1 (MASK_DELTA=MASK_ENGINE) —
-движковая сцена (CL_EmitEntities: мир/игроки/энтити); затем обход CSQC-эдиктов
-арены по ВСЕМУ mask (`drawmask & mask`), как в FTE. mask&2 (MASK_STDVIEWMODEL)
-в ezq no-op: вьюмодель рисует движок сам (отклонение, parity). predraw пока не
-зовём (документированное отклонение — отдельным шагом).
+движковая сцена (CL_EmitEntities: мир/игроки/энтити); mask&2 (MASK_STDVIEWMODEL) —
+движковая вьюмодель (C4 Э2, FTE CL_LinkViewModel); затем обход CSQC-эдиктов
+арены по ВСЕМУ mask (`drawmask & mask`), как в FTE.
 */
 static void csqc_addentities (void)
 {
@@ -595,6 +594,8 @@ static void csqc_addentities (void)
 	mask = (int)vm->globals[OFS_PARM0];
 	if (mask & 1)
 		CL_EmitEntities ();
+	if (mask & 2)
+		CSQC_Client_LinkViewModel ();
 	for (e = 1; e < vm->num_edicts; e++)
 	{
 		float *dm;

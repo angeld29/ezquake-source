@@ -93,6 +93,9 @@ qbool CSQC_Client_SceneActive (void);	// модуль активен && есть
 void CSQC_Client_BeginScene (void);		// сброс флага «renderscene вызван в этом кадре»
 void CSQC_Client_RenderScene (void);	// #304 renderscene -> R_RenderView()
 qbool CSQC_Client_SceneRendered (void);	// вызывался ли renderscene в текущем кадре
+// C4 Э2 (#301 mask&2): модуль запросил движковую вьюмодель в CSQC-сцене (FTE CL_LinkViewModel).
+void CSQC_Client_LinkViewModel (void);
+qbool CSQC_Client_SceneViewModel (void);	// запрошена ли вьюмодель в текущем кадре
 // C4 #301/#302: вызов .predraw эдикта арены (self=slot; FTE pr_csqc.c:1450-1457).
 // Возврат = OFS_RETURN (PREDRAW_AUTOADD=0 -> добавлять, !=0 -> пропустить); *removed —
 // эдикт удалён/ошибка исполнения внутри predraw. Контекст self восстанавливается.
