@@ -55,6 +55,10 @@ void CSQC_Client_UpdateLocalEntnum (void);
 // func<=0 — снятие регистрации. Слушатель игроков получает авторитетное
 // (no-lerp) состояние player_state.
 void CSQC_Client_DeltaListen (const char *model, int func, int flags);
+// C4 Э3 (MASK_DELTA): delta-callback вернул !=0 → движок не рисует сущность
+// (рисует модуль через #301); геттеры для cl_ents.c.
+qbool CSQC_Client_DeltaPlayerOwned (int pnum);
+qbool CSQC_Client_DeltaEntityOwned (int number);
 
 // C5-E Ф1 (no-op revision): view/listener/view_angles + project/unproject.
 // `#351 setlistener` — аудио-листенер модуля (используется в cl_main.c S_Update).

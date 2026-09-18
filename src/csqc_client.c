@@ -707,6 +707,22 @@ static qbool CSQC_Client_Exec (int fidx)
 	return !s_csqc.errored;
 }
 
+/* C4 Э3: как CSQC_Client_Exec, но возвращает G_FLOAT(OFS_RETURN) модуля
+ * (для delta-callback: возврат != 0 = «движок не рисует сущность»). */
+static qbool CSQC_Client_ExecRet (int fidx, float *ret)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	if (ret)
+		*ret = 0;
+	if (fidx <= 0 || fidx >= vm->progs->numfunctions)
+		return false;
+	CSQC_Client_SetTime ();
+	PR1VM_ExecuteProgram (vm, (func_t)fidx);
+	if (ret)
+		*ret = vm->globals[OFS_RETURN];
+	return !s_csqc.errored;
+}
+
 static void CSQC_Client_ClearCommands (void)
 {
 	int i;
@@ -1264,6 +1280,9 @@ static int s_player_slot[MAX_CLIENTS];
 // E1b: delta-entity мост — номер пакетной сущности → arena slot + «виден в кадре».
 static int s_delta_slot[CSQC_MAX_NUM];
 static byte s_delta_seen[CSQC_MAX_NUM];
+// C4 Э3 (MASK_DELTA): callback вернул !=0 → движок не рисует сущность (рисует модуль).
+static byte s_delta_player_owned[MAX_CLIENTS];
+static byte s_delta_ent_owned[CSQC_MAX_NUM];
 
 static void CSQC_Client_DeltaReset (void)
 {
@@ -1272,6 +1291,19 @@ static void CSQC_Client_DeltaReset (void)
 	memset (s_player_slot, 0, sizeof (s_player_slot));
 	memset (s_delta_slot, 0, sizeof (s_delta_slot));
 	memset (s_delta_seen, 0, sizeof (s_delta_seen));
+	memset (s_delta_player_owned, 0, sizeof (s_delta_player_owned));
+	memset (s_delta_ent_owned, 0, sizeof (s_delta_ent_owned));
+}
+
+// C4 Э3: геттеры для CL_LinkPlayers/CL_LinkPacketEntities (cl_ents.c).
+qbool CSQC_Client_DeltaPlayerOwned (int pnum)
+{
+	return (pnum >= 0 && pnum < MAX_CLIENTS && s_delta_player_owned[pnum]) ? true : false;
+}
+
+qbool CSQC_Client_DeltaEntityOwned (int number)
+{
+	return (number > 0 && number < CSQC_MAX_NUM && s_delta_ent_owned[number]) ? true : false;
 }
 
 void CSQC_Client_DeltaListen (const char *model, int func, int flags)
@@ -1309,6 +1341,7 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 		return;
 	if (cls.demoplayback || cls.mvdplayback)
 		return;		// предикция — только живая игра (как C5-A)
+	memset (s_delta_player_owned, 0, sizeof (s_delta_player_owned));
 	for (pnum = 0; pnum < MAX_CLIENTS; pnum++)
 	{
 		player_state_t *st = &cl.frames[cl.parsecount & UPDATE_MASK].playerstate[pnum];
@@ -1375,7 +1408,12 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 		}
 
 		vm->globals[OFS_PARM0] = isnew ? 1 : 0;
-		CSQC_Client_Exec (func);
+		{
+			// C4 Э3: возврат callback !=0 → движок не рисует этого игрока (рисует модуль).
+			float pret = 0;
+			if (CSQC_Client_ExecRet (func, &pret) && pret != 0)
+				s_delta_player_owned[pnum] = 1;
+		}
 		if (s_csqc.errored)
 			return;
 	}
@@ -1403,6 +1441,7 @@ static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
 		return;
 
 	memset (s_delta_seen, 0, sizeof (s_delta_seen));
+	memset (s_delta_ent_owned, 0, sizeof (s_delta_ent_owned));
 	pack = &cl.frames[cl.validsequence & UPDATE_MASK].packet_entities;
 
 	for (i = 0; i < pack->num_entities; i++)
@@ -1453,7 +1492,12 @@ static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
 			base[s_csqc.f_drawmask] = 1;	// MASK_DELTA (FTE pr_common.h:901)
 
 		vm->globals[OFS_PARM0] = isnew ? 1 : 0;
-		CSQC_Client_Exec (func);
+		{
+			// C4 Э3: возврат callback !=0 → движок не рисует эту пакетную сущность.
+			float pret = 0;
+			if (CSQC_Client_ExecRet (func, &pret) && pret != 0)
+				s_delta_ent_owned[num] = 1;
+		}
 		if (s_csqc.errored)
 			return;
 	}
