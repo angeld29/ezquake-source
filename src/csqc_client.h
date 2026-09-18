@@ -93,6 +93,10 @@ qbool CSQC_Client_SceneActive (void);	// модуль активен && есть
 void CSQC_Client_BeginScene (void);		// сброс флага «renderscene вызван в этом кадре»
 void CSQC_Client_RenderScene (void);	// #304 renderscene -> R_RenderView()
 qbool CSQC_Client_SceneRendered (void);	// вызывался ли renderscene в текущем кадре
+// C4 #301/#302: вызов .predraw эдикта арены (self=slot; FTE pr_csqc.c:1450-1457).
+// Возврат = OFS_RETURN (PREDRAW_AUTOADD=0 -> добавлять, !=0 -> пропустить); *removed —
+// эдикт удалён/ошибка исполнения внутри predraw. Контекст self восстанавливается.
+float CSQC_Client_CallPredraw (int slot, int fidx, qbool *removed);
 
 // CSQC_Input_Frame: перед отправкой каждого usercmd (CL_SendCmd, cl_input.c).
 // Движок заполняет input_* глобалы из cmd, исполняет модуль и пишет обратно

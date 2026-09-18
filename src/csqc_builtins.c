@@ -3121,7 +3121,9 @@ static void csqc_ret_entity (pr1vm_t *vm, int entnum)
 Ф3 (takeover): arena-эдикт -> ezq entity_t -> cl_visents (#301 arena / #302).
 FTE CopyCSQCEdictToEntity берёт .modelindex; у нас modelindex-библиотека ещё
 заглушки (#200/#333), поэтому модель берём по `.model`-строке через Mod_ForName
-(отклонение, отдельный шаг). .scale/.renderflags/.predraw не применяются (откл.).
+(отклонение, отдельный шаг). C4 Этап 1: .predraw вызывается до чтения полей
+(FTE pr_csqc.c:1450-1457), .renderflags мапится в ent.renderfx (подмножество CSQCRF_*).
+.scale не применяется — вынесено отдельно (docs/plans/ezquake_csqc_client_scale.md).
 */
 static void csqc_add_one_entity (int e)
 {
@@ -3134,6 +3136,19 @@ static void csqc_add_one_entity (int e)
 
 	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
 		return;
+
+	// C4 Этап 1: .predraw (FTE pr_csqc.c:1450-1457). Возврат != PREDRAW_AUTOADD(0)
+	// или удаление эдикта -> не добавлять. RF_NOAUTOADD в FTE удалён (pr_common.h:881)
+	// в пользу возврата predraw — не проверяем. Function-значение поля — сырые int-биты
+	// (EV_FUNCTION): читаем как int, а не через float (иначе denormal -> 0).
+	if ((f = csqc_ent_field (vm, e, "predraw")) && *(int *)&f[0] > 0)
+	{
+		qbool removed = false;
+		float pret = CSQC_Client_CallPredraw (e, *(int *)&f[0], &removed);
+		if (removed || pret != 0)
+			return;
+	}
+
 	slot = csqc_ent_slot (vm, e);
 	if (!slot)
 		return;
@@ -3168,6 +3183,19 @@ static void csqc_add_one_entity (int e)
 	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];
+	// C4 Этап 1: .renderflags (CSQCRF_*) -> ent.renderfx (RF_*). Маппим доступное
+	// подмножество (FTE pr_csqc.c:773-799); DEPTHHACK/EXTERNALMODEL/FIRSTPERSON/USEAXIS
+	// без прямого ezq-аналога — отклонение (parity-audit).
+	if ((f = csqc_ent_field (vm, e, "renderflags")))
+	{
+		int rflags = (int)f[0];
+		if (rflags & 1)		// CSQCRF_VIEWMODEL
+			ent.renderfx |= RF_WEAPONMODEL;
+		if (rflags & 32)	// CSQCRF_NOSHADOW
+			ent.renderfx |= RF_NOSHADOW;
+		if (rflags & 8)		// CSQCRF_ADDITIVE
+			ent.renderfx |= RF_ADDITIVEBLEND;
+	}
 
 	CL_AddEntity (&ent);
 }

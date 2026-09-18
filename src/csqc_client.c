@@ -790,6 +790,53 @@ qbool CSQC_Client_SceneRendered (void)
 
 /*
 =================
+C4 Этап 1: CSQC_Client_CallPredraw
+
+Вызов .predraw эдикта арены при #301/#302 (FTE PF_R_AddEntityMask, pr_csqc.c:1450-1457):
+self = slot*edict_size, исполнение, возврат G_FLOAT(OFS_RETURN). Модуль через возврат решает
+авто-добавление (PREDRAW_AUTOADD=0) или пропуск (!=0). Если predraw удалил эдикт или исполнение
+упало — *removed=1 (не добавлять). self восстанавливается (как FTE `*csqcg.self = oldself`).
+.entnum не трогаем (в отличие от SetContextSlot — FTE тоже не переписывает его в addentities).
+=================
+*/
+float CSQC_Client_CallPredraw (int slot, int fidx, qbool *removed)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	float ret = 0;
+	int oldself = 0;
+
+	if (removed)
+		*removed = false;
+	if (!vm || !vm->game_edicts || fidx <= 0)
+		return 0;
+	if (!CSQC_Client_EntUsed (slot))
+	{
+		if (removed)
+			*removed = true;
+		return 0;
+	}
+
+	if (s_csqc.global_self >= 0)
+	{
+		oldself = *(int *)&vm->globals[s_csqc.global_self];
+		*(int *)&vm->globals[s_csqc.global_self] = (int)slot * vm->edict_size;
+	}
+
+	if (CSQC_Client_Exec (fidx))
+		ret = vm->globals[OFS_RETURN];
+	else if (removed)
+		*removed = true;
+
+	if (s_csqc.global_self >= 0)
+		*(int *)&vm->globals[s_csqc.global_self] = oldself;
+
+	if (removed && !CSQC_Client_EntUsed (slot))
+		*removed = true;
+	return ret;
+}
+
+/*
+=================
 Ф3: CSQC-реестр моделей
 
 #20/#75 precache_model регистрирует модель (имя→model_t*, индекс 1-based); #200
