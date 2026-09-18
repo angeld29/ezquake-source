@@ -34,7 +34,7 @@ static pr1vm_t *CSQCVM_Active (void)
 	return PR1VM_Active ();
 }
 
-// Phase 1 L1 P1a (ADR 0019 / docs/plans/ezquake_csqc_client_corebuiltins_plan.md):
+// Phase 1 L1 P1a (ADR 0019 / docs/archive/ezquake_csqc_client_corebuiltins_plan.md):
 // реюз чистых float/vector-тел серверных builtins на клиентском инстансе.
 // Тела не трогают строки/edict/sv-состояние, а аргументы/возврат читают через
 // G_* макросы (pr_globals) — attach в PR1VM_ExecuteProgram делает pr_globals

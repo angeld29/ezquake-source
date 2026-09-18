@@ -1387,7 +1387,7 @@ void CL_ClearState (void)
 	// CSQC: выгружаем клиентский инстанс модуля до отката hunk
 	// (Host_ClearMemory освобождает данные csprogs.dat и cmd-узлы выше
 	// host_hunklevel; держать их после этого нельзя — см. фикс краша при
-	// смене карты, docs/plans/ezquake_csqc_client_pr1vm_plan.md «S1 — баги»).
+	// смене карты, docs/archive/ezquake_csqc_client_pr1vm_plan.md «S1 — баги»).
 	CSQC_Client_Disconnect ();
 #endif
 
