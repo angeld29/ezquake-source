@@ -4271,8 +4271,10 @@ void CL_ParseServerMessage (void)
 				{
 					// Sized cgamepacket (90, mvdsv под sv_csqcdebug): [90][len][payload]
 					// (sv_send.c:450-462). Payload = как 83 (имя события + args).
-					int payload_start = msg_readcount;
+					// R1: payload_start — ПОСЛЕ длины (len = payload-only), иначе used
+					// включает 2 байта длины и skip недосигает на 2.
 					int payload_len = MSG_ReadShort ();
+					int payload_start = msg_readcount;
 #if defined(FTE_PEXT_CSQC) && !defined(CLIENTONLY)
 					extern cvar_t cl_pext_csqc;
 					if (cl_pext_csqc.value && (cls.fteprotocolextensions & FTE_PEXT_CSQC))

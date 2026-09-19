@@ -2598,6 +2598,25 @@ void CSQC_Client_Update (void)
 
 /*
 =================
+CSQC_Client_ParseAllowed
+
+Runtime-гейт CSQC-парсеров (R5): договорён FTE_PEXT_CSQC и включён cl_pext_csqc —
+тот же критерий, что в cl_parse.c для case 83/90. Гейт в функции (а не только в
+case) покрывает и «модуль не загружен/ошибся», см. ParseEntities.
+=================
+*/
+qbool CSQC_Client_ParseAllowed (void)
+{
+#ifdef FTE_PEXT_CSQC
+	extern cvar_t cl_pext_csqc;
+	return cl_pext_csqc.value && (cls.fteprotocolextensions & FTE_PEXT_CSQC);
+#else
+	return false;
+#endif
+}
+
+/*
+=================
 CSQC_Client_ParseEntities
 
 Парсинг svc_fte_csqcentities(76)/sized(92):
@@ -2614,99 +2633,123 @@ void CSQC_Client_ParseEntities (qbool sized)
 	pr1vm_t *vm = &s_csqc.vm;
 	unsigned int entnum;
 	qbool removeflag;
+	qbool ready;
 
-	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+	// R5: runtime-гейт (как cl_parse.c case 83/90) + живой модуль. Без гейта или
+	// без модуля 76/92 не трактуются как CSQC. Sized-поток проходим и без модуля
+	// (нужны только wire-поля entnum/len); non-sized пройти нельзя — длины payload
+	// нет без исполнения модуля, поэтому это протокольная ошибка (как FTE
+	// Host_EndGame, pr_csqc.c:9560), а не тихий рассинхрон.
+	ready = CSQC_Client_ParseAllowed ()
+		&& s_csqc.loaded && s_csqc.inited && !s_csqc.errored
+		&& (s_csqc.func_entupdate > 0 || s_csqc.func_entremove > 0);
+	if (!ready && !sized)
+	{
+		Host_Error ("CSQC_Client_ParseEntities: svc_fte_csqcentities without CSQC\n");
 		return;
-	if (s_csqc.func_entupdate <= 0 && s_csqc.func_entremove <= 0)
-		return;
+	}
 
 	for (;;)
 	{
+		int payload_start = 0;
+		int payload_len = -1;
+
 		entnum = (unsigned short)MSG_ReadShort ();
 		removeflag = !!(entnum & 0x8000);
 		entnum &= ~0x8000u;
 		if ((!entnum && !removeflag) || msg_badread)
 			break;
 		if (entnum >= (unsigned int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
+		{
+			// R7 (growth — accept+doc, T1.3): номер вне карты. Sized-поток при этом
+			// не дрейнится (документировано: недостижимо с mvdsv MAX_EDICTS=2048).
 			break;
+		}
 
 		if (removeflag)
 		{
-			if (s_csqc.func_entremove > 0)
+			if (ready && s_csqc.func_entremove > 0)
 			{
 				// P2/D3: контекст (self=slot, .entnum=номер), без builtin-стрима.
+				int slot = CSQC_Client_NumToSlot ((int)entnum);
+				if (slot)
 				{
-					int slot = CSQC_Client_NumToSlot ((int)entnum);
-					if (slot)
-					{
-						CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
-						CSQC_Client_Exec (s_csqc.func_entremove);
-						CSQC_Client_NetFreeSlot (slot, (int)entnum);
-					}
+					CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+					CSQC_Client_Exec (s_csqc.func_entremove);
+					CSQC_Client_NetFreeSlot (slot, (int)entnum);
 				}
 			}
 			s_csqc.seen[entnum] = false;
 			continue;
 		}
 
-		if (s_csqc.func_entupdate > 0)
+		// Update. Sized: [len short][payload]. R1: payload_start — ПОСЛЕ длины
+		// (иначе used включает 2 байта длины и skip недосигает на 2; FTE
+		// pr_csqc.c:9640-9642 берёт packetstart после ReadShort).
+		if (sized)
 		{
-			int payload_start;
-			int payload_len = -1;
+			payload_len = MSG_ReadShort ();
+			payload_start = msg_readcount;
+		}
 
-			vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
-			s_csqc.seen[entnum] = true;
+		if (!ready || s_csqc.func_entupdate <= 0)
+		{
+			// Модуля/колбэка update нет: вычитать payload, чтобы не рассинхронить
+			// поток. Non-sized длину не знает — фатально (см. выше).
+			if (sized && payload_len > 0)
+				MSG_ReadSkip (payload_len);
+			else if (!sized)
+				Host_Error ("CSQC_Client_ParseEntities: update without CSQC\n");
+			continue;
+		}
 
-			// P2/D3 + FTE-пул: номер→слот; новый номер — выделить слот пула,
-			// контекст (self=slot, .entnum=номер).
+		vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
+		s_csqc.seen[entnum] = true;
+
+		// P2/D3 + FTE-пул: номер→слот; новый номер — выделить слот пула,
+		// контекст (self=slot, .entnum=номер).
+		{
+			int slot = CSQC_Client_NumToSlot ((int)entnum);
+			if (!slot)
 			{
-				int slot = CSQC_Client_NumToSlot ((int)entnum);
+				slot = CSQC_Client_NetAllocSlot ();
 				if (!slot)
 				{
-					slot = CSQC_Client_NetAllocSlot ();
-					if (!slot)
-					{
-						Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);
-						break;	// патологично (пул 4095); рассинхрон невозможен при чтении
-					}
-					CSQC_Client_MapNumber ((int)entnum, slot);
-					// FTE-пул Шаг 5 (диагностика): номер → слот пула; печать
-					// ограничена, чтобы серверный churn remove/update не залил
-					// консоль (≤32 строк на сессию csqc_dbg>=3).
-					{
-						static int s_dbg_lines = 0;
-						cvar_t *dbg = Cvar_Find ("csqc_dbg");
-						if (dbg && dbg->value >= 3)
-						{
-							if (s_dbg_lines < 32)
-							{
-								Con_Printf ("CSQC ent num %u -> slot %d\n", entnum, slot);
-								s_dbg_lines++;
-							}
-						}
-						else
-							s_dbg_lines = 0;
-					}
+					Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);
+					break;	// патологично (пул 4095); рассинхрон невозможен при чтении
 				}
-				CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+				CSQC_Client_MapNumber ((int)entnum, slot);
+				// FTE-пул Шаг 5 (диагностика): номер → слот пула; печать
+				// ограничена, чтобы серверный churn remove/update не залил
+				// консоль (≤32 строк на сессию csqc_dbg>=3).
+				{
+					static int s_dbg_lines = 0;
+					cvar_t *dbg = Cvar_Find ("csqc_dbg");
+					if (dbg && dbg->value >= 3)
+					{
+						if (s_dbg_lines < 32)
+						{
+							Con_Printf ("CSQC ent num %u -> slot %d\n", entnum, slot);
+							s_dbg_lines++;
+						}
+					}
+					else
+						s_dbg_lines = 0;
+				}
 			}
+			CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+		}
 
-			// Sized: перед payload — short-длина (mvdsv sv_ents.c:700).
-			payload_start = msg_readcount;
-			if (sized)
-				payload_len = MSG_ReadShort ();
+		CSQC_Client_Exec (s_csqc.func_entupdate);
+		if (s_csqc.errored)
+			return;
 
-			CSQC_Client_Exec (s_csqc.func_entupdate);
-			if (s_csqc.errored)
-				return;
-
-			// Skip-защита: если модуль прочитал меньше payload_len — дочитать.
-			if (payload_len >= 0)
-			{
-				int used = msg_readcount - payload_start;
-				if (used < payload_len)
-					MSG_ReadSkip (payload_len - used);
-			}
+		// Skip-защита: если модуль прочитал меньше payload_len — дочитать.
+		if (payload_len >= 0)
+		{
+			int used = msg_readcount - payload_start;
+			if (used < payload_len)
+				MSG_ReadSkip (payload_len - used);
 		}
 	}
 }
