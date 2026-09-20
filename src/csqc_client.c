@@ -1733,8 +1733,9 @@ void CSQC_Client_GetListener (float *origin, float *forward, float *right, float
 
 // #303 setproperty: VF_* подмножество (view). args — последовательные float-аргументы
 // после property (вектор — 3 значения, скаляр — 1).
-void CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
+qbool CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
 {
+	qbool handled = true;
 	switch (prop)
 	{
 	case CSQC_VFP_ORIGIN:
@@ -1750,8 +1751,15 @@ void CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
 	case CSQC_VFP_ANGLES_Y: s_vp_angles[1] = args[0]; s_vp_angles_set = true; break;
 	case CSQC_VFP_ANGLES_Z: s_vp_angles[2] = args[0]; s_vp_angles_set = true; break;
 	case CSQC_VFP_VIEWPORT:
-		if (argc >= 3)
-		{ s_vp_w = (int)args[0]; s_vp_h = (int)args[1]; s_vp_vrect_set = true; }
+		// FTE pr_csqc.c:2542 — позиция-вектор (PARM1) + размер-вектор (PARM2),
+		// т.е. 6 слов (csdefs VF_VIEWPORT = "vector+vector"). Раньше ezq читал
+		// args[0..1] как размер, теряя позицию/size.
+		if (argc >= 6)
+		{
+			s_vp_x = (int)args[0]; s_vp_y = (int)args[1];
+			s_vp_w = (int)args[3]; s_vp_h = (int)args[4];
+			s_vp_vrect_set = true;
+		}
 		break;
 	case CSQC_VFP_MIN:
 		if (argc >= 2) { s_vp_x = (int)args[0]; s_vp_y = (int)args[1]; s_vp_vrect_set = true; }
@@ -1769,9 +1777,14 @@ void CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
 	case CSQC_VFP_FOVX: s_vp_fovx = args[0]; s_vp_fovx_set = true; break;
 	case CSQC_VFP_FOVY: s_vp_fovy = args[0]; s_vp_fovy_set = true; break;
 	default:
-		break;	// set-флаги/без аналога — 0 (как FTE default)
+		handled = false;	// set-флаги/без аналога — FTE default возвращает 0
+		break;
 	}
 	s_vp_on = s_vp_origin_set || s_vp_angles_set || s_vp_vrect_set || s_vp_fovx_set || s_vp_fovy_set;
+	// FTE применяет view-флаги в том же кадре (setter пишет r_refdef сразу); ezq
+	// раньше откладывал до V_CalcRefdef => лаг 1 кадр (parity-audit, было).
+	CSQC_Client_ApplyViewProps ();
+	return handled;
 }
 
 // Применяется после V_CalcRefdef (cl_view.c), только при активном CSQC-модуле.

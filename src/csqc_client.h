@@ -65,8 +65,9 @@ qbool CSQC_Client_DeltaEntityOwned (int number);
 void CSQC_Client_SetListener (const float *origin, const float *forward, const float *right, const float *up);
 qbool CSQC_Client_ListenerActive (void);
 void CSQC_Client_GetListener (float *origin, float *forward, float *right, float *up);
-// `#303 setproperty` (VF_*-подмножество): применяется после V_CalcRefdef (cl_view.c).
-void CSQC_Client_SetViewProperty (int prop, int argc, const float *args);
+// `#303 setproperty` (VF_*-подмножество): применяется немедленно (same-frame, FTE-паритет)
+// + повторно в V_CalcRefdef (cl_view.c). Возврат — распознано ли свойство (FTE 1/0).
+qbool CSQC_Client_SetViewProperty (int prop, int argc, const float *args);
 void CSQC_Client_ApplyViewProps (void);
 void CSQC_Client_ResetViewProps (void);	// #300 clearscene: сброс view-свойств (FTE)
 // `#310 project` / `#311 unproject`.

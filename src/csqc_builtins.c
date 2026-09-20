@@ -653,20 +653,22 @@ static void csqc_setproperty (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	int prop, words, i;
-	float args[3];
+	float args[6];
 	if (!vm)
 		return;
 	prop = (int)vm->globals[OFS_PARM0];
-	// после property: (argc-1) QC-аргументов по 3 слова; для наших свойств <=3.
+	// после property: (argc-1) QC-аргументов по 3 слова; VF_VIEWPORT =
+	// vector+vector (позиция+размер) = 6 слов (FTE pr_csqc.c:2542, csdefs VF_VIEWPORT).
 	words = (vm->argc - 1) * 3;
 	if (words < 0)
 		words = 0;
-	if (words > 3)
-		words = 3;
+	if (words > 6)
+		words = 6;
 	for (i = 0; i < words; i++)
 		args[i] = vm->globals[OFS_PARM0 + 3 + i];
-	CSQC_Client_SetViewProperty (prop, words, args);
-	vm->globals[OFS_RETURN] = 0;
+	// FTE PF_R_SetViewFlag: 1 для распознанного VF_, 0 для неизвестного
+	// (pr_csqc.c:2389 и default:2691).
+	vm->globals[OFS_RETURN] = CSQC_Client_SetViewProperty (prop, words, args) ? 1 : 0;
 }
 static void csqc_renderscene (void)
 {
@@ -3116,13 +3118,13 @@ static void csqc_substring (void)
 }
 
 /*
-vector(string s) stov = #117
-(в ezq-сервере не реализован — ext {117} закомментирован; парс из vtos-формата)
+vector(string s) stov = #117 — FTE pr_bgcmd.c:4740 (PF_VarString(0), парс из vtos-формата;
+`'`-stop). Прототип в csdefs/FTE не variadic, поэтому extra-args из модуля недостижимы.
 */
 static void csqc_stov (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char *p = CSQCVM_Str (OFS_PARM0);
+	char *p = CSQCVM_VarString (0);
 	double v[3];
 	int i;
 	char *end;
@@ -3185,8 +3187,11 @@ static void csqc_cvar_string (void)
 		return;
 	if (!name)
 		name = "";
+	// FTE pr_bgcmd.c:1892: отдаётся latched_string, если значение защёлкнуто.
+	// PF_Cvar_FindOrGet (autocreate) и флаг CVAR_NOUNSAFEEXPAND — FTE-специфичны
+	// (в ezq нет); см. parity-audit §D.2.
 	var = Cvar_Find (name);
-	CSQCVM_SetRetStr (var ? var->string : "");
+	CSQCVM_SetRetStr (var ? (var->latchedString ? var->latchedString : var->string) : "");
 }
 
 /*
@@ -4459,17 +4464,27 @@ L2 — «Звук» (2026-09-07; roadmap волна 5). FTE-эталон — pr_
 getsoundtime / #534 soundlength (нет канальных таймингов/длины сэмпла).
 */
 
-/* void(vector origin, string sample, float volume, float attenuation) pointsound = #483 */
+/*
+void(vector origin, string sample, float volume, float attenuation,
+     optional float pitchpct) pointsound = #483
+FTE pr_csqc.c:4694: 5-й арг — pitch в процентах (100 = норм), кладётся в playback-rate
+(chan->rate, snd_dma.c:2962). В ezq-sound нет pitch/rate (channel_t/микшер без rate) —
+аргумент принимается для идентичности вызова и игнорируется (parity-audit §D.2).
+*/
 static void csqc_pointsound (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	float *org;
 	char *sample;
 	sfx_t *sfx;
+	float pitchpct = 0;
 	if (!vm)
 		return;
 	org = &vm->globals[OFS_PARM0];
 	sample = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + 3]);
+	if (vm->argc >= 5)
+		pitchpct = vm->globals[OFS_PARM0 + 12] * 0.01f;	// только для паритета вызова
+	(void)pitchpct;
 	if (!sample || !sample[0])
 		return;
 	sfx = S_PrecacheSound (sample);
@@ -4570,7 +4585,7 @@ static void csqc_entityfieldname (void)
 	CSQCVM_SetRetStr (s ? s : "");
 }
 
-/* float(float fieldnum) entityfieldtype = #498 (etype_t, низкие биты) */
+/* float(float fieldnum) entityfieldtype = #498 (полный ddef_t.type; FTE pr_bgcmd.c:7750) */
 static void csqc_entityfieldtype (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -4578,7 +4593,7 @@ static void csqc_entityfieldtype (void)
 	if (!vm)
 		return;
 	f = csqc_fielddef (vm, (unsigned int)vm->globals[OFS_PARM0]);
-	vm->globals[OFS_RETURN] = f ? (float)(f->type & 0xff) : 0;
+	vm->globals[OFS_RETURN] = f ? (float)f->type : 0;
 }
 
 /* string(float fieldnum, entity ent) getentityfieldstring = #499 */
@@ -4809,7 +4824,9 @@ static void csqc_findfloat (void)
 		slot = csqc_ent_slot (vm, e);
 		if (!slot)
 			continue;
-		if (slot[f] == match)
+		// FTE pr_bgcmd.c:1672 сравнивает сырые 32-битные значения
+		// (((int*)ed->v)[f] == G_INT(PARM2)), а не float (различие — -0.0/NaN).
+		if (*(int *)&slot[f] == *(int *)&match)
 		{
 			csqc_ret_entity (vm, e);
 			return;
