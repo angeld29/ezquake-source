@@ -954,6 +954,12 @@ struct model_s *CSQC_Client_ModelForIndex (int idx)
 	return (idx >= 1 && idx <= s_nmodels) ? s_models[idx - 1] : NULL;
 }
 
+/* #334 modelnameforindex: обратный резолв индекса CSQC-реестра (T3 Э3). */
+const char *CSQC_Client_ModelNameForIndex (int idx)
+{
+	return (idx >= 1 && idx <= s_nmodels) ? s_modelnames[idx - 1] : NULL;
+}
+
 void CSQC_Client_ModelReset (void)
 {
 	memset (s_modelnames, 0, sizeof (s_modelnames));
@@ -3177,6 +3183,50 @@ void CSQC_Client_MakeVectors (float *ang)
 	r = &vm->globals[s_csqc.g_vright];
 	u = &vm->globals[s_csqc.g_vup];
 	AngleVectors (ang, f, r, u);
+}
+
+/*
+=================
+CSQC_Client_VectorVectors
+
+#432 vectorvectors (T3 Э3; FTE-паритет PF_vectorvectors, pr_bgcmd.c:6559): нормализует
+заданное направление в v_forward модуля и строит ортогональные v_right/v_up через FTE
+VVPerpendicularVector + CrossProduct (mathlib.c:270/288). Не используем ezq
+PerpendicularVector — у неё другой edge-case для (0,0,z). Модуль без глобалов — no-op.
+=================
+*/
+void CSQC_Client_VectorVectors (float *dir)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	float *f, *r, *u;
+	float right[3];
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+	if (s_csqc.g_vfwd < 0 || s_csqc.g_vright < 0 || s_csqc.g_vup < 0)
+		return;		// модуль не объявил v_forward/v_right/v_up
+	f = &vm->globals[s_csqc.g_vfwd];
+	r = &vm->globals[s_csqc.g_vright];
+	u = &vm->globals[s_csqc.g_vup];
+
+	VectorCopy (dir, f);
+	VectorNormalize (f);
+
+	if (!f[0] && !f[1])
+	{
+		right[0] = 0;
+		right[1] = f[2] ? -1 : 0;
+		right[2] = 0;
+	}
+	else
+	{
+		right[0] = f[1];
+		right[1] = -f[0];
+		right[2] = 0;
+		VectorNormalize (right);
+	}
+	VectorCopy (right, r);
+	CrossProduct (right, f, u);
 }
 
 /*

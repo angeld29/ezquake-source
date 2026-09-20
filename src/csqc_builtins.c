@@ -28,6 +28,7 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "screen.h"		// SCR_CenterPrint (#338 cprint)
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
+#include "utils.h"		// HexToInt (#476/#477 strlennocol/strdecolorize)
 
 static pr1vm_t *CSQCVM_Active (void)
 {
@@ -215,6 +216,19 @@ static void csqc_makevectors (void)
 	if (!vm)
 		return;
 	CSQC_Client_MakeVectors (&vm->globals[OFS_PARM0]);
+}
+
+/*
+void(vector dir) vectorvectors = #432 (T3 Э3) — FTE-паритет (PF_vectorvectors,
+pr_bgcmd.c:6559): нормализованный dir → v_forward модуля, ортогональные
+v_right/v_up. Тело — CSQC_Client_VectorVectors.
+*/
+static void csqc_vectorvectors (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	CSQC_Client_VectorVectors (&vm->globals[OFS_PARM0]);
 }
 
 /*
@@ -2692,6 +2706,69 @@ static void csqc_strtoupper (void)
 }
 
 /*
+Стрипинг ezq-разметки для #476 strlennocol / #477 strdecolorize (T3 Э3).
+FTE-паритет для кодов, понимаемых рендером ezq: `&cRGB` (валидный 3-hex) и `&r`
+(ровно логика r_draw_charset.c:331-365). ^-коды FTE (q3-цвета, links, charset
+`u8:`/`k8:`) не поддержаны — отклонение, backlog
+docs/plans/ezquake_csqc_client_strcolor_markup.md. Возврат — длина результата
+(байты, как FTE COM_DeFunString); out==NULL допустим (только подсчёт).
+*/
+static int CSQCVM_StripColor (const char *in, char *out, size_t outsize)
+{
+	size_t n = 0;
+
+	if (!in)
+		in = "";
+	for (; *in; in++)
+	{
+		if (in[0] == '&' && in[1] == 'c'
+			&& HexToInt (in[2]) >= 0 && HexToInt (in[3]) >= 0 && HexToInt (in[4]) >= 0)
+		{
+			in += 4;
+			continue;
+		}
+		if (in[0] == '&' && in[1] == 'r')
+		{
+			in += 1;
+			continue;
+		}
+		if (out && outsize && n + 1 < outsize)
+			out[n] = *in;
+		n++;
+	}
+	if (out && outsize)
+		out[(n < outsize) ? n : outsize - 1] = 0;
+	return (int)n;
+}
+
+/*
+float(string s) strlennocol = #476 — FTE-паритет (PF_strlennocol, pr_bgcmd.c:5038):
+длина строки без цветовых кодов.
+*/
+static void csqc_strlennocol (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (float)CSQCVM_StripColor (CSQCVM_Str (OFS_PARM0), NULL, 0);
+}
+
+/*
+string(string s) strdecolorize = #477 — FTE-паритет (PF_strdecolorize, pr_bgcmd.c:5054):
+строка с вырезанными цветовыми кодами.
+*/
+static void csqc_strdecolorize (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[8192];
+
+	if (!vm)
+		return;
+	CSQCVM_StripColor (CSQCVM_Str (OFS_PARM0), buf, sizeof (buf));
+	CSQCVM_SetRetStr (buf);
+}
+
+/*
 string(string search, string replace, string subject) strreplace = #484
 string(string search, string replace, string subject) strireplace = #485
 (PF_strreplace/strireplace: 4096-буфер, нерекурсивная замена).
@@ -3163,6 +3240,29 @@ static void csqc_getmodelindex (void)
 	queryonly = (vm->argc > 1) ? (int)vm->globals[OFS_PARM1] : 0;
 	vm->globals[OFS_RETURN] = (float)(queryonly
 		? CSQC_Client_ModelIndexKnown (n) : CSQC_Client_ModelIndex (n));
+}
+
+/*
+string(float mdlindex) modelnameforindex = #334 (T3 Э3).
+FTE-паритет (PF_cs_ModelnameForIndex, pr_csqc.c:3277): обратный резолв индекса.
+Отклонение: у ezq единый положительный CSQC-реестр (getmodelindex возвращает
+именно его индекс, комментарий csqc_client.c), у FTE — csqc-слоты < 0 и
+server-precache >= 0. Поэтому порядок: CSQC-реестр → server cl.model_name[idx]
+(сетевые/серверные индексы); idx<0 → "".
+*/
+static void csqc_modelnameforindex (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *name;
+	int idx;
+
+	if (!vm)
+		return;
+	idx = (int)vm->globals[OFS_PARM0];
+	name = CSQC_Client_ModelNameForIndex (idx);
+	if (!name && idx >= 0 && idx < MAX_MODELS)
+		name = cl.model_name[idx];
+	CSQCVM_SetRetStr ((char *)(name ? name : ""));
 }
 
 /*
@@ -5182,7 +5282,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 400, (builtin_t)csqc_vmrest_nop); // #400 void(entity from, entity to) copyentity (DP_QC_COPYENTITY)
 	PR1VM_RegisterBuiltin (vm, 404, (builtin_t)csqc_vmrest_nop); // #404 void(vector org, string modelname, float startframe, float endframe, float framerate) effect (DP_SV_EFFECT)
 	PR1VM_RegisterBuiltin (vm, 426, (builtin_t)csqc_vmrest_nop); // #426 void(vector org) te_teleport (DP_TE_STANDARDEFFECTBUILTINS)
-	PR1VM_RegisterBuiltin (vm, 432, (builtin_t)csqc_vmrest_nop); // #432 void(vector dir) vectorvectors (DP_QC_VECTORVECTORS)
+	PR1VM_RegisterBuiltin (vm, 432, (builtin_t)csqc_vectorvectors); // #432 void(vector dir) vectorvectors (DP_QC_VECTORVECTORS)
 	PR1VM_RegisterBuiltin (vm, 433, (builtin_t)csqc_vmrest_nop); // #433 void(vector org) te_plasmaburn (DP_TE_PLASMABURN)
 	PR1VM_RegisterBuiltin (vm, 443, (builtin_t)csqc_vmrest_nop); // #443 void(entity e, entity tagentity, string tagname) setattachment (DP_GFX_QUAKE3MODELTAGS)
 	PR1VM_RegisterBuiltin (vm, 445, (builtin_t)csqc_vmrest_nop); // #445 void	search_end(float handle) (DP_QC_FS_SEARCH)
@@ -5249,7 +5349,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 449, (builtin_t)csqc_light_nop_ret0); // #449 entity(entity start, .entity fld, float match) findflags (DP_QC_FINDFLAGS)
 	PR1VM_RegisterBuiltin (vm, 450, (builtin_t)csqc_light_nop_ret0); // #450 entity(.float fld, float match) findchainflags (DP_QC_FINDCHAINFLAGS)
 	PR1VM_RegisterBuiltin (vm, 451, (builtin_t)csqc_light_nop_ret0); // #451 float(entity ent, string tagname) gettagindex (DP_MD3_TAGSINFO)
-	PR1VM_RegisterBuiltin (vm, 476, (builtin_t)csqc_light_nop_ret0); // #476 float(string s) strlennocol
+	PR1VM_RegisterBuiltin (vm, 476, (builtin_t)csqc_strlennocol); // #476 float(string s) strlennocol
 	PR1VM_RegisterBuiltin (vm, 487, (builtin_t)csqc_light_nop_ret0); // #487 float(string name)
 	PR1VM_RegisterBuiltin (vm, 490, (builtin_t)csqc_light_nop_ret0); // #490 float(string name, float key, float eventtype)
 	PR1VM_RegisterBuiltin (vm, 513, (builtin_t)csqc_light_nop_ret0); // #513 float(string uril, float id) uri_get
@@ -5270,10 +5370,10 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 284, (builtin_t)csqc_nop_str); // #284 string(float modidx, float framenum) frametoname
 	PR1VM_RegisterBuiltin (vm, 285, (builtin_t)csqc_nop_str); // #285 string(float modidx, float skin) skintoname
 	PR1VM_RegisterBuiltin (vm, 292, (builtin_t)csqc_nop_str); // #292 string(hashtable table, float idx) hash_getkey
-	PR1VM_RegisterBuiltin (vm, 334, (builtin_t)csqc_nop_str); // #334 string(float mdlindex) modelnameforindex (EXT_CSQC)
+	PR1VM_RegisterBuiltin (vm, 334, (builtin_t)csqc_modelnameforindex); // #334 string(float mdlindex) modelnameforindex (EXT_CSQC)
 	PR1VM_RegisterBuiltin (vm, 374, (builtin_t)csqc_nop_str); // #374 string(float efnum, float body) particleeffectquery
 	PR1VM_RegisterBuiltin (vm, 447, (builtin_t)csqc_nop_str); // #447 string	search_getfilename(float handle, float num) (DP_QC_FS_SEARCH)
-	PR1VM_RegisterBuiltin (vm, 477, (builtin_t)csqc_nop_str); // #477 string(string s) strdecolorize
+	PR1VM_RegisterBuiltin (vm, 477, (builtin_t)csqc_strdecolorize); // #477 string(string s) strdecolorize
 	PR1VM_RegisterBuiltin (vm, 503, (builtin_t)csqc_nop_str); // #503 string(string filename) whichpack
 	PR1VM_RegisterBuiltin (vm, 510, (builtin_t)csqc_nop_str); // #510 string(string in) uri_escape
 	PR1VM_RegisterBuiltin (vm, 511, (builtin_t)csqc_nop_str); // #511 string(string in) uri_unescape

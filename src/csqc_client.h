@@ -82,6 +82,7 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3]);
 int CSQC_Client_ModelIndexKnown (const char *name);	// 0 если не зарегистрирована
 int CSQC_Client_ModelIndex (const char *name);		// 0 если не загрузилась
 struct model_s *CSQC_Client_ModelForIndex (int idx);	// NULL если нет
+const char *CSQC_Client_ModelNameForIndex (int idx);	// #334: обратный резолв (NULL если нет)
 void CSQC_Client_ModelReset (void);
 
 // Точки вызова клиентского жизненного цикла CSQC-VM:
@@ -119,6 +120,9 @@ int CSQC_Client_ApplyInput (unsigned int seq);			// заполнить input_* �
 void CSQC_Client_RunPlayerPhysics (int entnum);			// #347 runstandardplayerphysics (C1.4)
 // #1 makevectors (C6.1): по vector-углам пишет v_forward/v_right/v_up модуля.
 void CSQC_Client_MakeVectors (float *ang);
+// #432 vectorvectors (T3 Э3): по направлению пишет нормализованный v_forward и
+// ортогональные v_right/v_up модуля (FTE PF_vectorvectors).
+void CSQC_Client_VectorVectors (float *dir);
 
 // C2.2 #460-469 — string-buffers (DP). handle = 1-based; строки deep-copy.
 int CSQC_Client_BufCreate (void);
