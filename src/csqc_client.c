@@ -78,6 +78,7 @@ typedef struct csqc_client_state_s
 	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
 	int			global_time;	// смещение глобала time (или -1)
+	int			global_gamespeed;	// смещение глобала gamespeed (или -1; T2.1)
 	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
 	// C1.4/C5-B #347: field-offset'ы стандартной физики (или -1).
@@ -2362,6 +2363,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
+	s_csqc.global_gamespeed = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
@@ -2435,6 +2437,9 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_inputevent = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
+	// T2.1: gamespeed (csdefs.qc:166; engine-set). QW/ezq не имеет cl.gamespeed,
+	// поэтому публикуем 1 (0 при серверной паузе) — см. CSQC_Client_Update.
+	s_csqc.global_gamespeed = PR1VM_FindGlobal (vm, "gamespeed");
 	// P2/D3: self-глобал и поле .entnum (движок пишет их при entity-вызовах).
 	s_csqc.global_self = PR1VM_FindGlobal (vm, "self");
 	s_csqc.field_entnum = CSQC_Client_FindField (vm, "entnum");
@@ -2762,6 +2767,10 @@ void CSQC_Client_Update (void)
 	CSQC_Client_PatchFrames ();
 	// C5-E Ф1: view_angles модулю (FTE).
 	CSQC_Client_PublishViewAngles ();
+	// T2.1: gamespeed модулю (FTE pr_csqc.c:8845-8851). QW/ezq не имеет
+	// cl.gamespeed → 1; на серверной паузе 0 (как FTE).
+	if (s_csqc.global_gamespeed >= 0)
+		s_csqc.vm.globals[s_csqc.global_gamespeed] = (cl.paused & PAUSED_SERVER) ? 0 : 1;
 
 	// E1a/E1b #371 deltalisten: мост player_state/entity_state → arena-edict
 	// каждый кадр (FTE-модель: CL_LinkPlayers/CL_LinkPacketEntities per-frame).
@@ -3036,14 +3045,17 @@ CSQC_Client_InputFrame
 
 CSQC_Input_Frame: вызывается перед отправкой каждого usercmd (CL_SendCmd,
 cl_input.c). Механика FTE (pr_csqc.c:9418 CSQC_Input_Frame + cs_set/get_input_state,
-:3875-4010) на подмножестве input_*-глобалов, объявленных модулем (csdefs.qc:
-input_timelength/angles/movevalues/buttons/impulse): движок заполняет их из cmd,
-исполняет CSQC_Input_Frame, затем пишет изменения обратно в cmd.
+:3875-4010) на QW-наборе input_*-глобалов, объявленных модулем (csdefs.qc:
+input_sequence/timelength/angles/movevalues/buttons/impulse): движок заполняет их из
+cmd, исполняет CSQC_Input_Frame, затем пишет изменения обратно в cmd.
 
 Отличия от FTE:
 - usercmd.angles в ezquake — float-градусы (не short), конвертацию делает
   MSG_WriteAngle16 в MSG_WriteDeltaUsercmd (com_msg.c:237) — здесь копируем напрямую;
-- input_timelength = msec/1000 (cl.gamespeed в ezquake QW нет — FTE множит на него).
+- input_timelength множится на gamespeed (T2.1); у ezq нет cl.gamespeed → 1
+  (0 на серверной паузе), т.е. в QW-поведении это no-op;
+- FTE-глобалы lightlevel/weapon/servertime/clienttime/cursor/VR и InputEvent-типы
+  joy/accel/focus (CSIE_*) в QW-модуле не объявлены — N/A.
 =================
 */
 void CSQC_Client_InputFrame (usercmd_t *cmd)
@@ -3059,9 +3071,17 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 
 	CSQC_Client_SetTime ();
 
+	// T2.1: input_sequence = seq текущего cmd (FTE cs_set_input_state,
+	// pr_csqc.c:3877-3878); та же нумерация, что clientcommandframe.
+	if (s_csqc.in_sequence >= 0)
+		vm->globals[s_csqc.in_sequence] = CSQC_Client_ClientCmdFrame ();
+
 	// cmd -> input_* глобалы (только объявленные модулем).
+	// input_timelength = msec/1000 * gamespeed (FTE pr_csqc.c:3880); gamespeed у ezq
+	// 1 (0 на серверной паузе) — см. CSQC_Client_Update.
 	if (s_csqc.in_timelength >= 0)
-		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f;
+		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f
+			* ((cl.paused & PAUSED_SERVER) ? 0.0f : 1.0f);
 	if (s_csqc.in_angles >= 0)
 	{
 		vm->globals[s_csqc.in_angles + 0] = cmd->angles[0];
@@ -3737,6 +3757,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
+	s_csqc.global_gamespeed = -1;
 	s_csqc.global_self = -1;
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
