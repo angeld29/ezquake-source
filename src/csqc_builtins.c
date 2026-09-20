@@ -2769,6 +2769,29 @@ static void csqc_strdecolorize (void)
 }
 
 /*
+string(string input, string token) instr = #206 — FTE-паритет (PF_instr, pr_bgcmd.c:4945):
+первое вхождение variadic-хвоста (с парма 1) в input; возврат — подстрока-остаток с позиции
+вхождения, либо "" если не найдено.
+*/
+static void csqc_instr (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	const char *s1, *s2, *sub;
+
+	if (!vm)
+		return;
+	s1 = CSQCVM_Str (OFS_PARM0);
+	s2 = CSQCVM_VarString (1);
+	if (!s1 || !s2)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	sub = strstr (s1, s2);
+	CSQCVM_SetRetStr (sub ? (char *)sub : "");
+}
+
+/*
 string(string search, string replace, string subject) strreplace = #484
 string(string search, string replace, string subject) strireplace = #485
 (PF_strreplace/strireplace: 4096-буфер, нерекурсивная замена).
@@ -4510,7 +4533,6 @@ static void csqc_soundlength (void)
 L2 — «Entity-рефлексия» (#496-500, 2026-09-07; roadmap — ранее отложено). FTE-эталон
 pr_bgcmd.c:7694-7830 (FieldInfo + UglyValueString/ParseEval). Работаем по
 vm->fielddefs[] (ddef_t: name/type/ofs в словах арены, etype_t ev_* из pr_comp.h).
-#206 instr — отдельно (сигнатура float/string vs FTE-строковый возврат — отложено).
 */
 static ddef_t *csqc_fielddef (pr1vm_t *vm, unsigned int fidx)
 {
@@ -5320,7 +5342,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 202, (builtin_t)csqc_light_nop_ret0); // #202 float(string progsname) addprogs
 	PR1VM_RegisterBuiltin (vm, 203, (builtin_t)csqc_light_nop_ret0); // #203 __variant(float prnum, string varname) externvalue — no-op v6 (ADR 0020): variant-чтение другой проги (типов нет в v6)
 	PR1VM_RegisterBuiltin (vm, 205, (builtin_t)csqc_light_nop_ret0); // #205 float() externrefcall
-	PR1VM_RegisterBuiltin (vm, 206, (builtin_t)csqc_light_nop_ret0); // #206 float(string input, string token) instr
+	PR1VM_RegisterBuiltin (vm, 206, (builtin_t)csqc_instr); // #206 string(string input, string token) instr (T3 Э4)
 	PR1VM_RegisterBuiltin (vm, 237, (builtin_t)csqc_light_nop_ret0); // #237 float(float mdlindex, string skinname) skinforname
 	PR1VM_RegisterBuiltin (vm, 238, (builtin_t)csqc_light_nop_ret0); // #238 float(string shadername, optional string defaultshader, ...) shaderforname
 	PR1VM_RegisterBuiltin (vm, 242, (builtin_t)csqc_light_nop_ret0); // #242 void(string dest, string content) sendpacket
