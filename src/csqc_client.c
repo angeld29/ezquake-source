@@ -1997,10 +1997,18 @@ CSQC_Client_GetEntity
 #504 getentity — FTE PF_getentity (pr_csqc.c:5862-6170): read interpolated state
 of non-csqc (engine-networked) entities by server number. ezq has no
 cl.lerpents/cl.lerpplayers; the source is cl_entities[] (current entity_state_t +
-per-frame lerp_origin, filled by CL_LinkPacketEntities before the HUD/CSQC phase)
-and, for players, player_state_t / player bbox / player colours. "Active" = present
-in the current packet (cent->sequence == cl.validsequence), the analog of FTE
+per-frame lerp data) and, for players, player_state_t / player bbox / player
+colours. "Active" = present in the current packet (player: playerstate.messagenum
+== cl.parsecount; map: cent->sequence == cl.validsequence), the analog of FTE
 "le->sequence == cl.lerpentssequence".
+
+Origin and angles are interpolated (T2.4) with the same lerp data the renderer
+uses (cent->old_origin/current.origin, old_angles/current.angles, startlerp/
+deltalerp), so even the local player and non-drawn entities (whose lerp_origin is
+not written by CL_LinkPlayers) get the lerped values. Player-angle convention
+follows FTE: the local player's pitch is model-space (-viewangles[0]/3), remote
+players keep the raw packet angles. GE_MAXENTS is the runtime equivalent of FTE
+cl.maxlerpents (highest packet entity number + headroom).
 
 out[3] is always zeroed then filled (float fields use out[0]; vector fields use all
 three). Fields with no ezq data source return the FTE default (0, or '1 1 1' for
@@ -2032,6 +2040,59 @@ GLOWMOD/RTCOLOUR) — documented deviation (parity audit).
 #define CSQC_GE_GLOWMOD		208
 #define CSQC_GE_RTCOLOUR	213
 
+// Lerp helpers for #504 (T2.4) — mirror the renderer's interpolation
+// (cl_ents.c CL_LinkPacketEntities:1270-1295/1325-1333). The lerp data
+// (old_origin/current.origin, old_angles/current.angles, startlerp/deltalerp) is
+// filled by CL_SetupPacketEntity (map entities) and SetupPlayerEntity (players).
+extern cvar_t cl_nolerp, cl_lerp_monsters;
+extern qbool cl_nolerp_on_entity_flag;
+extern qbool NewLerp_AbleModel (int idx);
+
+static qbool CSQC_Client_EntityIsMonster (int modelindex)
+{
+	int i;
+	if (!cl_lerp_monsters.value)
+		return false;
+	for (i = 1; i < 17; i++)
+		if (modelindex == cl_modelindices[mi_monster1 + i - 1])
+			return true;
+	return false;
+}
+
+static void CSQC_Client_EntityLerp (const centity_t *cent, vec3_t org, vec3_t ang)
+{
+	double time = cls.mvdplayback ? cls.demotime : cl.time;
+	float lerp;
+
+	// Same gates as the renderer: no-lerp cvars/flag (not in demos, not for
+	// monsters) and a non-positive lerp delta fall back to the packet state.
+	if (((cl_nolerp.value || cl_nolerp_on_entity_flag) && !cls.mvdplayback &&
+		 !CSQC_Client_EntityIsMonster (cent->current.modelindex)) ||
+		cent->deltalerp <= 0)
+	{
+		VectorCopy (cent->current.origin, org);
+		VectorCopy (cent->current.angles, ang);
+		return;
+	}
+
+	lerp = min (max ((float)((time - cent->startlerp) / cent->deltalerp), 0.0f), 1.0f);
+
+	if (NewLerp_AbleModel (cent->current.modelindex))
+	{
+		float d = time - cent->startlerp;
+
+		if (d >= 2 * cent->deltalerp)	// entity looks stopped — stay at last lerp
+			VectorCopy (cent->lerp_origin, org);
+		else
+			VectorMA (cent->old_origin, d, cent->velocity, org);
+	}
+	else
+	{
+		VectorInterpolate (cent->old_origin, lerp, cent->current.origin, org);
+	}
+	AngleInterpolate (cent->old_angles, lerp, cent->current.angles, ang);
+}
+
 void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 {
 	centity_t *cent;
@@ -2041,7 +2102,7 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 	qbool active;
 	int pnum = -1, modelindex;
 	const model_t *model;
-	vec3_t org;
+	vec3_t org, ang;
 
 	if (out)
 		out[0] = out[1] = out[2] = 0;
@@ -2051,7 +2112,19 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 
 	if (fldnum == CSQC_GE_MAXENTS)
 	{
-		out[0] = (float)CL_MAX_EDICTS;
+		// Runtime equivalent of FTE cl.maxlerpents: highest packet-entity number
+		// seen this frame + headroom (FTE grows its lerp array in steps of 16).
+		packet_entities_t *pack;
+		int i, mx = 0;
+
+		if (cl.validsequence)
+		{
+			pack = &cl.frames[cl.parsecount & UPDATE_MASK].packet_entities;
+			for (i = 0; i < pack->num_entities; i++)
+				mx = max (mx, pack->entities[i].number + 1);
+		}
+		mx = max (mx, MAX_CLIENTS);
+		out[0] = (float)min (CL_MAX_EDICTS, mx + 16);
 		return;
 	}
 
@@ -2078,15 +2151,24 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 
 	modelindex = es->modelindex;
 
-	// Interpolated origin: CL_LinkPlayers writes cent->lerp_origin for every drawn
-	// player except the first-person local player (cl_ents.c:2163), and
-	// CL_LinkPacketEntities writes it for drawn map entities. When it is unset
-	// (local player, entity not drawn yet), fall back to the authoritative
-	// cent->current.origin (playerinfo / last packet) — no lerp (deviation).
-	if (!VectorCompare (cent->lerp_origin, vec3_origin))
-		VectorCopy (cent->lerp_origin, org);
-	else
-		VectorCopy (es->origin, org);
+	// Interpolated origin + angles (T2.4): same lerp data as the renderer, applied
+	// here so the local player / non-drawn entities are lerped too (their
+	// cent->lerp_origin is not written by CL_LinkPlayers).
+	CSQC_Client_EntityLerp (cent, org, ang);
+
+	// Local player (T2.4, FTE parity): the server does not send the local player
+	// its own viewangles (playerstate.viewangles is demo-only, client.h:128), so
+	// use the client's own angles — the same source as the #371 bridge. FTE's
+	// #504 for the local player returns the *model* pitch (le->angles[0] =
+	// simangles[0]*0.333*r_meshpitch, cl_pred.c:1448-1451; r_meshpitch=-1 in QW),
+	// i.e. exactly the renderer convention (cl_ents.c:2240: -viewangles[0]/3).
+	// Remote players keep the raw packet angles (verified live: FTE and ezq
+	// remote readings match), so only the local player gets the transform.
+	if (is_player && pnum == cl.playernum)
+	{
+		VectorCopy (cl.viewangles, ang);
+		ang[0] = -ang[0] / 3;
+	}
 
 	switch (fldnum)
 	{
@@ -2097,20 +2179,19 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 		VectorCopy (org, out);
 		break;
 	case CSQC_GE_ANGLES:
-		// ezq keeps no lerped angles; return the target state (deviation).
-		VectorCopy (es->angles, out);
+		VectorCopy (ang, out);
 		break;
 	case CSQC_GE_FORWARD:
 	case CSQC_GE_RIGHT:
 	case CSQC_GE_UP:
-		AngleVectors (es->angles,
+		AngleVectors (ang,
 			(fldnum == CSQC_GE_FORWARD) ? out : NULL,
 			(fldnum == CSQC_GE_RIGHT) ? out : NULL,
 			(fldnum == CSQC_GE_UP) ? out : NULL);
 		break;
 	case CSQC_GE_ORIGINANDVECTORS:
 		VectorCopy (org, out);
-		CSQC_Client_MakeVectors (es->angles);	// module v_forward/v_right/v_up
+		CSQC_Client_MakeVectors (ang);	// module v_forward/v_right/v_up
 		break;
 	case CSQC_GE_MINS:
 	case CSQC_GE_MAXS:
