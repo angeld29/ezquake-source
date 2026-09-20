@@ -193,6 +193,9 @@ int CSQC_Client_InputEvent (int evtype, float a, float b, float c);	// возв�
 // Runtime-гейт CSQC-парсеров (R5): договорён FTE_PEXT_CSQC и включён cl_pext_csqc
 // (как в cl_parse.c case 83/90). Без него 76/92 не должны трактоваться как CSQC.
 qbool CSQC_Client_ParseAllowed (void);
+// R7/T1.4a: read*-гейт модуля — true только внутри parse-callback'ов
+// (CSQC_Ent_Update/CSQC_Parse_Event); иначе read* фатальны (FTE csqc_mayread).
+qbool CSQC_Client_MayRead (void);
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — E3).
 void CSQC_Client_ParseEntities (qbool sized);
 // Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.

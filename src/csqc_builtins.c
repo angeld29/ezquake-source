@@ -1199,8 +1199,15 @@ S1 read*-минимум: читают из текущего сетевого с�
 static void csqc_readbyte (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadByte ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3416-3424)
+	{
+		CSQC_Client_Abort ("PF_ReadByte is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadByte ();
 }
 
 /*
@@ -1210,22 +1217,43 @@ float() readchar = #361
 static void csqc_readchar (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadChar ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3426-3434)
+	{
+		CSQC_Client_Abort ("PF_ReadChar is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadChar ();
 }
 
 static void csqc_readshort (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadShort ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3436-3444)
+	{
+		CSQC_Client_Abort ("PF_ReadShort is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadShort ();
 }
 
 static void csqc_readlong (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadLong ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3462-3470)
+	{
+		CSQC_Client_Abort ("PF_ReadLong is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadLong ();
 }
 
 /*
@@ -1236,8 +1264,15 @@ float() readcoord = #364 / string() readstring = #366
 static void csqc_readcoord (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadCoord ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3472-3480)
+	{
+		CSQC_Client_Abort ("PF_ReadCoord is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadCoord ();
 }
 
 /*
@@ -1247,8 +1282,15 @@ float() readangle = #365
 static void csqc_readangle (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadAngle ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3552-3560)
+	{
+		CSQC_Client_Abort ("PF_ReadAngle is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadAngle ();
 }
 
 static void csqc_readstring (void)
@@ -1257,6 +1299,12 @@ static void csqc_readstring (void)
 	char *s;
 	if (!vm)
 		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3536-3544)
+	{
+		CSQC_Client_Abort ("PF_ReadString is not valid at this time");
+		vm->globals[OFS_RETURN] = 0;
+		return;
+	}
 	s = MSG_ReadString ();
 	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
 }
@@ -1268,15 +1316,29 @@ float() readfloat = #367
 static void csqc_readfloat (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadFloat ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3482-3490)
+	{
+		CSQC_Client_Abort ("PF_ReadFloat is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadFloat ();
 }
 
 static void csqc_readentitynum (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	if (vm)
-		vm->globals[OFS_RETURN] = MSG_ReadShort ();
+	if (!vm)
+		return;
+	if (!CSQC_Client_MayRead ())	// R7/T1.4a (FTE pr_csqc.c:3450-3460)
+	{
+		CSQC_Client_Abort ("PF_ReadEntityNum is not valid at this time");
+		vm->globals[OFS_RETURN] = -1;
+		return;
+	}
+	vm->globals[OFS_RETURN] = MSG_ReadShort ();
 }
 
 /*

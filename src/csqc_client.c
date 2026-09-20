@@ -57,6 +57,8 @@ typedef struct csqc_client_state_s
 	qbool		loaded;		// модуль загружен в инстанс
 	qbool		inited;		// CSQC_Init вызван
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
+	qbool		mayread;	// модуль вправе читать net-message — только parse-callback'и
+						// (CSQC_Ent_Update/CSQC_Parse_Event; R7/T1.4a, FTE csqc_mayread)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
 	qbool		enable_sent;	// enablecsqc уже отправлен серверу
 	qbool		seen[CSQC_MAX_NUM];	// известные CSQC-сущности (isnew для Ent_Update)
@@ -2267,6 +2269,7 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_entspawn = -1;
+	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
@@ -2669,6 +2672,21 @@ qbool CSQC_Client_ParseAllowed (void)
 
 /*
 =================
+CSQC_Client_MayRead
+
+R7/T1.4a: read*-builtins модуля допустимы только внутри parse-callback'ов
+(CSQC_Ent_Update / CSQC_Parse_Event) — паритет FTE csqc_mayread
+(pr_csqc.c:9690-9692, :9208, :9249). Вне их — CSQC_Client_Abort (паритет FTE
+CSQC_Abort, pr_csqc.c:7489-7505).
+=================
+*/
+qbool CSQC_Client_MayRead (void)
+{
+	return s_csqc.mayread;
+}
+
+/*
+=================
 CSQC_Client_ParseEntities
 
 Парсинг svc_fte_csqcentities(76)/sized(92):
@@ -2819,7 +2837,9 @@ void CSQC_Client_ParseEntities (qbool sized)
 				*(int *)&vm->globals[s_csqc.global_self] = 0;	// FTE: self = NULL/world
 		}
 
+		s_csqc.mayread = true;	// R7/T1.4a: read*-контекст модуля (паритет FTE csqc_mayread)
 		CSQC_Client_Exec (s_csqc.func_entupdate);
+		s_csqc.mayread = false;
 		if (s_csqc.errored)
 			return;
 
@@ -2852,7 +2872,9 @@ void CSQC_Client_ParseEvent (void)
 		return;
 	if (s_csqc.func_parseevent <= 0)
 		return;
+	s_csqc.mayread = true;	// R7/T1.4a: read*-контекст модуля (паритет FTE csqc_mayread)
 	CSQC_Client_Exec (s_csqc.func_parseevent);
+	s_csqc.mayread = false;
 }
 
 /*
@@ -3514,6 +3536,7 @@ void CSQC_Client_Disconnect (void)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_entspawn = -1;
+	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
