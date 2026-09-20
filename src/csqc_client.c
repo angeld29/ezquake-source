@@ -3355,9 +3355,17 @@ pr_csqc.c:4185-4299) на клиентском PM-пути ezquake (PM_PlayerMov
   .angles, .flags (FL_ONGROUND), .pmove_flags (PMF_JUMP_HELD);
 - B3: чанки ≤50 мс (как cl_pred.c:76-88) + deprec pmove_org/vel/onground.
 
-Отклонения от FTE (в ezq pmove нет соответствующих полей): skipent, .gravitydir,
-onladder → PMF_LADDER недостижим; .waterlevel/.groundent в csdefs нет; box ent
-мапится на глобальные player_mins/maxs (box других игроков — тот же глобальный).
+Отклонения от FTE — accept+doc (T2.3, ezq pmove без соответствующих полей):
+- skipent: FTE-PM его не читает (только trace-хелперы, pmovetst.c:131), а
+  CL_SetSolidPlayers локального игрока исключает (cl_ents.c:2532) → мотв;
+- .gravitydir: FTE-дефолт -z (pr_csqc.c:4270, pmove.c:890-894); directional
+  требует port PM-core (вне #347) — для QW-мода не используется;
+- onladder → PMF_LADDER: FTE-детект только Q2/Q3 (pmove.c:1010-1052), в QW
+  мёртв → недостижим и на FTE;
+- .waterlevel: PM считает и использует внутри (PM_CategorizePosition/PM_Friction/
+  PM_WaterMove), но в поле не отдаётся — ни ezq-, ни FTE-клиентский #347 его не
+  пишут (SSQC runclientphys — pr_cmds.c:10286); .groundent в csdefs нет.
+Box ent мапится на глобальные player_mins/maxs (box других игроков — тот же).
 =================
 */
 #define CSQC_MV_WALK	3	// csdefs.qc MOVETYPE_* (FTE-нумерация)
