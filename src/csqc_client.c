@@ -23,6 +23,7 @@ csprogs.dat.
 #include "csqc_client.h"
 #include "pmove.h"		// playermove_t/pmove/movevars/PM_PlayerMove (C1.4 #347)
 #include "common_draw.h"	// CachePic_Find/Remove, Draw_EnableScissorRectangle/DisableScissor
+#include "r_texture.h"		// R_LoadPicImage/TEX_ALPHA (#318)
 #include "r_matrix.h"		// R_Project3DCoordinates/R_Get*Matrix (#310/#311)
 #include "gl_model.h"		// model_t mins/maxs (#504 getentity)
 #include "input.h"		// CL_SendClientCommand (enablecsqc/disablecsqc, T1.6a)
@@ -519,9 +520,33 @@ qbool CSQC_Client_IsCachedPic (const char *name)
 qbool CSQC_Client_PicSize (const char *name, float *w, float *h)
 {
 	mpic_t *pic;
+	const char *ext;
 	if (!name || !name[0])
 		return false;
-	pic = Draw_CachePicSafe (name, false, false);
+	// #318 FTE-паритет (PF_CL_drawgetimagesize, pr_menu.c:1093): R2D_SafeCachePic +
+	// R_GetShaderSizes резолвят ТОЧНОЕ имя, без auto-extension: "gfx/x.lmp" -> размер,
+	// "gfx/x" (без расширения) -> 0. ezq Draw_CachePicSafe strip/append'ит .lmp и на
+	// .lmp-пути отдаёт чужой размер -> читаем .lmp-заголовок напрямую (qpic_t: int w,h).
+	ext = COM_FileExtension (name);
+	if (!ext || !ext[0])
+		return false;
+	if (!strcasecmp (ext, "lmp"))
+	{
+		// Заголовок .lmp (qpic_t): два int LE (см. SwapPic/LittleLong). wad.h не
+		// тянем (требует texture_t) — читаем заголовок напрямую.
+		byte *data = FS_LoadTempFile ((char *)name, NULL);
+		int iw, ih;
+		if (!data)
+			return false;
+		memcpy (&iw, data, sizeof (iw));
+		memcpy (&ih, data + sizeof (iw), sizeof (ih));
+		if (w)
+			*w = (float)LittleLong (iw);
+		if (h)
+			*h = (float)LittleLong (ih);
+		return true;
+	}
+	pic = R_LoadPicImage (name, NULL, 0, 0, TEX_ALPHA);
 	if (!pic)
 		return false;
 	if (w)

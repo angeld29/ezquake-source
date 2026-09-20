@@ -2425,6 +2425,10 @@ HASDESCRIPTION не ставится); PRIVATE-аналога FTE (NOTFROMSERVER
 string(string cvarname) cvar_defstring = #482
 FTE: FindOrGet (создаёт, если нет), возврат default-значения (нет — "").
 ezq: Cvar_Find / Cvar_Create (FindOrGet), возврат cvar_t.defaultvalue.
+Отклонение (T3 Э6, doc): для `registercvar(name,value)` FTE отдаёт "" — это quirk
+`PF_registercvar` (`pr_bgcmd.c:2001` читает value по гейту `callargc>2`, а 2-арг вызов
+даёт value "") → `defaultstr=""`. ezq честно возвращает defaultvalue (value) — намеренно,
+т.к. мимикрия quirk сломала бы дефолты модуля (`csqc_vm` и др.).
 */
 static void csqc_cvar_defstring (void)
 {
@@ -3884,7 +3888,9 @@ moveflags — 3-й арг traceline / 5-й tracebox (маска MOVE_* FTE); for
 */
 #define CSQC_SOLID_NOT		0
 #define CSQC_SOLID_TRIGGER	1
+#define CSQC_SOLID_BSP		4
 #define CSQC_FL_MONSTER		32
+#define CSQC_FL_FINDABLE_NONSOLID	16384
 #define CSQC_MOVE_NOMONSTERS	1
 #define CSQC_MOVE_MISSILE	2
 #define CSQC_MOVE_HITMODEL	4
@@ -3907,8 +3913,7 @@ static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end,
 	everything = !!(moveflags & CSQC_MOVE_EVERYTHING);
 	triggers = !!(moveflags & CSQC_MOVE_TRIGGERS);
 	missile = !!(moveflags & CSQC_MOVE_MISSILE);
-	if (nomon)
-		return;	// NOMONSTERS: только мир (уже в tr)
+	// NOMONSTERS не выходит сразу: FTE оставляет SOLID_BSP (см. фильтр ниже).
 	if (forent < 0 || forent >= vm->num_edicts)
 		forent = 0;	// world — forent-проверок нет
 
@@ -3959,20 +3964,21 @@ static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end,
 		solf = (ofs_sol >= 0) ? (int)base[ofs_sol] : CSQC_SOLID_NOT;
 		flf = (ofs_fl >= 0) ? (int)base[ofs_fl] : 0;
 
-		if (everything)
+		// FTE-фильтр (world.c:1937 World_ClipToLinks / :1528 World_ClipToEverything):
+		// SOLID_NOT — всегда мимо; триггер бьётся только при MOVE_TRIGGERS/
+		// MOVE_EVERYTHING И FL_FINDABLE_NONSOLID (world.c:1956-1959/:1541).
+		if (solf == CSQC_SOLID_NOT)
+			continue;
+		if (solf == CSQC_SOLID_TRIGGER)
 		{
-			/* любая сущность с геометрией, даже .solid==SOLID_NOT */
-		}
-		else if (triggers)
-		{
-			if (solf != CSQC_SOLID_TRIGGER)
+			if (!(flf & CSQC_FL_FINDABLE_NONSOLID))
+				continue;
+			if (!everything && !triggers)
 				continue;
 		}
-		else
-		{
-			if (solf == CSQC_SOLID_NOT)
-				continue;	// NORMAL/HITMODEL: не-SOLID_NOT мимо
-		}
+		// MOVE_NOMONSTERS оставляет SOLID_BSP (world.c:1970/:1547).
+		if (nomon && solf != CSQC_SOLID_BSP)
+			continue;
 		// MISSILE: монстры с увеличенным размером (±15, как FTE).
 		if (missile && (flf & CSQC_FL_MONSTER))
 			inflate = 15;
