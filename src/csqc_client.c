@@ -2673,16 +2673,26 @@ void CSQC_Client_ParseEntities (qbool sized)
 
 		if (removeflag)
 		{
-			if (ready && s_csqc.func_entremove > 0)
+			int slot;
+
+			// D2/Q1: remove-0 (world) — фатально безусловно (FTE pr_csqc.c:9615-9616).
+			// Host_Error (сообщение + Host_Abort); в ezq Host_EndGame — void() без abort.
+			if (!entnum)
+				Host_Error ("CSQC_Client_ParseEntities: cannot remove world\n");
+
+			slot = CSQC_Client_NumToSlot ((int)entnum);
+			if (slot)
 			{
-				// P2/D3: контекст (self=slot, .entnum=номер), без builtin-стрима.
-				int slot = CSQC_Client_NumToSlot ((int)entnum);
-				if (slot)
+				if (ready && s_csqc.func_entremove > 0)
 				{
+					// P2/D3: контекст (self=slot, .entnum=номер), без builtin-стрима.
 					CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
 					CSQC_Client_Exec (s_csqc.func_entremove);
-					CSQC_Client_NetFreeSlot (slot, (int)entnum);
 				}
+				// D-B/R7: слот освобождает движок безусловно (колбэк опционален);
+				// FTE pr_csqc.c:9625-9632, :5658-5671. Отклонение ezq от FTE: при
+				// наличии колбэка FTE перекладывает фри на модуль — не меняем.
+				CSQC_Client_NetFreeSlot (slot, (int)entnum);
 			}
 			s_csqc.seen[entnum] = false;
 			continue;
