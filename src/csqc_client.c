@@ -186,6 +186,12 @@ void PR1VM_ClientSetString (pr1vm_t *vm, int *address, char *s)
 typedef struct { unsigned int seq; usercmd_t cmd; } csqc_inrec_t;
 static csqc_inrec_t s_inhist[CSQC_INHIST];
 static unsigned int s_last_seq;	// seq последней записи (0 — записей нет)
+// T2.2: «живой» clientcommandframe = seq последнего собранного cmd (аналог FTE
+// cl.movesequence; cl_input.c ставит его на сборке). НЕ следующая outgoing_sequence:
+// Netchan_Transmit инкрементирует после отправки (net_chan.c:319), поэтому в
+// render-фазе outgoing_sequence уже N+1, а FTE ccframe остаётся N (client.h:869
+// «movesequence+1 … still pending»). Обновляется в CSQC_Client_InputFrame.
+static unsigned int s_ccframe;	// 0 — cmd ещё не собирался
 
 // C2.2 #460-469: пул string-buffers (DP). Строки deep-copy (переживают кадры).
 #define CSQC_MAX_BUFS	64
@@ -2379,6 +2385,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
 	s_last_seq = 0;
+	s_ccframe = 0;
 
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
@@ -2647,10 +2654,12 @@ void CSQC_Client_ConnectCheck (void)
 C5-A: окно предикции EXT_CSQC_1 — значения глобалов модуля
 clientcommandframe/servercommandframe (csdefs.qc:50-51).
 
-- clientcommandframe = «следующий формируемый» клиентский кадр =
-  cls.netchan.outgoing_sequence (Netchan_Transmit инкрементирует ПОСЛЕ записи
-  заголовка — net_chan.c:316-319, поэтому во время CL_SendCmd outgoing_sequence
-  ещё равен номеру текущего cmd; после — следующего).
+- clientcommandframe = «живой» (последний собранный) клиентский кадр = s_ccframe
+  (аналог FTE cl.movesequence, pr_csqc.c:8841/9430-9431). Ставится в
+  CSQC_Client_InputFrame на сборке cmd и НЕ пересчитывается после отправки:
+  Netchan_Transmit инкрементирует outgoing_sequence (net_chan.c:319), но
+  clientcommandframe остаётся номером собранного cmd. Это то, что просит
+  #345(clientcommandframe) — живой pending-кадр (T2.2); следующего ещё нет.
 - servercommandframe = последний подтверждённый сервером клиентский кадр =
   cl.parsecount (CL_ParseClientdata ставит его в cls.netchan.incoming_acknowledged,
   cl_parse.c:2050-2054) — аналог FTE QW ackedmovesequence.
@@ -2666,7 +2675,10 @@ static float CSQC_Client_ClientCmdFrame (void)
 		return 0;
 	if (cls.state != ca_active || cls.demoplayback || cls.mvdplayback)
 		return 0;
-	return (float)cls.netchan.outgoing_sequence;
+	// T2.2: последний собранный кадр (FTE cl.movesequence), не следующая
+	// outgoing_sequence — иначе в render-фазе #345(clientcommandframe) просит ещё
+	// не собранный seq и получает 0 (см. s_ccframe).
+	return (float)s_ccframe;
 }
 
 static float CSQC_Client_ServerCmdFrame (void)
@@ -3062,6 +3074,12 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 
+	// T2.2: живой clientcommandframe = seq текущего собранного cmd (FTE
+	// cl.movesequence, pr_csqc.c:9430-9431). Ставим до guard — трекаем и без
+	// модуля; render-фаза (PatchFrames) затем отдаёт это же значение, а не
+	// инкрементированную outgoing_sequence.
+	s_ccframe = (unsigned int)cls.netchan.outgoing_sequence;
+
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.func_input <= 0)
 		return;
 
@@ -3141,12 +3159,13 @@ C5-A #345: история отправленных usercmd. CL_SendCmd запи�
 seq = зеркало cls.netchan.outgoing_sequence (номер клиентского сообщения на
 момент записи; Netchan_Transmit инкрементирует после записи заголовка). Это и
 есть тот номер, который подтверждает сервер (servercommandframe = incoming_
-acknowledged = cl.parsecount) — окно (servercommandframe, clientcommandframe]
-согласовано в одной нумерации. Отличие от FTE: у нас ring-история (64) + запись
-только живого пути CL_SendCmd (демо/MVD не записываются); живой pending-кадр
-#345(clientcommandframe) вне CSQC_Input_Frame недоступен — модуль берёт текущий
-cmd из input_* (движок выставляет их до CSQC_Input_Frame). NQ-механизм
-ackedmovesequence (PEXT2_PREDINFO) недостижим (не для QW).
+acknowledged = cl.parsecount, cl_parse.c:2050-2053) — окно (servercommandframe,
+clientcommandframe] согласовано в одной нумерации. Отличие от FTE: у нас
+ring-история (64) + запись только живого пути CL_SendCmd (демо/MVD не
+записываются). T2.2: clientcommandframe = s_ccframe = последний записанный seq,
+поэтому #345(clientcommandframe) попадает в ring (живой pending-кадр доступен вне
+CSQC_Input_Frame, как FTE movesequence). NQ-механизм ackedmovesequence
+(PEXT2_PREDINFO) недостижим (не для QW).
 =================
 */
 void CSQC_Client_RecordInput (usercmd_t *cmd)
@@ -3170,8 +3189,11 @@ static void CSQC_Client_FillInputFromCmd (usercmd_t *cmd)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 
+	// T2.2: ×gamespeed как в Input_Frame/FTE cs_set_input_state (pr_csqc.c:3880);
+	// у ezq gamespeed 1 (0 на серверной паузе) — в QW no-op.
 	if (s_csqc.in_timelength >= 0)
-		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f;
+		vm->globals[s_csqc.in_timelength] = cmd->msec / 1000.0f
+			* ((cl.paused & PAUSED_SERVER) ? 0.0f : 1.0f);
 	if (s_csqc.in_angles >= 0)
 	{
 		vm->globals[s_csqc.in_angles + 0] = cmd->angles[0];
@@ -3773,6 +3795,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
 	s_last_seq = 0;
+	s_ccframe = 0;
 }
 
 #endif // !CLIENTONLY

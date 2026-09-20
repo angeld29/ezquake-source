@@ -1547,8 +1547,9 @@ float(float inputsequencenum) getinputstate = #345
 cls.netchan.outgoing_sequence; валиден (servercommandframe, clientcommandframe]
 (контракт модуля — движок диапазон не проверяет, спека ext_csqc_1.txt:262);
 paused-guard как FTE (pr_csqc.c:4142). Возврат 0, если seq вне кольца истории
-(64) или пауза. Живой pending-кадр #345(clientcommandframe) вне CSQC_Input_Frame
-недоступен (нет аналога cl_pendingcmd; текущий cmd — в input_*) — отклонение.
+(64) или пауза. T2.2: clientcommandframe = последний отправленный seq (FTE
+cl.movesequence), поэтому #345(clientcommandframe) отдаёт живой pending-кадр вне
+CSQC_Input_Frame (в ring; у FTE — пересборка cl_pendingcmd).
 */
 static void csqc_getinputstate (void)
 {
