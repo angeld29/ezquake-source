@@ -62,6 +62,7 @@ typedef struct csqc_client_state_s
 	qbool		seen[CSQC_MAX_NUM];	// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
+	int			func_entspawn;	// CSQC_Ent_Spawn (или -1; R7/T1.3a, FTE-паритет)
 	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
 	int			global_time;	// смещение глобала time (или -1)
@@ -1164,6 +1165,48 @@ static void CSQC_Client_SetContextSlot (pr1vm_t *vm, unsigned slot, unsigned num
 
 /*
 =================
+CSQC_Client_RunEntSpawn
+
+R7/T1.3a: хук новой CSQC-сущности (FTE-паритет, pr_csqc.c:9650-9664). Движок
+обнуляет self (self=0=мир), кладёт серверный номер в PARM0, вызывает
+CSQC_Ent_Spawn; модуль создаёт/настраивает сущность (обычно spawn();
+self.entnum = entnum) и возвращает её в self. Читаем self → слот арены
+(self/edict_size). Возврат: валидный занятый слот или 0 (мир/невалиден; Q-D —
+без фолбэка, как FTE ent=NULL).
+=================
+*/
+static int CSQC_Client_RunEntSpawn (pr1vm_t *vm, unsigned int entnum)
+{
+	int selfval, slot;
+
+	if (!vm || s_csqc.func_entspawn <= 0 || s_csqc.global_self < 0 || vm->edict_size <= 0)
+		return 0;
+	*(int *)&vm->globals[s_csqc.global_self] = 0;
+	vm->globals[OFS_PARM0] = (float)entnum;
+	if (!CSQC_Client_Exec (s_csqc.func_entspawn))
+		return 0;
+	selfval = *(int *)&vm->globals[s_csqc.global_self];
+	slot = selfval / vm->edict_size;
+	return (slot > 0 && slot < CSQC_MAX_EDICTS && s_used[slot]) ? slot : 0;
+}
+
+/* Q-E (FTE pr_csqc.c:9693-9694): после CSQC_Ent_Update модуль может сменить self;
+   номер→слот переносим на новый валидный слот (0 = мир/снят). */
+static void CSQC_Client_RemapAfterUpdate (pr1vm_t *vm, unsigned int entnum)
+{
+	int selfval, slot;
+
+	if (!vm || s_csqc.func_entspawn <= 0 || s_csqc.global_self < 0 || vm->edict_size <= 0)
+		return;
+	selfval = *(int *)&vm->globals[s_csqc.global_self];
+	slot = selfval / vm->edict_size;
+	if (slot < 0 || slot >= CSQC_MAX_EDICTS || !s_used[slot])
+		slot = 0;
+	CSQC_Client_MapNumber ((int)entnum, slot);
+}
+
+/*
+=================
 CSQC_Client_EntAlloc / EntFree (FTE-пул)
 
 Модульные сущности (builtin spawn) берут произвольный свободный слот пула
@@ -2223,6 +2266,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_entspawn = -1;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
@@ -2285,6 +2329,9 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_Ent_Remove");
 	if (f)
 		s_csqc.func_entremove = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Ent_Spawn");
+	if (f)
+		s_csqc.func_entspawn = (int)(f - vm->functions);
 	f = PR1VM_FindFunction (vm, "CSQC_Parse_Event");
 	if (f)
 		s_csqc.func_parseevent = (int)(f - vm->functions);
@@ -2345,8 +2392,8 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.func_input, s_csqc.func_inputevent, s_csqc.global_time);
-	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d\n",
-		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size);
+	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d es=%d\n",
+		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size, s_csqc.func_entspawn);
 
 	// CSQC_Init(apiver, enginename, enginever) — сигнатура нашего модуля.
 	if (s_csqc.func_init > 0)
@@ -2666,8 +2713,11 @@ void CSQC_Client_ParseEntities (qbool sized)
 			break;
 		if (entnum >= (unsigned int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
 		{
-			// R7 (growth — accept+doc, T1.3): номер вне карты. Sized-поток при этом
-			// не дрейнится (документировано: недостижимо с mvdsv MAX_EDICTS=2048).
+			// R7/T1.3b (D4, accept+doc): dynamic growth НЕ реализован — карта
+			// номер→слот фиксирована (CSQC_MAX_NUM/CSQC_MAX_EDICTS = 4096). Номер
+			// ≥ 4096 недостижим с mvdsv (MAX_EDICTS=2048), путь чисто защитный;
+			// остаток датаграма не дрейнится — задокументированное ограничение
+			// (FTE `CSQC_EntityCheck` растит csqcent[], pr_csqc.c:9440-9451).
 			break;
 		}
 
@@ -2721,43 +2771,61 @@ void CSQC_Client_ParseEntities (qbool sized)
 		vm->globals[OFS_PARM0] = s_csqc.seen[entnum] ? 0 : 1;
 		s_csqc.seen[entnum] = true;
 
-		// P2/D3 + FTE-пул: номер→слот; новый номер — выделить слот пула,
-		// контекст (self=slot, .entnum=номер).
+		// P2/D3 + FTE-пул: номер→слот; новый номер — слот пула либо CSQC_Ent_Spawn
+		// (R7/T1.3a), контекст (self=slot, .entnum=номер).
 		{
 			int slot = CSQC_Client_NumToSlot ((int)entnum);
 			if (!slot)
 			{
-				slot = CSQC_Client_NetAllocSlot (vm);
-				if (!slot)
+				if (s_csqc.func_entspawn > 0)
 				{
-					Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);
-					break;	// патологично (пул 4095); рассинхрон невозможен при чтении
+					// FTE pr_csqc.c:9650-9658: модуль сам создаёт/настраивает сущность;
+					// невалидный self (0/мир) → без слота (Q-D, как FTE ent=NULL).
+					slot = CSQC_Client_RunEntSpawn (vm, entnum);
+					if (slot)
+						CSQC_Client_MapNumber ((int)entnum, slot);
 				}
-				CSQC_Client_MapNumber ((int)entnum, slot);
-				// FTE-пул Шаг 5 (диагностика): номер → слот пула; печать
-				// ограничена, чтобы серверный churn remove/update не залил
-				// консоль (≤32 строк на сессию csqc_dbg>=3).
+				else
 				{
-					static int s_dbg_lines = 0;
-					cvar_t *dbg = Cvar_Find ("csqc_dbg");
-					if (dbg && dbg->value >= 3)
+					slot = CSQC_Client_NetAllocSlot (vm);
+					if (!slot)
 					{
-						if (s_dbg_lines < 32)
-						{
-							Con_Printf ("CSQC ent num %u -> slot %d\n", entnum, slot);
-							s_dbg_lines++;
-						}
+						Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);
+						break;	// патологично (пул 4095); рассинхрон невозможен при чтении
 					}
-					else
-						s_dbg_lines = 0;
+					CSQC_Client_MapNumber ((int)entnum, slot);
+					// FTE-пул Шаг 5 (диагностика): номер → слот пула; печать
+					// ограничена, чтобы серверный churn remove/update не залил
+					// консоль (≤32 строк на сессию csqc_dbg>=3).
+					{
+						static int s_dbg_lines = 0;
+						cvar_t *dbg = Cvar_Find ("csqc_dbg");
+						if (dbg && dbg->value >= 3)
+						{
+							if (s_dbg_lines < 32)
+							{
+								Con_Printf ("CSQC ent num %u -> slot %d\n", entnum, slot);
+								s_dbg_lines++;
+							}
+						}
+						else
+							s_dbg_lines = 0;
+					}
 				}
 			}
-			CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+			if (slot)
+				CSQC_Client_SetContextSlot (vm, (unsigned)slot, entnum);
+			else if (s_csqc.global_self >= 0)
+				*(int *)&vm->globals[s_csqc.global_self] = 0;	// FTE: self = NULL/world
 		}
 
 		CSQC_Client_Exec (s_csqc.func_entupdate);
 		if (s_csqc.errored)
 			return;
+
+		// Q-E (FTE pr_csqc.c:9693-9694): Spawn-модуль может сменить self в Update —
+		// переносим номер→слот на новый валидный слот (0 = снят/мир).
+		CSQC_Client_RemapAfterUpdate (vm, entnum);
 
 		// Skip-защита: если модуль прочитал меньше payload_len — дочитать.
 		if (payload_len >= 0)
@@ -3445,6 +3513,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_entspawn = -1;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
 	s_csqc.global_time = -1;
