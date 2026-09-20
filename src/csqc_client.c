@@ -25,6 +25,14 @@ csprogs.dat.
 #include "common_draw.h"	// CachePic_Find/Remove, Draw_EnableScissorRectangle/DisableScissor
 #include "r_matrix.h"		// R_Project3DCoordinates/R_Get*Matrix (#310/#311)
 #include "gl_model.h"		// model_t mins/maxs (#504 getentity)
+#include "input.h"		// CL_SendClientCommand (enablecsqc/disablecsqc, T1.6a)
+#include "version.h"		// VERSION_NUM (CSQC_Init enginever, T1.6a)
+
+// CSQC API level, который движок сообщает модулю в CSQC_Init (FTE-паритет:
+// pr_common.h CSQC_API_VERSION 1.0, pr_csqc.c:8285).
+#ifndef CSQC_API_VERSION
+#define CSQC_API_VERSION	1.0f
+#endif
 
 // FTE-пул (слот ≠ серверный номер; план docs/archive/ezquake_csqc_client_corebuiltins_plan.md):
 // CSQC_MAX_NUM — верх серверных номеров (карта номер→слот), CSQC_MAX_EDICTS — размер пула
@@ -60,7 +68,8 @@ typedef struct csqc_client_state_s
 	qbool		mayread;	// модуль вправе читать net-message — только parse-callback'и
 						// (CSQC_Ent_Update/CSQC_Parse_Event; R7/T1.4a, FTE csqc_mayread)
 	qbool		world_done;	// CSQC_WorldLoaded вызван
-	qbool		enable_sent;	// enablecsqc уже отправлен серверу
+	qbool		enable_sent;	// enablecsqc/disablecsqc уже отправлен серверу
+	qbool		enable_value;	// последнее отправленное состояние (true=enablecsqc, T1.6a)
 	qbool		seen[CSQC_MAX_NUM];	// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
@@ -957,10 +966,14 @@ fteqw/engine/client/pr_csqc.c): 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname
 в кэш csprogsvers/<crc>.dat (write-back, как FTE COM_WriteFile в pr_csqc.c) —
 следующие коннекты берут кэш, а не перекачивают. Возвращает true и заполняет
 pathbuf путём для CSQC_Client_Load.
+
+anycsqc (T1.6b, FTE-паритет pr_csqc.c:7779): promiscuous-режим — не сверять
+size/crc локального кандидата (сервер с anycsqc/битым *csprogs либо demoplayback,
+pr_csqc.c:7777); write-back в crc-кэш при этом не делается.
 =================
 */
 static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
-	const char *name, int sizep, unsigned crc)
+	const char *name, int sizep, unsigned crc, qbool anycsqc)
 {
 	extern void Sys_mkdir (const char *path);
 	char buf[MAX_QPATH];
@@ -985,11 +998,12 @@ static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
 
 	for (i = 0; i < nc; i++)
 	{
-		if (CSQC_Client_ValidateFile (cands[i], sizep, crc))
+		if (CSQC_Client_ValidateFile (cands[i], anycsqc ? 0 : sizep, anycsqc ? 0 : crc))
 		{
 			strlcpy (pathbuf, cands[i], bufsz);
 			// FTE write-back: валидный name-файл копируем в кэш на будущее.
-			if (crc && !cls.demoplayback)
+			// При anycsqc/demo crc не подтверждён — в кэш не пишем.
+			if (crc && !anycsqc && !cls.demoplayback)
 			{
 				byte *data;
 				int len;
@@ -2398,16 +2412,43 @@ static qbool CSQC_Client_Load (const char *path)
 	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d es=%d\n",
 		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size, s_csqc.func_entspawn);
 
-	// CSQC_Init(apiver, enginename, enginever) — сигнатура нашего модуля.
+	// CSQC_Init(apiver, enginename, enginever) — FTE-паритет (pr_csqc.c:8285-8287):
+	// apiver = CSQC_API_VERSION, enginename = имя движка, enginever = номер версии.
+	// Модуль аргументы использует только как хинты (TF2003/fo-qwprogs их игнорируют).
 	if (s_csqc.func_init > 0)
 	{
-		vm->globals[OFS_PARM0] = 0;	// apiver (float)
-		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM1], "ezquake-orig");
-		vm->globals[OFS_PARM2] = 0;	// enginever (float в нашем модуле)
+		vm->globals[OFS_PARM0] = CSQC_API_VERSION;
+		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM1], "ezQuake");
+		vm->globals[OFS_PARM2] = VERSION_NUM;
 		CSQC_Client_Exec (s_csqc.func_init);
 		s_csqc.inited = !s_csqc.errored;
 	}
 	return true;
+}
+
+/*
+=================
+CSQC_Client_NotifyCSQC
+
+FTE-паритет (cl_parse.c:1526-1535): сообщить серверу, получает ли наш модуль
+CSQC-поток. enablecsqc — модуль загружен и готов (после CSQC_WorldLoaded);
+disablecsqc — сервер предложил CSQC, но модуль не запустился (T1.6a, D-J).
+Идемпотентно (повторное состояние не отправляем); в демо/без коннекта — no-op
+(CL_SendClientCommand).
+=================
+*/
+static void CSQC_Client_NotifyCSQC (qbool enable)
+{
+#ifdef FTE_PEXT_CSQC
+	if (!(cls.fteprotocolextensions & FTE_PEXT_CSQC))
+		return;
+#endif
+	if (s_csqc.enable_sent && s_csqc.enable_value == enable)
+		return;
+	CL_SendClientCommand (true, enable ? "enablecsqc" : "disablecsqc");
+	s_csqc.enable_sent = true;
+	s_csqc.enable_value = enable;
+	Con_Printf ("CSQC: %s sent\n", enable ? "enablecsqc" : "disablecsqc");
 }
 
 /*
@@ -2423,10 +2464,13 @@ CSQC_Client_ConnectCheck
 void CSQC_Client_ConnectCheck (void)
 {
 	extern cvar_t cl_pext_csqc;
+	extern cvar_t cl_download_csprogs;
 	const char *name, *crcs;
 	unsigned crc;
 	int sizep;
 	char path[MAX_QPATH];
+	char *crcend;
+	qbool anycsqc;
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
 	// модуль не грузится, клиент ведёт себя как раньше.
@@ -2434,11 +2478,25 @@ void CSQC_Client_ConnectCheck (void)
 		return;
 
 	sizep = (int)strtoul (Info_ValueForKey (cl.serverinfo, "*csprogssize"), NULL, 0);
-	if (sizep <= 0)
+
+	// anycsqc (T1.6b, FTE-паритет): сервер разрешает грузить локальный csprogs без
+	// сверки crc (pr_csqc.c:7779); «битый» *csprogs (trailing-мусор) FTE тоже
+	// трактует как anycsqc (cl_parse.c:1342-1347). В демо сверки нет (pr_csqc.c:7777).
+	anycsqc = atoi (Info_ValueForKey (cl.serverinfo, "anycsqc")) != 0;
+	crcs = Info_ValueForKey (cl.serverinfo, "*csprogs");
+	crc = (unsigned)strtoul (crcs, &crcend, 0);
+	if (crcs[0] && *crcend)
+	{
+		Con_Printf ("CSQC: corrupt *csprogs key in serverinfo\n");
+		anycsqc = true;
+		crc = 0;
+	}
+	if (cls.demoplayback)
+		anycsqc = true;
+
+	if (sizep <= 0 && !anycsqc)
 		return;		// обычный сервер без CSQC (или PR1-гейт сервера)
 
-	crcs = Info_ValueForKey (cl.serverinfo, "*csprogs");
-	crc = (unsigned)strtoul (crcs, NULL, 0);
 	name = Info_ValueForKey (cl.serverinfo, "*csprogsname");
 	if (!name || !name[0])
 		name = "csprogs.dat";
@@ -2452,18 +2510,42 @@ void CSQC_Client_ConnectCheck (void)
 
 	// Локальные кандидаты по FTE-семантике (CSQC_FindMainProgs, pr_csqc.c):
 	// 1) кэш csprogsvers/<crc>.dat, 2) *csprogsname (+ фолбэк csprogs.dat);
-	// при валидном name-файле делается write-back копии в кэш.
-	if (CSQC_Client_FindMainProgs (path, sizeof (path), name, sizep, crc))
+	// при валидном name-файле делается write-back копии в кэш. anycsqc/demo —
+	// без сверки size/crc (T1.6b).
+	if (CSQC_Client_FindMainProgs (path, sizeof (path), name, sizep, crc, anycsqc))
 	{
 		if (!CSQC_Client_Load (path))
+		{
+			CSQC_Client_NotifyCSQC (false);
 			return;
+		}
 		if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		{
+			CSQC_Client_NotifyCSQC (false);
 			return;
+		}
 		// Вход в новую карту: per-карта состояние чистое (WorldLoaded/enablecsqc
 		// будут этой карты; модуль уже новый).
 		memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
 		s_csqc.world_done = false;
 		s_csqc.enable_sent = false;
+		return;
+	}
+
+	// Демо/MVD: локального csprogs нет, скачивание в демо недоступно
+	// (StartDownload — no-op) — pending не ставим (иначе ложный таймаут, T1.6b).
+	if (cls.demoplayback)
+	{
+		Con_Printf ("CSQC: no local csprogs for demo playback\n");
+		return;
+	}
+
+	// Скачивание csprogs запрещено cvar'ом (FTE-паритет: cl_download_csprogs):
+	// модуль не грузится, сообщаем серверу disablecsqc (D-J/T1.6a).
+	if (!cl_download_csprogs.value)
+	{
+		Con_Printf ("CSQC: not downloading %s (cl_download_csprogs 0)\n", name);
+		CSQC_Client_NotifyCSQC (false);
 		return;
 	}
 
@@ -2559,9 +2641,15 @@ void CSQC_Client_Update (void)
 			strlcpy (path, s_csqc.csprogs_dl_path, sizeof (path));
 			s_csqc.csprogs_dl_pending = false;
 			if (!CSQC_Client_Load (path))
+			{
+				CSQC_Client_NotifyCSQC (false);
 				return;
+			}
 			if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+			{
+				CSQC_Client_NotifyCSQC (false);
 				return;
+			}
 			// как при входе в мир: per-карта состояние чистое
 			memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
 			s_csqc.world_done = false;
@@ -2574,6 +2662,7 @@ void CSQC_Client_Update (void)
 			{
 				s_csqc.csprogs_dl_pending = false;
 				Con_Printf ("CSQC: csprogs download failed/timed out\n");
+				CSQC_Client_NotifyCSQC (false);
 			}
 			return;
 		}
@@ -2588,18 +2677,7 @@ void CSQC_Client_Update (void)
 		if (!CSQC_Client_Exec (s_csqc.func_world))
 			return;
 		// FTE: enablecsqc — после CSQC_WorldLoaded каждой карты (module ready).
-		if (!s_csqc.enable_sent)
-		{
-#ifdef FTE_PEXT_CSQC
-			if (cls.fteprotocolextensions & FTE_PEXT_CSQC)
-#endif
-			{
-				MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
-				MSG_WriteString (&cls.netchan.message, "enablecsqc");
-				s_csqc.enable_sent = true;
-				Con_Printf ("CSQC: enablecsqc sent (map)\n");
-			}
-		}
+		CSQC_Client_NotifyCSQC (true);
 	}
 
 	// player_localentnum — публикуем до модуля (окружение builtins как FTE;

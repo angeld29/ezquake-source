@@ -118,6 +118,8 @@ cvar_t  cl_pext = {"cl_pext", "1"};					// allow/disallow protocol extensions at
 #ifdef FTE_PEXT_CSQC
 #ifndef CLIENTONLY
  cvar_t  cl_pext_csqc = {"cl_pext_csqc", "1"};			// CSQC (наш клиентский PR1VM, csqc_client.c)
+ // T1.6a (D-I, FTE-паритет cl_download_csprogs): разрешить скачивание csprogs.dat с сервера.
+ cvar_t  cl_download_csprogs = {"cl_download_csprogs", "1", CVAR_ARCHIVE};
 #endif
 #endif
 cvar_t  cl_pext_warndemos = { "cl_pext_warndemos", "1" }; // if set, user will be warned when saving demos that are not backwards compatible
@@ -2115,6 +2117,7 @@ static void CL_InitLocal(void)
 #ifdef FTE_PEXT_CSQC
 #ifndef CLIENTONLY
  	Cvar_Register(&cl_pext_csqc);
+ 	Cvar_Register(&cl_download_csprogs);
 #endif
 #endif
  	Cvar_Register(&cl_pext_warndemos);
