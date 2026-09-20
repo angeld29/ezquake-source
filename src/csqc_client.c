@@ -1172,7 +1172,7 @@ CSQC_Client_EntAlloc / EntFree (FTE-пул)
 номер→слот в ParseEntities. entity-значение PR1 = slot*edict_size.
 =================
 */
-static int CSQC_Client_AllocSlot (void)
+static int CSQC_Client_AllocSlot (pr1vm_t *vm)
 {
 	int i;
 	for (i = 1; i < CSQC_MAX_EDICTS; i++)
@@ -1180,6 +1180,11 @@ static int CSQC_Client_AllocSlot (void)
 		{
 			s_used[i] = true;
 			s_own[i] = false;
+			// R2/D-A (FTE-паритет): обнулять поля слота при (пере)использовании —
+			// иначе модуль видит остатки прошлой сущности. FTE: QC_ClearEdict /
+			// ED_AllocIndex (pr_edict.c:30,85).
+			if (vm && vm->game_edicts && vm->edict_size > 0)
+				memset ((byte *)vm->game_edicts + (size_t)i * vm->edict_size, 0, vm->edict_size);
 			return i;
 		}
 	Con_Printf ("CSQC_Client_AllocSlot: pool full (%d)\n", CSQC_MAX_EDICTS - 1);
@@ -1190,8 +1195,7 @@ int CSQC_Client_EntAlloc (struct pr1vm_s *v)
 {
 	pr1vm_t *vm = (pr1vm_t *)v;
 	int slot;
-	(void)vm;
-	slot = CSQC_Client_AllocSlot ();
+	slot = CSQC_Client_AllocSlot (vm);
 	if (slot)
 		s_own[slot] = true;	// spawn-сущность: .entnum не пишем (0)
 	return slot;
@@ -1214,10 +1218,11 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 	memset (s, 0, vm->edict_size);
 }
 
-/* внутренний сетевой путь (ParseEntities): слот без s_own */
-int CSQC_Client_NetAllocSlot (void)
+/* внутренний сетевой путь (ParseEntities): слот без s_own.
+   vm нужен для обнуления полей слота (R2/D-A). */
+int CSQC_Client_NetAllocSlot (struct pr1vm_s *v)
 {
-	return CSQC_Client_AllocSlot ();
+	return CSQC_Client_AllocSlot ((pr1vm_t *)v);
 }
 
 void CSQC_Client_NetFreeSlot (int slot, int number)
@@ -1375,7 +1380,7 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 
 		if (!slot)
 		{
-			slot = CSQC_Client_NetAllocSlot ();
+			slot = CSQC_Client_NetAllocSlot (vm);
 			if (!slot)
 				continue;
 			CSQC_Client_MapNumber (num, slot);
@@ -1466,7 +1471,7 @@ static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
 			// svc76 уже владеет номером — не перетираем
 			if (CSQC_Client_NumToSlot (num))
 				continue;
-			slot = CSQC_Client_NetAllocSlot ();
+			slot = CSQC_Client_NetAllocSlot (vm);
 			if (!slot)
 				continue;
 			CSQC_Client_MapNumber (num, slot);
@@ -2712,7 +2717,7 @@ void CSQC_Client_ParseEntities (qbool sized)
 			int slot = CSQC_Client_NumToSlot ((int)entnum);
 			if (!slot)
 			{
-				slot = CSQC_Client_NetAllocSlot ();
+				slot = CSQC_Client_NetAllocSlot (vm);
 				if (!slot)
 				{
 					Con_Printf ("CSQC: pool full, entity %u dropped\n", entnum);

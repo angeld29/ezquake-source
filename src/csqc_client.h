@@ -36,7 +36,7 @@ void CSQC_Client_Abort (const char *msg);			// фатально: дисконн�
 // сетевые номера держатся картой номер→слот (svc 76/92). slot 0 = world.
 int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// первый свободный слот пула (свой) / 0
 void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// освободить свою сущность (сеть не трогаем)
-int CSQC_Client_NetAllocSlot (void);					// слот без s_own (сетевой приём)
+int CSQC_Client_NetAllocSlot (struct pr1vm_s *vm);		// слот без s_own (сетевой приём; vm — обнуление слота, R2)
 void CSQC_Client_NetFreeSlot (int slot, int number);		// освободить слот + numslot
 int CSQC_Client_NumToSlot (int number);					// карта номер→слот / 0
 int CSQC_Client_MapNumber (int number, int slot);		// запись карты (возврат slot)
