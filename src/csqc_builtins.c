@@ -666,9 +666,12 @@ static void csqc_renderscene (void)
 float(vector position, string text, vector size, vector rgb,
       float alpha, float drawflag) drawstring = #326
 
-Рисуем строку в 2D-оверлее ezquake. Параметры PR1 — каждые 3 слова на аргумент:
-pos=0..2 (vector), text=3 (string_t), size=6..8 (игнор — шрифт по умолчанию),
-rgb=9..11 (0..1 → байты), alpha=12, drawflag=15.
+Двойная сигнатура FTE PF_CL_drawcolouredstring (pr_menu.c:523): при `argc >= 6`
+расширенная (rgb=P3, alpha=P4, flag=P5), иначе legacy-DP (белый цвет, alpha=P3,
+flag=P4 при argc>=5). Рисуем строку в 2D-оверлее ezquake. Параметры PR1 — каждые
+3 слова на аргумент: pos=0..2, text=3, size=6..8, rgb=9..11 (0..1 → байты),
+alpha=12, drawflag=15. Масштаб — size.x/8 (ezq-шрифт uniform-only; size.y не
+применяется — расхождение с FTE задокументировано в parity-audit §D.2).
 Цвет выставляем явно (Draw_SetColor) — не зависит от scr_coloredText.
 */
 static void csqc_drawstring (void)
@@ -676,20 +679,34 @@ static void csqc_drawstring (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	float *g;
 	int r, gg, b;
-	float scale;
+	float scale, alpha;
 	char *s;
 	if (!vm)
 		return;
 	g = vm->globals;
 	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (!s)
+	{
+		// FTE: null-строка -> -1 (pr_menu.c:553-557).
+		vm->globals[OFS_RETURN] = -1;
 		return;
-	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
-	gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
-	b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
+	}
+	if (vm->argc >= 6)
+	{
+		r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
+		gg = (int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f);
+		b = (int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f);
+		alpha = g[OFS_PARM0 + 12];
+	}
+	else
+	{
+		// legacy-DP: (pos, text, size, alpha [, flag]) — белый цвет.
+		r = gg = b = 255;
+		alpha = g[OFS_PARM0 + 9];
+	}
 	// Слой D шаг 2: size.x -> scale (8px ячейка FTE); 0 => 1.
 	scale = (g[OFS_PARM0 + 6] > 0) ? g[OFS_PARM0 + 6] / 8.0f : 1;
-	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s, r, gg, b, g[OFS_PARM0 + 12], scale);
+	CSQC_Client_DrawText (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1], s, r, gg, b, alpha, scale);
 }
 
 /*
@@ -758,7 +775,9 @@ static void csqc_getstats (void)
 
 // ---------------------------------------------------------------- Слой D, шаг 1
 // 2D-графика. Раскладка параметров — 3-словные ячейки от OFS_PARM0 (см.
-// docs/archive/ezquake_csqc_client_layerd_2d_plan.md §ABI). Возвраты draw*/drawcharacter = 0.
+// docs/archive/ezquake_csqc_client_layerd_2d_plan.md §ABI). Возвраты draw* —
+// FTE-паритет (pr_menu.c): drawpic 1/0 (pic найден), drawfill/drawsubpic 1,
+// drawcharacter 1 (0 — null-символ, -1).
 
 /*
 float(vector position, float character, vector size, vector rgb, float alpha,
@@ -778,12 +797,14 @@ static void csqc_drawcharacter (void)
 		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
 		g[OFS_PARM0 + 12], scale);
-	vm->globals[OFS_RETURN] = 0;
+	// FTE PF_CL_drawcharacter (pr_menu.c:980): null-символ -> -1, иначе 1.
+	vm->globals[OFS_RETURN] = (g[OFS_PARM0 + 3] == 0) ? -1 : 1;
 }
 
 /*
 float(vector position, string pic, vector size, vector rgb, float alpha,
      optional float drawflag) drawpic = #322
+Возврат — pic найден (1) / нет (0), FTE PF_CL_drawpic (pr_menu.c:610).
 */
 static void csqc_drawpic (void)
 {
@@ -794,19 +815,18 @@ static void csqc_drawpic (void)
 		return;
 	g = vm->globals;
 	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
-	if (name)
-		CSQC_Client_DrawPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
-			g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name,
-			(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
-			(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
-			(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
-			g[OFS_PARM0 + 12]);
-	vm->globals[OFS_RETURN] = 0;
+	vm->globals[OFS_RETURN] = CSQC_Client_DrawPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
+		g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name,
+		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),
+		g[OFS_PARM0 + 12]) ? 1 : 0;
 }
 
 /*
 void(vector pos, vector sz, string pic, vector srcpos, vector srcsz, vector rgb,
      float alpha, optional float drawflag) drawsubpic = #328
+Возврат — всегда 1 (FTE PF_CL_drawsubpic, pr_menu.c:688).
 */
 static void csqc_drawsubpic (void)
 {
@@ -817,19 +837,20 @@ static void csqc_drawsubpic (void)
 		return;
 	g = vm->globals;
 	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 6]);
-	if (name)
-		CSQC_Client_DrawSubPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
-			g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], name,
-			g[OFS_PARM0 + 9], g[OFS_PARM0 + 10], g[OFS_PARM0 + 12], g[OFS_PARM0 + 13],
-			(int)(bound (0, g[OFS_PARM0 + 15], 1) * 255.0f + 0.5f),
-			(int)(bound (0, g[OFS_PARM0 + 16], 1) * 255.0f + 0.5f),
-			(int)(bound (0, g[OFS_PARM0 + 17], 1) * 255.0f + 0.5f),
-			g[OFS_PARM0 + 18]);
+	CSQC_Client_DrawSubPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
+		g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], name,
+		g[OFS_PARM0 + 9], g[OFS_PARM0 + 10], g[OFS_PARM0 + 12], g[OFS_PARM0 + 13],
+		(int)(bound (0, g[OFS_PARM0 + 15], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 16], 1) * 255.0f + 0.5f),
+		(int)(bound (0, g[OFS_PARM0 + 17], 1) * 255.0f + 0.5f),
+		g[OFS_PARM0 + 18]);
+	vm->globals[OFS_RETURN] = 1;
 }
 
 /*
 float(vector position, vector size, vector rgb, float alpha,
      optional float drawflag) drawfill = #323
+Возврат — всегда 1 (FTE PF_CL_drawfill, pr_menu.c:49).
 */
 static void csqc_drawfill (void)
 {
@@ -844,12 +865,13 @@ static void csqc_drawfill (void)
 		(int)(bound (0, g[OFS_PARM0 + 7], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 8], 1) * 255.0f + 0.5f),
 		g[OFS_PARM0 + 9]);
-	vm->globals[OFS_RETURN] = 0;
+	vm->globals[OFS_RETURN] = 1;
 }
 
 /*
 void(float width, vector pos1, vector pos2, vector rgb, float alpha,
      optional float drawflag) drawline = #315
+FTE PF_CL_drawline (pr_menu.c:1063): width игнорируется (hairline).
 */
 static void csqc_drawline (void)
 {
@@ -859,7 +881,7 @@ static void csqc_drawline (void)
 		return;
 	g = vm->globals;
 	CSQC_Client_DrawLine (g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], g[OFS_PARM0 + 6], g[OFS_PARM0 + 7],
-		g[OFS_PARM0 + 0],
+		1,
 		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 10], 1) * 255.0f + 0.5f),
 		(int)(bound (0, g[OFS_PARM0 + 11], 1) * 255.0f + 0.5f),

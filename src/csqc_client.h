@@ -136,7 +136,7 @@ void CSQC_Client_BufReset (void);
 // Слой D, шаг 1 — 2D-графика (draw.h/r_draw*; координаты — сырые пиксели видео,
 // как DrawText). Помощники для csqc_builtins.c (см. docs/archive/ezquake_csqc_client_layerd_2d_plan.md).
 void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int b, float alpha);
-void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha);
+qbool CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha);	// возврат: pic найден (FTE-паритет #322)
 void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *name, float srcx, float srcy, float srcw, float srch, int r, int g, int b, float alpha);
 void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, int r, int g, int b, float alpha);

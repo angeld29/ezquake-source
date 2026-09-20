@@ -378,23 +378,39 @@ void CSQC_Client_DrawFill (float x, float y, float w, float h, int r, int g, int
 	Draw_AlphaRectangleRGB (x, y, w, h, 1, true, CSQC_Client_Color (r, g, b, alpha));
 }
 
-void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha)
+qbool CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, int r, int g, int b, float alpha)
 {
 	mpic_t *pic;
 	float sx, sy, a = bound (0, alpha, 1);
 	float dx, dy, dw, dh, srcx, srcy, srcw, srch;
-	if (!name || !name[0] || w < 0 || h < 0)
-		return;
+	if (!name || !name[0])
+		return false;
 	pic = Draw_CachePicSafe (name, false, false);
 	if (!pic)
-		return;
+		return false;
+	// FTE-паритет #322: отрицательный размер — зеркалирование. Знаковый scale_x/y
+	// разворачивает текстуру (texcoord привязан к вершине в R_DrawImage); клип не
+	// применяем (отрицательный dest ломает пересечение).
+	if (w < 0 || h < 0)
+	{
+		sx = w / (float)pic->width;
+		sy = h / (float)pic->height;
+		if (r == 255 && g == 255 && b == 255)
+			Draw_SAlphaSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy, a);
+		else
+			Draw_SColoredSubPic2 (x, y, pic, 0, 0, pic->width, pic->height, sx, sy,
+				bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
+		return true;
+	}
+	if (w == 0 || h == 0)
+		return true;
 	// Клип: пересечение dest с активной областью, источник пересчитывается
 	// (свойство «весь pic → dest» сохраняется).
 	dx = x; dy = y; dw = w; dh = h;
 	if (!CSQC_Client_ClipDest (&dx, &dy, &dw, &dh))
-		return;
-	sx = (w > 0) ? w / (float)pic->width : 1;
-	sy = (h > 0) ? h / (float)pic->height : 1;
+		return true;
+	sx = w / (float)pic->width;
+	sy = h / (float)pic->height;
 	srcx = (dx - x) / sx;
 	srcy = (dy - y) / sy;
 	srcw = dw / sx;
@@ -404,6 +420,7 @@ void CSQC_Client_DrawPic (float x, float y, float w, float h, const char *name, 
 	else
 		Draw_SColoredSubPic2 (dx, dy, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch, sx, sy,
 			bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
+	return true;
 }
 
 void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *name, float srcx, float srcy, float srcw, float srch, int r, int g, int b, float alpha)
@@ -411,10 +428,24 @@ void CSQC_Client_DrawSubPic (float x, float y, float w, float h, const char *nam
 	mpic_t *pic;
 	float a = bound (0, alpha, 1);
 	float dx, dy, dw, dh, nsx, nsy, nsw, nsh, ssx, ssy;
-	if (!name || !name[0] || w <= 0 || h <= 0 || srcw <= 0 || srch <= 0)
+	if (!name || !name[0] || srcw <= 0 || srch <= 0)
 		return;
 	pic = Draw_CachePicSafe (name, false, false);
 	if (!pic)
+		return;
+	// FTE-паритет #328: отрицательный размер одной оси — зеркалирование (знаковый scale).
+	if (w < 0 || h < 0)
+	{
+		ssx = w / srcw;
+		ssy = h / srch;
+		if (r == 255 && g == 255 && b == 255)
+			Draw_SAlphaSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch, ssx, ssy, a);
+		else
+			Draw_SColoredSubPic2 (x, y, pic, (int)srcx, (int)srcy, (int)srcw, (int)srch, ssx, ssy,
+				bound (0, r, 255), bound (0, g, 255), bound (0, b, 255), a);
+		return;
+	}
+	if (w == 0 || h == 0)
 		return;
 	// Клип как в DrawPic: dest пересекается, источник — по аффинному маппингу.
 	dx = x; dy = y; dw = w; dh = h;
