@@ -1327,6 +1327,34 @@ static void csqc_readfloat (void)
 	vm->globals[OFS_RETURN] = MSG_ReadFloat ();
 }
 
+/*
+R7/T1.4b (#368): PEXT2_REPLACEMENTDELTAS нет в qwprot — локальная константа под
+#ifndef (значение — FTE fteqw/engine/common/protocol.h:83). qwprot-субмодуль и
+CL_SupportedFTEExtensions2 не трогаем: бит клиентом не анонсируется, ветка
+forward-compat (live с mvdsv недостижима).
+*/
+#ifndef PEXT2_REPLACEMENTDELTAS
+#define PEXT2_REPLACEMENTDELTAS 0x00000008
+#endif
+
+/*
+R7/T1.4b (#368): номер эдикта из текущего потока — PEXT2-aware, паритет FTE
+MSGCL_ReadEntity (fteqw/engine/common/common.c:1396-1404): при
+PEXT2_REPLACEMENTDELTAS — MSG_ReadBigEntity (:1364-1374: short; бит 0x8000 →
+(hi & 0x7fff)<<8 | byte), иначе обычный short (unsigned short, как FTE).
+*/
+static int CSQC_Client_ReadEntityNum (void)
+{
+	if (cls.fteprotocolextensions2 & PEXT2_REPLACEMENTDELTAS)
+	{
+		int num = MSG_ReadShort ();
+		if (num & 0x8000)
+			num = ((num & 0x7fff) << 8) | MSG_ReadByte ();
+		return num;
+	}
+	return (unsigned short)MSG_ReadShort ();
+}
+
 static void csqc_readentitynum (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1338,7 +1366,7 @@ static void csqc_readentitynum (void)
 		vm->globals[OFS_RETURN] = -1;
 		return;
 	}
-	vm->globals[OFS_RETURN] = MSG_ReadShort ();
+	vm->globals[OFS_RETURN] = CSQC_Client_ReadEntityNum ();
 }
 
 /*
