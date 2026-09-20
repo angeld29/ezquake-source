@@ -1120,16 +1120,40 @@ void(string evname, string evargs, ...) sendevent = #359
   [byte 81] затем до 6 аргументов "[byte type][значение]", затем [byte 0
   (ev_void-терминатор)] и [string evname].
 Типы: 's'=1 ev_string+string, 'f'=2 ev_float+float, 'v'=3 ev_vector+3 floats,
-'i'=8 ev_integer+long (raw-bits из float-слота, как ftew G_INT). Неизвестный
-символ (вкл. '\0') — break (остаток не шлём; 'e'/'u'/'F'/'I'/'p' модуль не
-использует). Гварды: активный коннект + договорённый FTE_PEXT_CSQC + cl_pext_csqc
-(сервер без CSQC иначе дропает клиента, sv_user.c:5146).
+'i'=8 ev_integer+long (raw-bits из float-слота, как ftew G_INT), 'e'=4
+ev_entity+entity (R12/T1.5: arena-эдикт → серверный номер из поля .entnum;
+невалид/freed → world(0), спека ext_csqc_1.txt:384; wire — как ftew
+MSG_WriteEntity, common.c:1351-1363). Неизвестный символ (вкл. '\0') — break
+(остаток не шлём; 'u'/'F'/'I'/'p' модуль не использует). Гварды: активный
+коннект + договорённый FTE_PEXT_CSQC + cl_pext_csqc (сервер без CSQC иначе
+дропает клиента, sv_user.c:5146).
+Seat-байт (R12): ftew пишет 200+csqc_playerseat только при seat>0
+(pr_csqc.c:3869-3872); ezq — single-seat (seat≡0, нет splitscreen/playerview) →
+байт не пишется, как у обычного ftew-клиента (Q-I=a, N/A).
 */
 #define CSQC_EV_VOID	0
 #define CSQC_EV_STRING	1
 #define CSQC_EV_FLOAT	2
 #define CSQC_EV_VECTOR	3
+#define CSQC_EV_ENTITY	4
 #define CSQC_EV_INTEGER	8
+
+/* R12/T1.5: entity-wire как ftew MSG_WriteEntity (common.c:1351-1363).
+   Некорректный номер (в т.ч. отрицательный) вырождается в world(0) — модуль не
+   должен ронять клиент; ftew-ный Host_EndGame при entnum>MAX_EDICTS сюда не
+   переносим. */
+static void csqc_sendevent_write_entity (int entnum)
+{
+	if (entnum < 0)
+		entnum = 0;
+	if (entnum >= 0x8000)
+	{
+		MSG_WriteShort (&cls.netchan.message, (entnum >> 8) | 0x8000);
+		MSG_WriteByte (&cls.netchan.message, entnum & 0xff);
+	}
+	else
+		MSG_WriteShort (&cls.netchan.message, entnum);
+}
 
 static void csqc_sendevent (void)
 {
@@ -1183,6 +1207,16 @@ static void csqc_sendevent (void)
 		{
 			MSG_WriteByte (&cls.netchan.message, CSQC_EV_INTEGER);
 			MSG_WriteLong (&cls.netchan.message, *(int *)&vm->globals[base]);
+		}
+		else if (c == 'e')
+		{
+			// R12/T1.5 (FTE pr_csqc.c:3860-3865): arena-эдикт → серверный номер
+			// из поля .entnum; невалид/пусто → world(0).
+			int slot = csqc_ent_of (vm, base);
+			float *f = (slot > 0 && CSQC_Client_EntUsed (slot))
+				? csqc_ent_field (vm, slot, "entnum") : NULL;
+			MSG_WriteByte (&cls.netchan.message, CSQC_EV_ENTITY);
+			csqc_sendevent_write_entity (f ? (int)(*f) : 0);
 		}
 		else
 			break;
