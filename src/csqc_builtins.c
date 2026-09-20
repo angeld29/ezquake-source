@@ -79,6 +79,27 @@ static void CSQCVM_SetRetStr (char *s)
 		PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_RETURN], s);
 }
 
+// Varargs-конкатенация по конвенции PR1 (3 float-слота на аргумент), аналог
+// серверного PF_VarString (pr_cmds.c). FTE: PF_VarString(prinst, first, pr_globals)
+// — error/objerror/localcmd/cprint/print (first=0), infoadd (first=2).
+static char *CSQCVM_VarString (int first)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	static char out[2048];
+	int i;
+
+	out[0] = 0;
+	if (!vm)
+		return out;
+	for (i = first; i < vm->argc; i++)
+	{
+		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		if (s)
+			strlcat (out, s, sizeof (out));
+	}
+	return out;
+}
+
 // Entity values in the client VM are raw int bit offsets (N*edict_size), the same
 // convention as the interpreter's entity opcodes (OP_STORE_ENT/PR1VM_ProgToEdict)
 // and FTE (G_EDICT/G_INT). All builtins must read entity args and write entity
@@ -2534,7 +2555,7 @@ static void csqc_infoadd (void)
 		return;
 	info = CSQCVM_Str (OFS_PARM0);
 	key = CSQCVM_Str (OFS_PARM1);
-	val = CSQCVM_Str (OFS_PARM2);
+	val = CSQCVM_VarString (2);
 	strlcpy (buf, info ? info : "", sizeof (buf));
 	Info_SetValueForStarKey (buf, key ? key : "", val ? val : "", sizeof (buf));
 	CSQCVM_SetRetStr (buf);
@@ -2737,7 +2758,7 @@ developer==0 — фатально (abort через host_error). Отклоне�
 static void csqc_error (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char *s = CSQCVM_Str (OFS_PARM0);
+	char *s = CSQCVM_VarString (0);
 	if (!vm)
 		return;
 	Con_Printf ("CSQC error: %s\n", s ? s : "");
@@ -2756,7 +2777,7 @@ developer!=0 — нефатальна: печать в консоль, моду�
 static void csqc_objerror (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char *s = CSQCVM_Str (OFS_PARM0);
+	char *s = CSQCVM_VarString (0);
 	if (!vm)
 		return;
 	Con_Printf ("CSQC objerror: %s\n", s ? s : "");
@@ -2770,7 +2791,7 @@ void(string str) localcmd = #46
 */
 static void csqc_localcmd (void)
 {
-	char *s = CSQCVM_Str (OFS_PARM0);
+	char *s = CSQCVM_VarString (0);
 	if (s && s[0])
 		Cbuf_AddText (s);
 }
@@ -4713,7 +4734,7 @@ static void csqc_etos (void)
 /* void(string s, ...) print = #339 — консоль (Con_Printf). */
 static void csqc_print (void)
 {
-	char *s = CSQCVM_Str (OFS_PARM0);
+	char *s = CSQCVM_VarString (0);
 	if (s && s[0])
 		Con_Printf ("%s", s);
 }
@@ -4721,7 +4742,7 @@ static void csqc_print (void)
 /* void(string s, ...) cprint = #338 — центр-экран (SCR_CenterPrint, как FTE). */
 static void csqc_cprint (void)
 {
-	char *s = CSQCVM_Str (OFS_PARM0);
+	char *s = CSQCVM_VarString (0);
 	SCR_CenterPrint (s ? s : "");
 }
 
