@@ -3484,6 +3484,9 @@ static void csqc_add_one_entity (int e)
 	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];
+	// .scale: uniform render scale (FTE pr_csqc.c:841-844, 0 remapped to 1).
+	// 0 stays 0 here — the render helper/culling treat 0 as unscaled.
+	if ((f = csqc_ent_field (vm, e, "scale")))		ent.scale = f[0];
 	// C4 Этап 1: .renderflags (CSQCRF_*) -> ent.renderfx (RF_*). Маппим доступное
 	// подмножество (FTE pr_csqc.c:773-799); DEPTHHACK/EXTERNALMODEL/FIRSTPERSON/USEAXIS
 	// без прямого ezq-аналога — отклонение (parity-audit).
