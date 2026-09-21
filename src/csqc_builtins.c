@@ -3434,6 +3434,7 @@ static void csqc_add_one_entity (int e)
 	char *mname;
 	model_t *model;
 	int ofs;
+	int playernum = -1;	// Stage 4b: network player index (colormap 1..MAX_CLIENTS)
 
 	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
 		return;
@@ -3476,11 +3477,52 @@ static void csqc_add_one_entity (int e)
 	memset (&ent, 0, sizeof (ent));
 	ent.model = model;
 	ent.colormap = vid.colormap;
+	// Stage 4: .colormap as player index (1..MAX_CLIENTS) -> team translation
+	// table + scoreboard (player skin), same as the engine player render
+	// (cl_ents.c:1261-1262, 2223-2224; cl_nqdemo.c:1029-1030). The modhint guard
+	// mirrors cl_ents.c:1258-1259: heads/gibs (h_player) stay unskinned.
+	// FTE CopyCSQCEdictToEntity maps the index to playerindex/topcolour
+	// (pr_csqc.c:861-879); values > MAX_CLIENTS (DP colormap) fall back to
+	// vid.colormap / NULL scoreboard (documented deviation).
+	if ((f = csqc_ent_field (vm, e, "colormap")))
+	{
+		int cm = (int)f[0];
+		if (cm > 0 && cm <= MAX_CLIENTS && model->modhint == MOD_PLAYER)
+		{
+			ent.colormap = cl.players[cm - 1].translations;
+			ent.scoreboard = &cl.players[cm - 1];
+			playernum = cm - 1;
+		}
+	}
 	ent.oldframe = ent.frame;
 	ent.framelerp = -1;
 	if ((f = csqc_ent_field (vm, e, "origin")))		VectorCopy (f, ent.origin);
 	if ((f = csqc_ent_field (vm, e, "angles")))		VectorCopy (f, ent.angles);
+	// Stage 4b: player render pitch = -viewangles/3, same as the engine player
+	// render (cl_ents.c:2240) and the FTE CSQC bridge (pr_csqc.c:5626,
+	// r_meshpitch=-1). Render-side only: does not touch the module's .angles
+	// (used by #347/prediction). Roll is left 0 (FTE CSQC bridge also 0).
+	if (playernum >= 0)
+		ent.angles[PITCH] = -ent.angles[PITCH] / 3;
 	if ((f = csqc_ent_field (vm, e, "frame")))		ent.frame = ent.oldframe = (int)f[0];
+	// Stage 4b: player frame interpolation — exact engine formula (CL_LinkPlayers,
+	// cl_ents.c:2228-2237). Without it CSQC renders the raw frame while the engine
+	// lerps, so the pose jumps when toggling csqc_delta. FTE has no jump because
+	// engine and CSQC share cl.lerpplayers (pr_csqc.c:5617).
+	if (playernum >= 0)
+	{
+		centity_t *cent = &cl_entities[playernum + 1];
+		if (cent->frametime >= 0 && cent->frametime <= cl.time)
+		{
+			ent.oldframe = cent->oldframe;
+			ent.framelerp = (cl.time - cent->frametime) * 10;
+		}
+		else
+		{
+			ent.oldframe = ent.frame;
+			ent.framelerp = -1;
+		}
+	}
 	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];

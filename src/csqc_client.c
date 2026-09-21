@@ -89,7 +89,7 @@ typedef struct csqc_client_state_s
 	int			f_origin, f_velocity, f_angles, f_mins, f_maxs;
 	int			f_movetype, f_flags, f_gravity, f_pmove_flags;
 	int			f_modelindex, f_skin;	// #371 player/delta bridge (raw state fields)
-	int			f_frame, f_effects, f_drawmask;	// #371 delta-entity bridge
+	int			f_frame, f_effects, f_colormap, f_drawmask;	// #371 bridge (raw state fields)
 	int			f_think, f_nextthink;	// T2.7 think-loop: поля .think/.nextthink (или -1)
 	// FTE-пул Шаг 7 (часть 2): поля классификации трасс и зеркала игроков —
 	// удалены вместе с зеркалом (окружение = FTE: без серверной эмиссии игроков
@@ -1541,6 +1541,15 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 				base[s_csqc.f_modelindex] = (float)st->modelindex;
 			if (s_csqc.f_skin >= 0)
 				base[s_csqc.f_skin] = (float)st->skinnum;
+			// Stage 4: player render fields. FTE CSQC_PlayerStateToCSQC fills
+			// frame/skin/colormap (pr_csqc.c:5485,5609-5636); engine player render
+			// uses frame/effects/translations (cl_ents.c:2222-2226).
+			if (s_csqc.f_frame >= 0)
+				base[s_csqc.f_frame] = (float)st->frame;
+			if (s_csqc.f_effects >= 0)
+				base[s_csqc.f_effects] = (float)st->effects;
+			if (s_csqc.f_colormap >= 0)
+				base[s_csqc.f_colormap] = (float)(pnum + 1);	// player index (FTE pr_csqc.c:5627)
 			if (s_csqc.f_drawmask >= 0)
 				base[s_csqc.f_drawmask] = 1;	// MASK_DELTA (FTE pr_csqc.c:5697)
 		}
@@ -2464,7 +2473,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.f_modelindex = s_csqc.f_skin = -1;
-	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
+	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_colormap = s_csqc.f_drawmask = -1;
 	s_csqc.f_think = s_csqc.f_nextthink = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
@@ -2565,6 +2574,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.f_skin = CSQC_Client_FindField (vm, "skin");
 	s_csqc.f_frame = CSQC_Client_FindField (vm, "frame");
 	s_csqc.f_effects = CSQC_Client_FindField (vm, "effects");
+	s_csqc.f_colormap = CSQC_Client_FindField (vm, "colormap");
 	s_csqc.f_drawmask = CSQC_Client_FindField (vm, "drawmask");
 	// T2.7 think-loop: поля .think/.nextthink (csdefs.qc:90,92).
 	s_csqc.f_think = CSQC_Client_FindField (vm, "think");
@@ -4001,7 +4011,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.f_modelindex = s_csqc.f_skin = -1;
-	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
+	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_colormap = s_csqc.f_drawmask = -1;
 	s_csqc.f_think = s_csqc.f_nextthink = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
