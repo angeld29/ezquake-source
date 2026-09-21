@@ -77,15 +77,20 @@ typedef struct csqc_client_state_s
 	int			func_entspawn;	// CSQC_Ent_Spawn (или -1; R7/T1.3a, FTE-паритет)
 	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
+	int			func_startframe;	// CSQC StartFrame (или -1; T2.7)
+	int			func_endframe;		// CSQC EndFrame (или -1; T2.7)
 	int			global_time;	// смещение глобала time (или -1)
 	int			global_gamespeed;	// смещение глобала gamespeed (или -1; T2.1)
 	int			global_self;	// смещение глобала self (или -1; ADR 0017 P2/D3)
+	int			global_other;	// смещение глобала other (или -1; T2.7 think-loop)
+	int			global_physics_mode;	// смещение глобала physics_mode (или -1; T2.7)
 	int			field_entnum;	// float-слово поля .entnum в entvars (или -1)
 	// C1.4/C5-B #347: field-offset'ы стандартной физики (или -1).
 	int			f_origin, f_velocity, f_angles, f_mins, f_maxs;
 	int			f_movetype, f_flags, f_gravity, f_pmove_flags;
 	int			f_modelindex, f_skin;	// #371 player/delta bridge (raw state fields)
 	int			f_frame, f_effects, f_drawmask;	// #371 delta-entity bridge
+	int			f_think, f_nextthink;	// T2.7 think-loop: поля .think/.nextthink (или -1)
 	// FTE-пул Шаг 7 (часть 2): поля классификации трасс и зеркала игроков —
 	// удалены вместе с зеркалом (окружение = FTE: без серверной эмиссии игроков
 	// ezquake сущности игроков не фабрикует). Публикация player_localentnum (FTE).
@@ -2449,14 +2454,18 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
+	s_csqc.func_startframe = s_csqc.func_endframe = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_gamespeed = -1;
 	s_csqc.global_self = -1;
+	s_csqc.global_other = -1;
+	s_csqc.global_physics_mode = -1;
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.f_modelindex = s_csqc.f_skin = -1;
 	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
+	s_csqc.f_think = s_csqc.f_nextthink = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
@@ -2523,6 +2532,13 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_InputEvent");
 	if (f)
 		s_csqc.func_inputevent = (int)(f - vm->functions);
+	// T2.7 (R9): CSQC think-loop — StartFrame/EndFrame (FTE pr_common.h:1112-1113).
+	f = PR1VM_FindFunction (vm, "StartFrame");
+	if (f)
+		s_csqc.func_startframe = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "EndFrame");
+	if (f)
+		s_csqc.func_endframe = (int)(f - vm->functions);
 
 	s_csqc.global_time = PR1VM_FindGlobal (vm, "time");
 	// T2.1: gamespeed (csdefs.qc:166; engine-set). QW/ezq не имеет cl.gamespeed,
@@ -2530,6 +2546,10 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.global_gamespeed = PR1VM_FindGlobal (vm, "gamespeed");
 	// P2/D3: self-глобал и поле .entnum (движок пишет их при entity-вызовах).
 	s_csqc.global_self = PR1VM_FindGlobal (vm, "self");
+	// T2.7: other (world для StartFrame/EndFrame/thinks; FTE CSQC_Event_Think) и
+	// physics_mode (csdefs.qc:163, default 2).
+	s_csqc.global_other = PR1VM_FindGlobal (vm, "other");
+	s_csqc.global_physics_mode = PR1VM_FindGlobal (vm, "physics_mode");
 	s_csqc.field_entnum = CSQC_Client_FindField (vm, "entnum");
 	// C1.4 #347: поля стандартной физики (если есть в схеме модуля).
 	s_csqc.f_origin = CSQC_Client_FindField (vm, "origin");
@@ -2546,6 +2566,9 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.f_frame = CSQC_Client_FindField (vm, "frame");
 	s_csqc.f_effects = CSQC_Client_FindField (vm, "effects");
 	s_csqc.f_drawmask = CSQC_Client_FindField (vm, "drawmask");
+	// T2.7 think-loop: поля .think/.nextthink (csdefs.qc:90,92).
+	s_csqc.f_think = CSQC_Client_FindField (vm, "think");
+	s_csqc.f_nextthink = CSQC_Client_FindField (vm, "nextthink");
 	s_csqc.g_localentnum = PR1VM_FindGlobal (vm, "player_localentnum");
 
 	// input_* глобалы для CSQC_Input_Frame (csdefs.qc: input_timelength/angles/
@@ -2577,6 +2600,9 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_world, s_csqc.func_update, s_csqc.func_console, s_csqc.func_shutdown,
 		s_csqc.func_entupdate, s_csqc.func_entremove, s_csqc.func_parseevent,
 		s_csqc.func_input, s_csqc.func_inputevent, s_csqc.global_time);
+	Con_Printf ("CSQC: T2.7 sf=%d ef=%d pm=%d think=%d nextthink=%d\n",
+		s_csqc.func_startframe, s_csqc.func_endframe, s_csqc.global_physics_mode,
+		s_csqc.f_think, s_csqc.f_nextthink);
 	Con_Printf ("CSQC: P2 self=%d entnum_fld=%d edict_size=%d es=%d\n",
 		s_csqc.global_self, s_csqc.field_entnum, vm->edict_size, s_csqc.func_entspawn);
 
@@ -2785,6 +2811,100 @@ static void CSQC_Client_PatchFrames (void)
 
 /*
 =================
+T2.7 (R9): CSQC think-loop — per-frame жизненный цикл модуля в 3D-takeover.
+
+FTE-паритет (CSQC_DrawView pr_csqc.c:8740-8811; CSQC_Event_Think pr_csqc.c:7576-7586):
+StartFrame → thinks (.nextthink/.think, single-think NQ-стиль) → EndFrame. StartFrame/
+EndFrame: self/other = world, time = кадровое. think: self = сущность, other = world,
+time = кадровое (FTE перекрывает thinktime физикстаймом), nextthink обнуляется до вызова.
+thinks — только при physics_mode != 0. Отклонения (accept+doc): World_Physics_Frame
+mode 2 (movetypes), customphysics и PR_RunThreads (у PR1VM нет sleep/fork → no-op).
+=================
+*/
+static void CSQC_Client_RunFrameThink (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	int mode, slot;
+	float t, frame;
+
+	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		return;
+
+	// База — модульный time (Q4; Sys_DoubleTime), окно — кадровый интервал (аналог
+	// FTE host_frametime).
+	CSQC_Client_SetTime ();
+	t = (s_csqc.global_time >= 0) ? vm->globals[s_csqc.global_time] : 0;
+	frame = (float)cls.frametime;
+	if (frame < 0)
+		frame = 0;
+
+	// physics_mode: csdefs.qc:163 default 2; 0 = «original csqc» — физика не гоняется.
+	mode = (s_csqc.global_physics_mode >= 0)
+		? (int)vm->globals[s_csqc.global_physics_mode] : 2;
+
+	// StartFrame: self/other = world (FTE pr_csqc.c:8746-8749).
+	if (s_csqc.func_startframe > 0)
+	{
+		if (s_csqc.global_self >= 0)
+			*(int *)&vm->globals[s_csqc.global_self] = 0;
+		if (s_csqc.global_other >= 0)
+			*(int *)&vm->globals[s_csqc.global_other] = 0;
+		if (s_csqc.global_time >= 0)
+			vm->globals[s_csqc.global_time] = t;
+		PR1VM_ExecuteProgram (vm, (func_t)s_csqc.func_startframe);
+		if (s_csqc.errored)
+			return;
+	}
+
+	// PR_RunThreads: PR1VM не имеет sleep/fork → no-op (FTE-паритет без тредов).
+
+	// thinks: mode1 (DP-compat) и mode2 (movetypes) — у нас только thinks (mode2
+	// movetypes accept+doc). Слот 0 = world, free/незанятые пропускаем.
+	if (mode != 0 && s_csqc.f_think >= 0 && s_csqc.f_nextthink >= 0)
+	{
+		for (slot = 1; slot < CSQC_MAX_EDICTS; slot++)
+		{
+			float *base, nt;
+			int thinkfunc;
+
+			if (!s_used[slot])
+				continue;
+			base = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
+			nt = base[s_csqc.f_nextthink];
+			if (nt <= 0 || nt > t + frame)
+				continue;
+			thinkfunc = *(int *)&base[s_csqc.f_think];
+			base[s_csqc.f_nextthink] = 0;
+			if (thinkfunc <= 0)
+				continue;	// nextthink без think — пропуск (FTE пишет варн)
+			// FTE CSQC_Event_Think: self=сущность, other=world, time=кадровое.
+			if (s_csqc.global_self >= 0)
+				*(int *)&vm->globals[s_csqc.global_self] = (int)slot * vm->edict_size;
+			if (s_csqc.global_other >= 0)
+				*(int *)&vm->globals[s_csqc.global_other] = 0;
+			if (s_csqc.global_time >= 0)
+				vm->globals[s_csqc.global_time] = t;
+			PR1VM_ExecuteProgram (vm, (func_t)thinkfunc);
+			if (s_csqc.errored)
+				return;	// edict мог self-удалиться — цикл по s_used безопасен
+		}
+	}
+
+	// EndFrame: self/other = world (FTE pr_csqc.c:8752-8757).
+	if (s_csqc.func_endframe > 0)
+	{
+		if (s_csqc.global_self >= 0)
+			*(int *)&vm->globals[s_csqc.global_self] = 0;
+		if (s_csqc.global_other >= 0)
+			*(int *)&vm->globals[s_csqc.global_other] = 0;
+		if (s_csqc.global_time >= 0)
+			vm->globals[s_csqc.global_time] = t;
+		PR1VM_ExecuteProgram (vm, (func_t)s_csqc.func_endframe);
+	}
+}
+
+/*
+=================
 CSQC_Client_Update
 
 Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
@@ -2852,6 +2972,10 @@ void CSQC_Client_Update (void)
 		// FTE: enablecsqc — после CSQC_WorldLoaded каждой карты (module ready).
 		CSQC_Client_NotifyCSQC (true);
 	}
+
+	// T2.7 (R9): per-frame CSQC think-loop (StartFrame/thinks/EndFrame) — FTE
+	// CSQC_DrawView до CSQC_UpdateView (pr_csqc.c:8740-8811).
+	CSQC_Client_RunFrameThink ();
 
 	// player_localentnum — публикуем до модуля (окружение builtins как FTE;
 	// сущности игроков не фабрикуем — см. CSQC_Client_UpdateLocalEntnum).
@@ -3867,14 +3991,18 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
 	s_csqc.func_inputevent = -1;
+	s_csqc.func_startframe = s_csqc.func_endframe = -1;
 	s_csqc.global_time = -1;
 	s_csqc.global_gamespeed = -1;
 	s_csqc.global_self = -1;
+	s_csqc.global_other = -1;
+	s_csqc.global_physics_mode = -1;
 	s_csqc.field_entnum = -1;
 	s_csqc.f_origin = s_csqc.f_velocity = s_csqc.f_angles = s_csqc.f_mins = s_csqc.f_maxs = -1;
 	s_csqc.f_movetype = s_csqc.f_flags = s_csqc.f_gravity = s_csqc.f_pmove_flags = -1;
 	s_csqc.f_modelindex = s_csqc.f_skin = -1;
 	s_csqc.f_frame = s_csqc.f_effects = s_csqc.f_drawmask = -1;
+	s_csqc.f_think = s_csqc.f_nextthink = -1;
 	s_csqc.g_localentnum = -1;
 	s_csqc.in_timelength = s_csqc.in_angles = s_csqc.in_movevalues = -1;
 	s_csqc.in_buttons = s_csqc.in_impulse = -1;
