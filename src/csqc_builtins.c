@@ -3501,6 +3501,12 @@ static void csqc_add_one_entity (int e)
 			ent.renderfx |= RF_ADDITIVEBLEND;
 	}
 
+	// Stage 3 (docs/adr/0028): PVS/leaf + bbox culling, FTE EdictInFatPVS parity.
+	// R_CSQC_BeginCull marks the leaves/frustum for this frame (once per frame).
+	R_CSQC_BeginCull ();
+	if (!R_CSQC_EntityVisible (&ent))
+		return;
+
 	CL_AddEntity (&ent);
 }
 

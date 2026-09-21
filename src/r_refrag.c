@@ -133,6 +133,41 @@ void R_AddEfrags (entity_t *ent) {
 	ent->topnode = r_pefragtopnode;
 }
 
+/*
+Returns true if the box [mins,maxs] touches at least one leaf that is visible
+this frame (leaf->visframe == r_visframecount, set by R_MarkLeaves). Solid
+leaves are ignored. Mirrors FTE Q1BSP_RFindTouchedLeafs + Q1BSP_EdictInFatPVS in
+a single pass, without storing a pvscache. Used for CSQC arena entities
+(docs/adr/0028-csqc-arena-culling.md).
+*/
+static qbool R_BoxTouchesVisibleLeaf_r(mnode_t *node, const vec3_t mins, const vec3_t maxs)
+{
+	int sides;
+
+	if (node->contents == CONTENTS_SOLID)
+		return false;
+
+	if (node->contents < 0)
+		return node->visframe == r_visframecount;
+
+	sides = BOX_ON_PLANE_SIDE(mins, maxs, node->plane);
+
+	if ((sides & 1) && R_BoxTouchesVisibleLeaf_r(node->children[0], mins, maxs))
+		return true;
+	if ((sides & 2) && R_BoxTouchesVisibleLeaf_r(node->children[1], mins, maxs))
+		return true;
+
+	return false;
+}
+
+qbool R_BoxTouchesVisibleLeaf(const vec3_t mins, const vec3_t maxs)
+{
+	if (!cl.worldmodel || !cl.worldmodel->nodes)
+		return true;
+
+	return R_BoxTouchesVisibleLeaf_r(cl.worldmodel->nodes, mins, maxs);
+}
+
 void R_StoreEfrags(efrag_t **ppefrag)
 {
 	entity_t *pent;

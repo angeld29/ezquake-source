@@ -277,6 +277,58 @@ qbool R_CullSphere(vec3_t centre, float radius)
 	return false;
 }
 
+/*
+=== CSQC arena culling (docs/adr/0028-csqc-arena-culling.md) ===
+
+FTE culls CSQC entities at batch time: World_LinkEdict fills edict->pvsinfo via
+FindTouchedLeafs (fteqw/engine/server/world.c:655), then BE_GenModelBatches drops
+the entity when EdictInFatPVS(pvscache, scenevis) fails (gl_alias.c:2982).
+ezquake has no per-entity pvscache; arena edicts are added to cl_visents from
+csqc_add_one_entity before R_RenderView. R_CSQC_BeginCull marks leaves for the
+current frame (R_MarkLeaves) and refreshes frustum planes (R_SetFrustum) early,
+so R_CSQC_EntityVisible can bbox-cull against both.
+*/
+
+// Called before adding CSQC arena edicts (once per frame; idempotent).
+void R_CSQC_BeginCull(void)
+{
+	static int s_cull_frame = -1;
+
+	if (s_cull_frame == r_framecount)
+		return;
+	s_cull_frame = r_framecount;
+
+	R_SetFrustum();
+	R_MarkLeaves();
+}
+
+// True if the CSQC arena entity should be drawn (FTE: EdictInFatPVS + frustum).
+qbool R_CSQC_EntityVisible(entity_t *ent)
+{
+	vec3_t mins, maxs;
+	float scale;
+	int i;
+
+	if (!ent || !ent->model)
+		return true;
+
+	// FTE: viewmodel entities get pvscache.num_leafs = -1 (always visible) —
+	// fteqw/engine/client/pr_csqc.c:782.
+	if (ent->renderfx & RF_WEAPONMODEL)
+		return true;
+
+	scale = ent->scale ? ent->scale : 1;
+	for (i = 0; i < 3; i++) {
+		mins[i] = ent->origin[i] + scale * ent->model->mins[i];
+		maxs[i] = ent->origin[i] + scale * ent->model->maxs[i];
+	}
+
+	if (R_CullBox(mins, maxs))
+		return false;
+
+	return R_BoxTouchesVisibleLeaf(mins, maxs);
+}
+
 static int SignbitsForPlane(mplane_t *out)
 {
 	int	bits, j;
