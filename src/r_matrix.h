@@ -54,5 +54,6 @@ void R_MultiplyVector3f(const float* matrix, float x, float y, float z, float* r
 void R_MultiplyVector3fv(const float* matrix, const vec3_t vector, float* result);
 
 void R_RotateForEntity(const struct entity_s* e);
+void R_ScaleModelviewForEntity(const struct entity_s* e);
 
 #endif // EZQUAKE_R_MATRIX_HEADER

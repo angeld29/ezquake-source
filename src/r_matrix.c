@@ -324,6 +324,23 @@ void R_ScaleModelview(float xScale, float yScale, float zScale)
 #endif
 }
 
+/*
+================
+R_ScaleModelviewForEntity
+
+Applies the entity's uniform CSQC render scale (entity_t.scale) to the current
+modelview matrix. 0 means unscaled (FTE semantics: scale 0 is remapped to 1).
+================
+*/
+void R_ScaleModelviewForEntity(const struct entity_s *e)
+{
+	if (!e || e->scale == 0 || e->scale == 1) {
+		return;
+	}
+
+	R_ScaleModelview(e->scale, e->scale, e->scale);
+}
+
 void R_Frustum(double left, double right, double bottom, double top, double zNear, double zFar)
 {
 	float perspective[16] = { 0 };

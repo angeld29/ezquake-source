@@ -80,6 +80,9 @@ typedef struct entity_s {
 	//VULT MOTION TRAILS
 	float alpha;
 
+	//CSQC: per-entity uniform render scale (FTE entity_t.scale). 0 means 1 (unscaled).
+	float scale;
+
 	// FIXME: could turn these into a union
 	struct mnode_s			*topnode;		// for bmodels, first world node that splits bmodel, or NULL if not split
 
