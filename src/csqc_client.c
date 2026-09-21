@@ -2269,20 +2269,23 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 		out[0] = is_player ? (float)cl.players[pnum].topcolor
 			: (float)((es->colormap >> 4) & 15);
 		break;
+	// Stage 4b: for players the source is player_state (FTE PF_getentity player
+	// branch, pr_csqc.c:5909/5948/5954/5957) — SetupPlayerEntity does not copy
+	// skinnum/effects into cent->current (cl_ents.c:1526-1531).
 	case CSQC_GE_SKIN:
-		out[0] = (float)es->skinnum;
+		out[0] = (float)(is_player ? ps->skinnum : es->skinnum);
 		break;
 	case CSQC_GE_LIGHT:
 		out[0] = 0;
 		break;
 	case CSQC_GE_MODELINDEX:
-		out[0] = (float)es->modelindex;
+		out[0] = (float)(is_player ? ps->modelindex : es->modelindex);
 		break;
 	case CSQC_GE_EFFECTS:
-		out[0] = (float)es->effects;
+		out[0] = (float)(is_player ? ps->effects : es->effects);
 		break;
 	case CSQC_GE_FRAME:
-		out[0] = (float)es->frame;
+		out[0] = (float)(is_player ? ps->frame : es->frame);
 		break;
 	default:
 		// GE_MODELINDEX2/GE_FATNESS/GE_DRAWFLAGS/GE_ABSLIGHT/GE_GLOWSIZE/

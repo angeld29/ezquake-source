@@ -3523,6 +3523,29 @@ static void csqc_add_one_entity (int e)
 			ent.framelerp = -1;
 		}
 	}
+	// Stage 4b (engine-only): cl_deadbodyFilter for CSQC-owned players. The engine
+	// player filter (CL_LinkPlayers, cl_ents.c:2188-2208) is skipped for owned
+	// players, so apply the same semantics here. TF exception for mode 3
+	// (!cl.teamfortress) mirrors the engine.
+	if (playernum >= 0 && model->modhint == MOD_PLAYER)
+	{
+		int i = ent.frame;
+		if (cl_deadbodyfilter.value == 3 && !cl.teamfortress)
+		{
+			if (ISDEAD(i))
+				return;
+		}
+		if (cl_deadbodyfilter.value == 2)
+		{
+			if (ISDEAD(i))
+				return;
+		}
+		else if (cl_deadbodyfilter.value == 1)
+		{
+			if (i == 49 || i == 60 || i == 69 || i == 84 || i == 93 || i == 102)
+				return;
+		}
+	}
 	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
 	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];
