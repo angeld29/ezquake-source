@@ -233,7 +233,7 @@ void R_BrushModelDrawEntity(entity_t *e)
 	unsigned int lj;
 	vec3_t mins, maxs;
 	model_t *clmodel;
-	float scale;
+	float model_scale;
 	qbool rotated;
 	float oldMatrix[16];
 	extern cvar_t gl_brush_polygonoffset;
@@ -248,21 +248,21 @@ void R_BrushModelDrawEntity(entity_t *e)
 
 	clmodel = e->model;
 	// CSQC: per-entity uniform render scale (FTE gl_rmain.c:360-403); 0 = unscaled.
-	scale = e->scale ? e->scale : 1;
+	model_scale = e->scale ? e->scale : 1;
 	if (!clmodel->nummodelsurfaces) {
 		return;
 	}
 
 	if (e->angles[0] || e->angles[1] || e->angles[2]) {
 		rotated = true;
-		if (R_CullSphere(e->origin, scale * clmodel->radius)) {
+		if (R_CullSphere(e->origin, model_scale * clmodel->radius)) {
 			return;
 		}
 	}
 	else {
 		rotated = false;
-		VectorMA(e->origin, scale, clmodel->mins, mins);
-		VectorMA(e->origin, scale, clmodel->maxs, maxs);
+		VectorMA(e->origin, model_scale, clmodel->mins, mins);
+		VectorMA(e->origin, model_scale, clmodel->maxs, maxs);
 
 		if (R_CullBox(mins, maxs)) {
 			return;
@@ -284,8 +284,8 @@ void R_BrushModelDrawEntity(entity_t *e)
 	}
 	// CSQC scale: modelorg is the view position in unscaled model space, so undo
 	// the uniform mesh scale (surface plane distances mismatch otherwise; GLC only).
-	if (scale != 1) {
-		VectorScale(modelorg, 1.0f / scale, modelorg);
+	if (model_scale != 1) {
+		VectorScale(modelorg, 1.0f / model_scale, modelorg);
 	}
 
 	// calculate dynamic lighting for bmodel if it's not an instanced model
