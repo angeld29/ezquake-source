@@ -774,6 +774,25 @@ void CSQC_Client_Abort (const char *msg)
 
 /*
 =================
+CSQC_Client_GetString
+
+Ограниченное чтение строк клиентской VM (недоверенный скачанный csprogs.dat):
+положительный offset обязан лежать в блоке строк модуля; всё, что дальше —
+подделанное значение и даёт NULL (вызывающие мапят в ""/пропуск). Общий
+PR1VM_GetString остаётся без границы (серверные/карты-строки живут за
+numstrings), поэтому граница клиента живёт здесь и ставится как vm->get_string
+(ADR 0019, option 2).
+=================
+*/
+char *CSQC_Client_GetString (pr1vm_t *vm, int num)
+{
+	if (num >= 0 && (!vm || !vm->progs || num >= vm->progs->numstrings))
+		return NULL;
+	return PR1VM_GetString (vm, num);
+}
+
+/*
+=================
 Внутренние помощники
 =================
 */
@@ -1227,7 +1246,7 @@ int CSQC_Client_FindField (pr1vm_t *vm, const char *name)
 		return -1;
 	for (i = 0; i < vm->progs->numfielddefs; i++)
 	{
-		const char *s = PR1VM_GetString (vm, vm->fielddefs[i].s_name);
+		const char *s = CSQC_Client_GetString (vm, vm->fielddefs[i].s_name);
 		if (s && s[0] && !strcmp (s, name))
 			return vm->fielddefs[i].ofs;
 	}
@@ -2507,6 +2526,7 @@ static void PR1VM_CSQCSmoke_f (void)
 
 	// S6/P2.1: cleanup (incl. Q_free of builtin table), then reload
 	PR1VM_UnLoad (vm);
+	vm->get_string = CSQC_Client_GetString;	// option 2: bounded untrusted csprogs strings
 	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{
 		Con_Printf ("csqc_smoke: v6 load failed\n");
@@ -2567,7 +2587,7 @@ static void PR1VM_CSQCSmoke_f (void)
 		vm->globals[OFS_RETURN] = 0;
 		PR1VM_ExecuteProgram (vm, idx);
 		Con_Printf ("csqc_smoke: weapon_name(0) -> \"%s\" (ftos builtin)\n",
-			PR1VM_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
+			CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
 	}
 }
 
@@ -2635,6 +2655,24 @@ static void CSQC_Client_ProgsCheck_f (void)
 	PC_CHECK ("zeroed", !PR1VM_ValidateClientV6 (buf, filesize));
 
 	Q_free (buf);
+
+	// 3) client string accessor (option 2): a positive offset at/beyond the
+	// module string block must be rejected; in-range stays readable. The bound
+	// lives here (client layer), not in the shared PR1VM_GetString.
+	{
+		pr1vm_t tvm;
+		dprograms_t xh;
+		int ns = LittleLong (((dprograms_t *) data)->numstrings);
+
+		memset (&tvm, 0, sizeof (tvm));
+		memset (&xh, 0, sizeof (xh));
+		xh.numstrings = ns;
+		tvm.strings = (char *) data;
+		tvm.progs = &xh;
+		PC_CHECK ("clientstr-in-range", CSQC_Client_GetString (&tvm, 0) != NULL);
+		PC_CHECK ("clientstr-oob", CSQC_Client_GetString (&tvm, ns) == NULL);
+		PC_CHECK ("clientstr-nullvm", CSQC_Client_GetString (NULL, 0) == NULL);
+	}
 
 #undef PC_CHECK
 
@@ -2711,6 +2749,7 @@ static qbool CSQC_Client_Load (const char *path)
 	vm->host_error = CSQC_Client_HostError;
 	vm->host_print = CSQC_Client_HostPrint;
 	vm->abortbuf_valid = true;	// A1: client VM unwinds via the abort-stack
+	vm->get_string = CSQC_Client_GetString;	// option 2: bounded untrusted csprogs strings
 
 	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{

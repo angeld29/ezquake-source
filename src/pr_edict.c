@@ -1268,10 +1268,12 @@ char *PR1VM_GetString (pr1vm_t *vm, int num)
 		return vm->strtbl ? vm->strtbl[idx] : NULL;
 	}
 
-	// A3: a positive offset indexes the module string block; bound it so a
-	// crafted csprogs.dat cannot read past the block (offset is untrusted).
-	if (!vm->progs || num >= vm->progs->numstrings)
-		return NULL;
+	// Positive offset indexes the string area. Server/map strings created via
+	// PR1_SetString (pr_exec.c) live in Hunk_Alloc'd "edstring" blocks and are
+	// stored as positive offsets *beyond* progs->numstrings, so the shared
+	// reader must not bound against numstrings. The client VM keeps untrusted
+	// csprogs strings bounded through its own accessor (csqc_client.c
+	// CSQC_Client_GetString, installed as vm->get_string); see ADR 0019.
 	return vm->strings + num;
 }
 

@@ -451,6 +451,19 @@ static qbool PR1VM_ClientBadField (pr1vm_t *vm, int ofs, int width)
 	return (ofs < 0 || (ofs + width) * (int)sizeof (int) > vm->edict_size);
 }
 
+// D5 (Wave A gate, server-neutral): OP_NOT_S/OP_EQ_S/OP_NE_S compare module
+// strings through PR1VM_GetString, which returns NULL for an out-of-range
+// offset. FTE handles a NULL string explicitly (fteqw/engine/qclib/execloop.h
+// OP_NOT_S/OP_EQ_S/OP_NE_S); without this the NULL reaches `!*s` / `strcmp`
+// and crashes. Map NULL to the empty string; usable without any client code and
+// inert for valid server progs (PR1VM_GetString never returns NULL there).
+static const char *PR1VM_SafeString (pr1vm_t *vm, int num)
+{
+	const char *s = vm->get_string ? vm->get_string (vm, num) : PR1VM_GetString (vm, num);
+
+	return s ? s : "";
+}
+
 // PR1VM S5b: entity addressing through the instance mirrors (progs.h formulas on vm).
 static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
 {
@@ -512,6 +525,12 @@ void PR1VM_TestGuards_f (void)
 	PR1VM_GuardCheck ("field-last", PR1VM_ClientBadField (&vm, 3, 1) == false, &pass, &fail);
 	PR1VM_GuardCheck ("field-over", PR1VM_ClientBadField (&vm, 4, 1) == true, &pass, &fail);
 	PR1VM_GuardCheck ("field-negative", PR1VM_ClientBadField (&vm, -1, 1) == true, &pass, &fail);
+
+	// D5: PR1VM_GetString returns NULL for out-of-range offsets (positive OOB
+	// with no progs, or negative beyond the temp/temp-string tables); SafeString
+	// must turn that into "" so OP_NOT_S/OP_EQ_S/OP_NE_S never deref NULL.
+	PR1VM_GuardCheck ("str-oob-positive", strcmp (PR1VM_SafeString (&vm, 0x7fffffff), "") == 0, &pass, &fail);
+	PR1VM_GuardCheck ("str-oob-negative", strcmp (PR1VM_SafeString (&vm, -99999), "") == 0, &pass, &fail);
 
 	Con_Printf ("[CSQC-TEST] SUMMARY group=guard pass=%d fail=%d\n", pass, fail);
 }
@@ -767,7 +786,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			c->_float = !a->vector[0] && !a->vector[1] && !a->vector[2];
 			break;
 		case OP_NOT_S:
-			c->_float = !a->string || !*PR1VM_GetString(vm, a->string);
+			c->_float = !a->string || !*PR1VM_SafeString(vm, a->string);
 			break;
 		case OP_NOT_FNC:
 			c->_float = !a->function;
@@ -785,7 +804,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			            (a->vector[2] == b->vector[2]);
 			break;
 		case OP_EQ_S:
-			c->_float = !strcmp(PR1VM_GetString(vm, a->string), PR1VM_GetString(vm, b->string));
+			c->_float = !strcmp(PR1VM_SafeString(vm, a->string), PR1VM_SafeString(vm, b->string));
 			break;
 		case OP_EQ_E:
 			c->_float = a->_int == b->_int;
@@ -804,7 +823,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			            (a->vector[2] != b->vector[2]);
 			break;
 		case OP_NE_S:
-			c->_float = strcmp(PR1VM_GetString(vm, a->string), PR1VM_GetString(vm, b->string));
+			c->_float = strcmp(PR1VM_SafeString(vm, a->string), PR1VM_SafeString(vm, b->string));
 			break;
 		case OP_NE_E:
 			c->_float = a->_int != b->_int;

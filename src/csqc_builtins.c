@@ -3,7 +3,7 @@ csqc_builtins.c -- клиентские builtins PR1VM (наш csprogs.dat, сл
 
 Builtins для клиентского инстанса: номера — baked из TF2003 csdefs.qc (= #N),
 аргументы читаются из vm->globals[OFS_PARM0..], возврат в OFS_RETURN,
-строки — через PR1VM_GetString/PR1VM_ClientSetString (S4) на активном инстансе.
+строки — через CSQC_Client_GetString/PR1VM_ClientSetString (S4) на активном инстансе.
 
 P2.1: dprint/ftos/registercommand/tokenize/argv. Layers A/B are added here as
 implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
@@ -70,7 +70,7 @@ static char *CSQCVM_Str (int ofs)
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return NULL;
-	return PR1VM_GetString (vm, *(int *)&vm->globals[ofs]);
+	return CSQC_Client_GetString (vm, *(int *)&vm->globals[ofs]);
 }
 
 static void CSQCVM_SetRetStr (char *s)
@@ -94,7 +94,7 @@ static char *CSQCVM_VarString (int first)
 		return out;
 	for (i = first; i < vm->argc; i++)
 	{
-		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		char *s = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (s)
 			strlcat (out, s, sizeof (out));
 	}
@@ -389,7 +389,7 @@ static void csqc_strcat (void)
 	// pr_cmds.c: OFS_PARM0 + i*3); argc = число аргументов.
 	for (i = 0; i < n && i < 16; i++)
 	{
-		char *s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		char *s = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (s)
 			len += snprintf (buf + len, sizeof (buf) - len, "%s", s);
 		if (len >= (int)sizeof (buf) - 1)
@@ -414,8 +414,8 @@ static void csqc_strstrofs (void)
 
 	if (!vm)
 		return;
-	hay = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
-	needle = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM1]);
+	hay = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	needle = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM1]);
 	start = (vm->argc > 2) ? (int)vm->globals[OFS_PARM2] : 0;
 	if (!hay)
 		hay = "";
@@ -700,7 +700,7 @@ static void csqc_drawstring (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	s = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (!s)
 	{
 		// FTE: null-строка -> -1 (pr_menu.c:553-557).
@@ -830,7 +830,7 @@ static void csqc_drawpic (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	name = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	vm->globals[OFS_RETURN] = CSQC_Client_DrawPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
 		g[OFS_PARM0 + 6], g[OFS_PARM0 + 7], name,
 		(int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f),
@@ -852,7 +852,7 @@ static void csqc_drawsubpic (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 6]);
+	name = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0 + 6]);
 	CSQC_Client_DrawSubPic (g[OFS_PARM0 + 0], g[OFS_PARM0 + 1],
 		g[OFS_PARM0 + 3], g[OFS_PARM0 + 4], name,
 		g[OFS_PARM0 + 9], g[OFS_PARM0 + 10], g[OFS_PARM0 + 12], g[OFS_PARM0 + 13],
@@ -913,7 +913,7 @@ static void csqc_stringwidth (void)
 	char *text;
 	if (!vm)
 		return;
-	text = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	text = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
 	vm->globals[OFS_RETURN] = CSQC_Client_StringWidth (text ? text : "",
 		vm->globals[OFS_PARM0 + 3] != 0, vm->globals[OFS_PARM0 + 6]);
 }
@@ -997,7 +997,7 @@ static void csqc_drawrawstring (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	s = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
+	s = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0 + 3]);
 	if (!s)
 		return;
 	r = (int)(bound (0, g[OFS_PARM0 + 9], 1) * 255.0f + 0.5f);
@@ -1057,7 +1057,7 @@ static void csqc_sprintf (void)
 
 	if (!vm)
 		return;
-	fmt = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	fmt = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
 	if (!fmt)
 		fmt = "";
 
@@ -1123,7 +1123,7 @@ static void csqc_sprintf (void)
 				pn++;
 				if (pn - 1 < 32)
 				{
-					s = PR1VM_GetString (vm, off);
+					s = CSQC_Client_GetString (vm, off);
 					// Валидация: неотрицательный offset обязан лежать в строковой
 					// области модуля; отрицательные — во временных таблицах.
 					if (s && off >= 0 && (unsigned)off >= (unsigned)vm->progs->numstrings)
@@ -1246,7 +1246,7 @@ static void csqc_sendevent (void)
 		c = argtypes[i];
 		if (c == 's')
 		{
-			char *s = PR1VM_GetString (vm, *(int *)&vm->globals[base]);
+			char *s = CSQC_Client_GetString (vm, *(int *)&vm->globals[base]);
 			MSG_WriteByte (&cls.netchan.message, CSQC_EV_STRING);
 			MSG_WriteString (&cls.netchan.message, s ? s : "");
 		}
@@ -1616,7 +1616,7 @@ static char *CSQCVM_ArgStr (int idx)
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm || vm->argc <= idx)
 		return NULL;
-	return PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + idx * 3]);
+	return CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + idx * 3]);
 }
 
 // strbuf() buf_create = #460
@@ -1732,7 +1732,7 @@ static void csqc_localsound (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	name = PR1VM_GetString (vm, *(int *)&g[OFS_PARM0]);
+	name = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0]);
 	vol = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 1;
 	if (name && name[0])
 		S_LocalSoundWithVol (name, vol);
@@ -2123,7 +2123,7 @@ static void csqc_setcursormode (void)
 		return;
 	g = vm->globals;
 	CSQC_Client_SetCursorMode (g[OFS_PARM0] != 0,
-		vm->argc > 1 ? PR1VM_GetString (vm, *(int *)&g[OFS_PARM1]) : NULL,
+		vm->argc > 1 ? CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM1]) : NULL,
 		vm->argc > 2 ? g[OFS_PARM2]     : 0,
 		vm->argc > 2 ? g[OFS_PARM2 + 1] : 0,
 		vm->argc > 2 ? g[OFS_PARM2 + 2] : 0);
@@ -2316,7 +2316,7 @@ static void csqc_crc16 (void)
 	buf[0] = 0;
 	for (i = 1; i < vm->argc; i++)
 	{
-		s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		s = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (s)
 			len += snprintf (buf + len, sizeof (buf) - len, "%s", s);
 		if (len >= (int)sizeof (buf) - 1)
@@ -2548,7 +2548,7 @@ static void csqc_strpad (void)
 	d = buf;
 	for (i = 1; i < vm->argc; i++)
 	{
-		s = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		s = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (!s)
 			continue;
 		len = strlen (s);
@@ -2918,7 +2918,7 @@ static void csqc_strireplace (void)
 }
 
 /*
-Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через PR1VM_GetString,
+Phase 1 L1 P1c — cvar/exec/ошибки. Client-handlers (строки через CSQC_Client_GetString,
 без серверных зеркал). #28 coredump / #31 eprint — entity-отладка, уходят в P1d.
 */
 
@@ -3518,7 +3518,7 @@ static void csqc_add_one_entity (int e)
 	{
 		if ((ofs = CSQC_Client_FindField (vm, "model")) < 0)
 			return;
-		mname = PR1VM_GetString (vm, (string_t)*(int *)&slot[ofs]);
+		mname = CSQC_Client_GetString (vm, (string_t)*(int *)&slot[ofs]);
 		if (!mname || !mname[0])
 			return;
 		model = Mod_ForName (mname, false);
@@ -3765,7 +3765,7 @@ static void csqc_find (void)
 			slot = csqc_ent_slot (vm, e);
 			if (!slot)
 				continue;
-			t = PR1VM_GetString (vm, *(int *)&slot[f]);
+			t = CSQC_Client_GetString (vm, *(int *)&slot[f]);
 			if (t && !strcmp (t, s))
 			{
 				csqc_ret_entity (vm, e);
@@ -3863,7 +3863,7 @@ static void csqc_eprint (void)
 	Con_Printf ("eprint entity %d\n", e);
 	for (i = 0; i < vm->progs->numfielddefs; i++)
 	{
-		char *fn = PR1VM_GetString (vm, vm->fielddefs[i].s_name);
+		char *fn = CSQC_Client_GetString (vm, vm->fielddefs[i].s_name);
 		ofs = vm->fielddefs[i].ofs;
 		if (!fn)
 			continue;
@@ -3871,7 +3871,7 @@ static void csqc_eprint (void)
 		{
 		case 1:	/* ev_string */
 			Con_Printf ("  .%s = \"%s\"\n", fn,
-				PR1VM_GetString (vm, *(int *)&slot[ofs]) ? PR1VM_GetString (vm, *(int *)&slot[ofs]) : "");
+				CSQC_Client_GetString (vm, *(int *)&slot[ofs]) ? CSQC_Client_GetString (vm, *(int *)&slot[ofs]) : "");
 			break;
 		case 2:	/* ev_float */
 			Con_Printf ("  .%s = %g\n", fn, slot[ofs]);
@@ -4380,7 +4380,7 @@ static void csqc_strftime (void)
 	tm = (vm->globals[OFS_PARM0] != 0) ? localtime (&t) : gmtime (&t);
 	for (i = 1; i < vm->argc && o < (int)sizeof (buf) - 1; i++)
 	{
-		p = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
+		p = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (!p)
 			continue;
 		// msvc-совместимость (как FTE): %R/%F
@@ -4614,7 +4614,7 @@ static void csqc_pointsound (void)
 	if (!vm)
 		return;
 	org = &vm->globals[OFS_PARM0];
-	sample = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + 3]);
+	sample = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + 3]);
 	if (vm->argc >= 5)
 		pitchpct = vm->globals[OFS_PARM0 + 12] * 0.01f;	// только для паритета вызова
 	(void)pitchpct;
@@ -4653,7 +4653,7 @@ static void csqc_deltalisten (void)
 	int func;
 	if (!vm)
 		return;
-	model = PR1VM_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
+	model = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0]);
 	func = *(int *)&vm->globals[OFS_PARM1];
 	if (func < 0 || func >= vm->progs->numfunctions)
 		func = 0;	// невалидный указатель — снятие/no-op
@@ -4714,7 +4714,7 @@ static void csqc_entityfieldname (void)
 		CSQCVM_SetRetStr ("");
 		return;
 	}
-	s = PR1VM_GetString (vm, f->s_name);
+	s = CSQC_Client_GetString (vm, f->s_name);
 	CSQCVM_SetRetStr (s ? s : "");
 }
 
@@ -4758,7 +4758,7 @@ static void csqc_getentityfieldstring (void)
 	{
 	case ev_string:
 		{
-			char *s = PR1VM_GetString (vm, *(int *)&slot[ofs]);
+			char *s = CSQC_Client_GetString (vm, *(int *)&slot[ofs]);
 			CSQCVM_SetRetStr (s ? s : "");
 			return;
 		}

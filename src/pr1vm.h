@@ -85,6 +85,14 @@ struct pr1vm_s
 	void (*host_print)(pr1vm_t *vm, const char *msg);
 	void *host_udata;
 
+	// Optional string accessor (ADR 0019). When set, the interpreter string ops
+	// read module strings through it — the client VM installs a bounded one for
+	// untrusted csprogs; server/trusted instances leave it NULL and use the raw
+	// shared PR1VM_GetString (which must not bound positive offsets, since map
+	// strings live beyond progs->numstrings). Keeps the shared core free of any
+	// VM-type condition.
+	char *(*get_string)(pr1vm_t *vm, int num);
+
 	// Abort-stack (ADR 0019, A1/A2): when abortbuf_valid is set (client VM),
 	// PR_RunError unwinds here instead of continuing the faulting statement.
 	// abortbuf points at the *outermost* active frame's stack-local jmp_buf

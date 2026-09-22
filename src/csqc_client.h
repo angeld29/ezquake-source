@@ -31,6 +31,9 @@ void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENV
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// привязка registercommand -> консоль
 void CSQC_Client_Abort (const char *msg);			// фатально: дисконнект клиента (паритет FTE CSQC_Abort)
+// A3/option-2: ограниченное чтение строк клиентской VM (недоверенный csprogs):
+// положительный offset за numstrings -> NULL. Ставится как vm->get_string.
+char *CSQC_Client_GetString (struct pr1vm_s *vm, int num);
 
 // FTE-пул (слот ≠ серверный номер). entnum-функции работают со слотами пула;
 // сетевые номера держатся картой номер→слот (svc 76/92). slot 0 = world.
