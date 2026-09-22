@@ -2713,13 +2713,20 @@ static void csqc_strtoupper (void)
 }
 
 /*
-Стрипинг ezq-разметки для #476 strlennocol / #477 strdecolorize (T3 Э3).
-FTE-паритет для кодов, понимаемых рендером ezq: `&cRGB` (валидный 3-hex) и `&r`
-(ровно логика r_draw_charset.c:331-365). ^-коды FTE (q3-цвета, links, charset
-`u8:`/`k8:`) не поддержаны — отклонение, backlog
-docs/plans/ezquake_csqc_client_strcolor_markup.md. Возврат — длина результата
-(байты, как FTE COM_DeFunString); out==NULL допустим (только подсчёт).
+Стрипинг цветовой разметки для #476 strlennocol / #477 strdecolorize (T3 Э3, T4 `^`).
+FTE-паритет: `&cRGB` (валидный 3-hex) / `&r` (логика r_draw_charset.c:331-365) и
+colour/state-коды `^`: q3-цвета `^0-9`, `^xRRGGBB`, `^&XX` (extended FG/BG),
+состояния `^b/^d/^m/^a/^h/^s/^r`, escape `^^`, плюс FTE-поведение неизвестного/
+висячего `^` (ft eqw/engine/common/common.c:4169-4478, flags=0/keepmarkup=false).
+Вне scope: links `^[..^]`, charset `u8:`/`k8:`, `^Uxxxx`/`^{xxxx}` — отклонение,
+backlog docs/plans/ezquake_csqc_client_strcolor_markup.md. Возврат — длина
+результата (байты, как FTE COM_DeFunString); out==NULL допустим (только подсчёт).
 */
+static int CSQCVM_IsExtCode (char c)
+{
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || c == '-';
+}
+
 static int CSQCVM_StripColor (const char *in, char *out, size_t outsize)
 {
 	size_t n = 0;
@@ -2738,6 +2745,48 @@ static int CSQCVM_StripColor (const char *in, char *out, size_t outsize)
 		{
 			in += 1;
 			continue;
+		}
+		if (in[0] == '^')
+		{
+			char c1 = in[1];
+
+			if (c1 >= '0' && c1 <= '9')			// ^0..^9 q3 colour
+			{
+				in += 1;
+				continue;
+			}
+			if (c1 == 'x')						// ^xRGB valid -> strip 5; invalid -> strip "^x"
+			{
+				if (HexToInt (in[2]) >= 0 && HexToInt (in[3]) >= 0 && HexToInt (in[4]) >= 0)
+					in += 4;
+				else
+					in += 1;
+				continue;
+			}
+			if (c1 == '&')						// ^&XX extended FG/BG
+			{
+				if (CSQCVM_IsExtCode (in[2]) && CSQCVM_IsExtCode (in[3]))
+				{
+					in += 3;
+					continue;
+				}
+				// invalid: '^' остаётся литералом, '&' обрабатывается на след. итерации
+			}
+			else if (c1 == 'b' || c1 == 'd' || c1 == 'm' || c1 == 'a'
+				|| c1 == 'h' || c1 == 's' || c1 == 'r')
+			{
+				in += 1;
+				continue;
+			}
+			else if (c1 == '^')					// ^^ -> ^
+			{
+				if (out && outsize && n + 1 < outsize)
+					out[n] = '^';
+				n++;
+				in += 1;
+				continue;
+			}
+			// unknown / end / out-of-scope: '^' литерал, следующий символ — как обычно
 		}
 		if (out && outsize && n + 1 < outsize)
 			out[n] = *in;
