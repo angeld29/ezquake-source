@@ -1267,6 +1267,11 @@ char *PR1VM_GetString (pr1vm_t *vm, int num)
 			return vm->newstrtbl ? vm->newstrtbl[idx - MAX_PRSTR] : NULL;
 		return vm->strtbl ? vm->strtbl[idx] : NULL;
 	}
+
+	// A3: a positive offset indexes the module string block; bound it so a
+	// crafted csprogs.dat cannot read past the block (offset is untrusted).
+	if (!vm->progs || num >= vm->progs->numstrings)
+		return NULL;
 	return vm->strings + num;
 }
 

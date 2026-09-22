@@ -132,6 +132,7 @@ static csqc_client_state_t s_csqc;
 // LoadClientV6 + CSQCSmoke are implemented here (used to be in pr_edict.c/pr1vm.h).
 static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize);
 static void PR1VM_CSQCSmoke_f (void);
+static void CSQC_Client_ProgsCheck_f (void);
 
 /*
 =================
@@ -724,6 +725,7 @@ live outside shared core files" (docs/archive/ezquake_csqc_client_pr1vm_plan.md)
 void CSQC_Client_RegisterCommands (void)
 {
 	Cmd_AddCommand ("csqc_smoke", PR1VM_CSQCSmoke_f);	// PR1VM S3 debug
+	Cmd_AddCommand ("csqc_progscheck", CSQC_Client_ProgsCheck_f);	// A3 debug canary
 }
 
 /*
@@ -2306,30 +2308,168 @@ void CSQC_Client_GetEntity (int entnum, int fldnum, float out[3])
 
 /*
 =================
-PR1VM_LoadClientV6
+PR1VM_LumpFits / PR1VM_StmtWords / PR1VM_ValidateClientV6
 
-Client v6-loader (our csprogs.dat, classic QW version 6; v6 migration).
-No CRC check; errors -> false + Con_Printf (no SV_Error). Implemented in the
-client file (rule "client parts live outside shared core files").
+A3: a downloaded csprogs.dat is server-supplied and must not be trusted. The
+server PR1 core is only ever fed a locally-installed, CRC-checked progs, so its
+loader trusts the header; the client loader must not. Validate the header lump
+ranges against the file size and the operand/field ranges the interpreter
+indexes (pr_exec.c:592-594 `vm->globals[st->a/b/c]`, `parm_start/locals`,
+`first_statement`) before PR1VM_LoadData byte-swaps and walks the lumps.
 =================
 */
-static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize)
+static qbool PR1VM_LumpFits (int ofs, int num, int elemsize, int filesize, const char *name)
 {
-	int version;
+	if (ofs < (int)sizeof (dprograms_t) || num < 0 || elemsize <= 0 ||
+		(size_t) ofs + (size_t) num * (size_t) elemsize > (size_t) filesize)
+	{
+		Con_Printf ("CSQC: csprogs.dat rejected: bad %s lump (ofs=%d num=%d)\n",
+			name, ofs, num);
+		return false;
+	}
+	return true;
+}
 
-	if (!data || filesize < (int)sizeof(dprograms_t))
+// Width (in float words) of operand a/b/c (which 0/1/2) for the ops that read or
+// write 3 words; all others are single-word. Branch ops (OP_GOTO/OP_IF/OP_IFNOT)
+// store a *statement delta* in one operand (handled at the call site, not here).
+static int PR1VM_StmtWords (int op, int which)
+{
+	switch (op)
+	{
+	case OP_DONE:
+	case OP_RETURN:
+		return which == 0 ? 3 : 1;
+	case OP_MUL_V:
+		return (which == 0 || which == 1) ? 3 : 1;
+	case OP_ADD_V:
+	case OP_SUB_V:
+		return 3;
+	case OP_MUL_FV:
+		return (which == 1 || which == 2) ? 3 : 1;
+	case OP_MUL_VF:
+		return (which == 0 || which == 2) ? 3 : 1;
+	case OP_EQ_V:
+	case OP_NE_V:
+		return (which == 0 || which == 1) ? 3 : 1;
+	case OP_NOT_V:
+		return which == 0 ? 3 : 1;
+	case OP_STORE_V:
+		return which == 1 ? 3 : 1;
+	case OP_LOAD_V:
+		return which == 2 ? 3 : 1;
+	default:
+		return 1;
+	}
+}
+
+static qbool PR1VM_ValidateClientV6 (const byte *data, int filesize)
+{
+	dprograms_t h;
+	const dstatement_t *st;
+	const dfunction_t *fn;
+	int i, j;
+
+	if (!data || filesize < (int)sizeof (h))
 	{
 		Con_Printf ("PR1VM_LoadClientV6: file too small (%d bytes)\n", filesize);
 		return false;
 	}
 
-	// peek the raw LE version before byte-swapping
-	version = LittleLong (((int *)(void *)data)[0]);
-	if (version != PROG_VERSION)
+	memcpy (&h, data, sizeof (h));
+	for (i = 0; i < (int)(sizeof (h) / sizeof (int)); i++)
+		((int *) &h)[i] = LittleLong (((int *) &h)[i]);
+
+	if (h.version != PROG_VERSION)
 	{
-		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", version);
+		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", h.version);
 		return false;
 	}
+
+	if (!PR1VM_LumpFits (h.ofs_statements, h.numstatements, sizeof (dstatement_t), filesize, "statements") ||
+		!PR1VM_LumpFits (h.ofs_globaldefs, h.numglobaldefs, sizeof (ddef_t), filesize, "globaldefs") ||
+		!PR1VM_LumpFits (h.ofs_fielddefs, h.numfielddefs, sizeof (ddef_t), filesize, "fielddefs") ||
+		!PR1VM_LumpFits (h.ofs_functions, h.numfunctions, sizeof (dfunction_t), filesize, "functions") ||
+		!PR1VM_LumpFits (h.ofs_strings, h.numstrings, 1, filesize, "strings") ||
+		!PR1VM_LumpFits (h.ofs_globals, h.numglobals, sizeof (float), filesize, "globals"))
+		return false;
+
+	if (h.numstatements < 1 || h.numfunctions < 1 || h.numstrings < 1 ||
+		h.numglobals < 3 || h.entityfields <= 0)
+	{
+		Con_Printf ("CSQC: csprogs.dat rejected: bad counts (stmt=%d func=%d str=%d glob=%d ef=%d)\n",
+			h.numstatements, h.numfunctions, h.numstrings, h.numglobals, h.entityfields);
+		return false;
+	}
+
+	// statements: every operand indexes vm->globals[st->a/b/c]; vector ops use 3.
+	// Branch deltas (OP_GOTO->a, OP_IF/OP_IFNOT->b) are targets, not globals —
+	// bounded at run time in PR1VM_ExecuteProgram.
+	st = (const dstatement_t *) ((const byte *) data + h.ofs_statements);
+	for (i = 0; i < h.numstatements; i++)
+	{
+		int op = (int)(unsigned short) LittleShort ((short) st[i].op);
+		int ops[3];
+
+		if (op > OP_BITOR)
+		{
+			Con_Printf ("CSQC: csprogs.dat rejected: bad opcode %d at statement %d\n", op, i);
+			return false;
+		}
+
+		ops[0] = (int) LittleShort (st[i].a);
+		ops[1] = (int) LittleShort (st[i].b);
+		ops[2] = (int) LittleShort (st[i].c);
+		for (j = 0; j < 3; j++)
+		{
+			if ((op == OP_GOTO && j == 0) || ((op == OP_IF || op == OP_IFNOT) && j == 1))
+				continue;
+			if (ops[j] < 0 || ops[j] > h.numglobals - PR1VM_StmtWords (op, j))
+			{
+				Con_Printf ("CSQC: csprogs.dat rejected: statement %d operand out of range\n", i);
+				return false;
+			}
+		}
+	}
+
+	// functions: parm_start/locals within globals, first_statement within statements
+	fn = (const dfunction_t *) ((const byte *) data + h.ofs_functions);
+	for (i = 0; i < h.numfunctions; i++)
+	{
+		int first = LittleLong (fn[i].first_statement);
+		int parm = LittleLong (fn[i].parm_start);
+		int loc = LittleLong (fn[i].locals);
+		int nparm = LittleLong (fn[i].numparms);
+
+		if (first > 0 && first >= h.numstatements)
+		{
+			Con_Printf ("CSQC: csprogs.dat rejected: function %d first_statement out of range\n", i);
+			return false;
+		}
+		if (nparm < 0 || nparm > MAX_PARMS || parm < 0 || loc < 0 || parm + loc > h.numglobals)
+		{
+			Con_Printf ("CSQC: csprogs.dat rejected: function %d parms/locals out of range\n", i);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+=================
+PR1VM_LoadClientV6
+
+Client v6-loader (our csprogs.dat, classic QW version 6; v6 migration).
+No CRC check; errors -> false + Con_Printf (no SV_Error). A3: structural
+validation before executing server-supplied bytes. Implemented in the client
+file (rule "client parts live outside shared core files").
+=================
+*/
+static qbool PR1VM_LoadClientV6 (pr1vm_t *vm, const byte *data, int filesize)
+{
+	if (!PR1VM_ValidateClientV6 (data, filesize))
+		return false;
 
 	PR1VM_LoadData (vm, (dprograms_t *)data);
 	return true;
@@ -2429,6 +2569,79 @@ static void PR1VM_CSQCSmoke_f (void)
 		Con_Printf ("csqc_smoke: weapon_name(0) -> \"%s\" (ftos builtin)\n",
 			PR1VM_GetString (vm, *(int *)&vm->globals[OFS_RETURN]));
 	}
+}
+
+/*
+=================
+CSQC_Client_ProgsCheck_f
+
+A3 debug canary (client console `csqc_progscheck`): verifies the load-time
+validator (clean csprogs.dat -> accepted; synthetically corrupted copies ->
+rejected) and runs the runtime-guard predicate unit tests
+(PR1VM_TestGuards_f). Engine-side, FTE has no equivalent command — a recorded
+deviation from the module-harness FTE-oracle rule (ADR 0023).
+=================
+*/
+static void CSQC_Client_ProgsCheck_f (void)
+{
+	byte *data;
+	byte *buf;
+	dprograms_t *h;
+	int filesize;
+	int pass = 0, fail = 0;
+
+	data = (byte *)FS_LoadHunkFile ("csprogs.dat", &filesize);
+	if (!data || filesize < (int)sizeof (dprograms_t))
+	{
+		Con_Printf ("csqc_progscheck: no/short csprogs.dat in gamedir\n");
+		return;
+	}
+
+#define PC_CHECK(name, cond) \
+	do { if (cond) pass++; else { fail++; Con_Printf ("[CSQC-TEST] FAIL %s\n", name); } } while (0)
+
+	// 1) the real file must pass validation
+	PC_CHECK ("clean-accepted", PR1VM_ValidateClientV6 (data, filesize));
+
+	// 2) corrupted copies must be rejected (scratch copy, LE-safe writes)
+	buf = (byte *)Q_malloc (filesize);
+	if (!buf)
+	{
+		Con_Printf ("csqc_progscheck: out of memory\n");
+		return;
+	}
+	h = (dprograms_t *)buf;
+
+	memcpy (buf, data, filesize);
+	h->ofs_functions = LittleLong (filesize + 4096);
+	PC_CHECK ("ofs-functions-oob", !PR1VM_ValidateClientV6 (buf, filesize));
+
+	memcpy (buf, data, filesize);
+	h->numstatements = LittleLong (0x7fffffff);
+	PC_CHECK ("numstatements-huge", !PR1VM_ValidateClientV6 (buf, filesize));
+
+	memcpy (buf, data, filesize);
+	h->numglobals = LittleLong (0x7fffffff);
+	PC_CHECK ("numglobals-huge", !PR1VM_ValidateClientV6 (buf, filesize));
+
+	memcpy (buf, data, filesize);
+	h->version = LittleLong (7);
+	PC_CHECK ("bad-version", !PR1VM_ValidateClientV6 (buf, filesize));
+
+	memcpy (buf, data, filesize);
+	PC_CHECK ("tiny-size", !PR1VM_ValidateClientV6 (buf, 8));
+
+	memset (buf, 0, filesize);
+	PC_CHECK ("zeroed", !PR1VM_ValidateClientV6 (buf, filesize));
+
+	Q_free (buf);
+
+#undef PC_CHECK
+
+	// 3) runtime-guard predicate unit tests (synthetic instance)
+	PR1VM_TestGuards_f ();
+
+	Con_Printf ("[CSQC-TEST] SUMMARY group=progscheck pass=%d fail=%d\n", pass, fail);
 }
 
 /*

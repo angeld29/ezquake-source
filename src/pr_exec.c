@@ -415,9 +415,47 @@ void PR_RunError (char *error, ...)
 	SV_Error ("Program error (PR_RunError)");
 }
 
+// A3 (client VM only): pure bound predicates for the untrusted csprogs VM. The
+// server PR1 instance is fed a locally-installed, CRC-checked progs and keeps
+// its previous behaviour, so every check is gated on abortbuf_valid (set only
+// for the client instance; cf. A1/A2). The guards are predicates so the debug
+// canary (PR1VM_TestGuards_f) can unit-test them without arming a frame.
+static qbool PR1VM_ClientBadEdict (pr1vm_t *vm, int e)
+{
+	int idx;
+
+	if (!vm->abortbuf_valid || vm->edict_size <= 0)
+		return false;
+	idx = e / vm->edict_size;
+	return (e < 0 || idx >= vm->max_edicts);
+}
+
+static qbool PR1VM_ClientBadPtr (pr1vm_t *vm, unsigned off, unsigned width)
+{
+	unsigned size;
+
+	if (!vm->abortbuf_valid)
+		return false;
+	size = (unsigned) vm->max_edicts * (unsigned) vm->edict_size;
+	if (size < width)
+		return true;
+	// FTE QCPOINTERWRITEFAIL (execloop.h:35) disallows null writes; reject any
+	// write that leaves the addressable region (the last word is still allowed).
+	return (off == 0 || off > size - width);
+}
+
+static qbool PR1VM_ClientBadField (pr1vm_t *vm, int ofs, int width)
+{
+	if (!vm->abortbuf_valid)
+		return false;
+	return (ofs < 0 || (ofs + width) * (int)sizeof (int) > vm->edict_size);
+}
+
 // PR1VM S5b: entity addressing through the instance mirrors (progs.h formulas on vm).
 static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
 {
+	if (PR1VM_ClientBadEdict (vm, e))
+		PR_RunError ("bad entity number %d", e);
 	return &vm->edicts[e / vm->edict_size];
 }
 
@@ -427,6 +465,55 @@ static edict_t *PR1VM_ProgToEdict (pr1vm_t *vm, int e)
 static int PR1VM_FieldOfs (pr1vm_t *vm, int i)
 {
 	return (i >= 0 && i <= 105 && vm->fieldofs_patch) ? vm->fieldofs_patch[i] : i;
+}
+
+// A3 debug canary (client console `pr1vm_test_guards`, called from
+// `csqc_progscheck`): unit-test the client-VM bound predicates on a synthetic
+// instance. No execution / no PR_RunError; prints [CSQC-TEST] lines + SUMMARY.
+static void PR1VM_GuardCheck (const char *name, qbool ok, int *pass, int *fail)
+{
+	if (ok)
+		(*pass)++;
+	else
+	{
+		(*fail)++;
+		Con_Printf ("[CSQC-TEST] FAIL %s\n", name);
+	}
+}
+
+void PR1VM_TestGuards_f (void)
+{
+	pr1vm_t vm;
+	byte buf[64];
+	int pass = 0, fail = 0;
+
+	memset (&vm, 0, sizeof (vm));
+	memset (buf, 0, sizeof (buf));
+	vm.abortbuf_valid = true;
+	vm.max_edicts = 4;
+	vm.edict_size = 16;
+	vm.game_edicts = buf;
+
+	PR1VM_GuardCheck ("edict-0", PR1VM_ClientBadEdict (&vm, 0) == false, &pass, &fail);
+	PR1VM_GuardCheck ("edict-last", PR1VM_ClientBadEdict (&vm, 3 * 16) == false, &pass, &fail);
+	PR1VM_GuardCheck ("edict-over", PR1VM_ClientBadEdict (&vm, 4 * 16) == true, &pass, &fail);
+	PR1VM_GuardCheck ("edict-negative", PR1VM_ClientBadEdict (&vm, -1) == true, &pass, &fail);
+	vm.abortbuf_valid = false;
+	PR1VM_GuardCheck ("edict-server-off", PR1VM_ClientBadEdict (&vm, 0x40000000) == false, &pass, &fail);
+	vm.abortbuf_valid = true;
+
+	PR1VM_GuardCheck ("ptr-null", PR1VM_ClientBadPtr (&vm, 0, 4) == true, &pass, &fail);
+	PR1VM_GuardCheck ("ptr-first", PR1VM_ClientBadPtr (&vm, 4, 4) == false, &pass, &fail);
+	PR1VM_GuardCheck ("ptr-last", PR1VM_ClientBadPtr (&vm, 4 * 16 - 4, 4) == false, &pass, &fail);
+	PR1VM_GuardCheck ("ptr-over", PR1VM_ClientBadPtr (&vm, 4 * 16, 4) == true, &pass, &fail);
+	PR1VM_GuardCheck ("ptr-huge", PR1VM_ClientBadPtr (&vm, 0x7fffffff, 4) == true, &pass, &fail);
+
+	PR1VM_GuardCheck ("field-0", PR1VM_ClientBadField (&vm, 0, 1) == false, &pass, &fail);
+	PR1VM_GuardCheck ("field-last", PR1VM_ClientBadField (&vm, 3, 1) == false, &pass, &fail);
+	PR1VM_GuardCheck ("field-over", PR1VM_ClientBadField (&vm, 4, 1) == true, &pass, &fail);
+	PR1VM_GuardCheck ("field-negative", PR1VM_ClientBadField (&vm, -1, 1) == true, &pass, &fail);
+
+	Con_Printf ("[CSQC-TEST] SUMMARY group=guard pass=%d fail=%d\n", pass, fail);
 }
 
 /*
@@ -745,10 +832,14 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_STOREP_FLD:		// integers
 		case OP_STOREP_S:
 		case OP_STOREP_FNC:		// pointers
+			if (PR1VM_ClientBadPtr (vm, (unsigned)b->_int, sizeof (int)))
+				PR_RunError ("bad pointer write (offset %d)", b->_int);
 			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
 			ptr->_int = a->_int;
 			break;
 		case OP_STOREP_V:
+			if (PR1VM_ClientBadPtr (vm, (unsigned)b->_int, 3 * sizeof (int)))
+				PR_RunError ("bad pointer write (offset %d)", b->_int);
 			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
 			ptr->vector[0] = a->vector[0];
 			ptr->vector[1] = a->vector[1];
@@ -762,6 +853,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 #endif
 			if (ed == vm->edicts && vm->state == ss_active)
 				PR_RunError ("assignment to world entity");
+			if (PR1VM_ClientBadField (vm, b->_int, 1))
+				PR_RunError ("bad field address %d", b->_int);
 			c->_int = (byte *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int)) - (byte *)vm->game_edicts;
 			break;
 
@@ -779,6 +872,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			// FTE/classic raw, NQ — remap (ADR 0017 P2).
 			if (b->_int >= 0)
 			{
+				if (PR1VM_ClientBadField (vm, b->_int, 1))
+					PR_RunError ("bad field load %d", b->_int);
 				a = (eval_t *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int));
 				c->_int = a->_int;
 			}
@@ -791,6 +886,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 #ifdef PARANOID
 			NUM_FOR_EDICT(ed);		// make sure it's in range
 #endif
+			if (PR1VM_ClientBadField (vm, b->_int, 3))
+				PR_RunError ("bad field load %d", b->_int);
 			a = (eval_t *)((int *)ed->v + PR1VM_FieldOfs(vm, b->_int));
 			c->vector[0] = a->vector[0];
 			c->vector[1] = a->vector[1];
@@ -801,16 +898,31 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 
 		case OP_IFNOT:
 			if (!a->_int)
-				s += st->b - 1;	// offset the s++
+			{
+				int t = s + st->b;	// target after the loop's s++
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
 			break;
 
 		case OP_IF:
 			if (a->_int)
-				s += st->b - 1;	// offset the s++
+			{
+				int t = s + st->b;	// target after the loop's s++
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
 			break;
 
 		case OP_GOTO:
-			s += st->a - 1;	// offset the s++
+			{
+				int t = s + st->a;	// target after the loop's s++
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
 			break;
 
 		case OP_CALL0:
@@ -825,6 +937,8 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			vm->argc = st->op - OP_CALL0;
 			if (!a->function)
 				PR_RunError ("NULL function");
+			if (vm->abortbuf_valid && (a->function < 0 || a->function >= vm->progs->numfunctions))
+				PR_RunError ("Bad function call %d", a->function);
 
 			newf = &vm->functions[a->function];
 

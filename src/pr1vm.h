@@ -135,6 +135,9 @@ void PR1VM_RegisterBuiltin(pr1vm_t *vm, int num, builtin_t fn);
 // S4 debug: provoke PR_RunError on the server instance (pr1vm_test_error).
 void PR1VM_TestError_f(void);
 
+// A3 debug: unit-test the client-VM bound predicates (pr1vm_test_guards).
+void PR1VM_TestGuards_f(void);
+
 int  PR1VM_EnterFunction(pr1vm_t *vm, dfunction_t *f);
 int  PR1VM_LeaveFunction(pr1vm_t *vm);
 void PR1VM_ExecuteProgram(pr1vm_t *vm, func_t fnum);
