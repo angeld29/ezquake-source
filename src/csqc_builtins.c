@@ -2965,13 +2965,16 @@ static void csqc_objerror (void)
 
 /*
 void(string str) localcmd = #46
-Выполнение строки как команды движка (буфер команд клиента).
+Выполнение строки как команды движка — так же, как команды с сервера (svc_stufftext):
+через cbuf_svc с фильтром cl_remote_capabilities (cmd.c Cmd_ExecuteStringEx), а не в
+неограниченный cbuf_main. Отклонение от FTE: FTE использует RESTRICT_INSECURE
+(exec-level), ezq — allowlist по имени (ADR 0019, раздел про localcmd).
 */
 static void csqc_localcmd (void)
 {
 	char *s = CSQCVM_VarString (0);
 	if (s && s[0])
-		Cbuf_AddText (s);
+		Cbuf_AddTextEx (&cbuf_svc, s);
 }
 
 /*
