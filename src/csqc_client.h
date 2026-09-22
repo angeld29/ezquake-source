@@ -173,6 +173,13 @@ float CSQC_Client_SensitivityScale (void);	// множитель чувстви�
 qbool CSQC_Client_HasInputEvent (void);		// модуль определил CSQC_InputEvent
 int CSQC_Client_InputEvent (int evtype, float a, float b, float c);	// возврат handled
 
+// B1/B6 (FTE-parity): notmenu для CSQC_UpdateView (#300) и трансляция
+// «внутренний keynum ezq <-> QC/DP-код» (эталон — fteqw pr_csqc.c:8889,
+// pr_clcmd.c:14/:218). Применяется к CSQC_InputEvent и keynum-builtins.
+qbool CSQC_Client_NotMenu (void);
+int CSQC_Client_KeynumToQC (int keynum);
+int CSQC_Client_QCToKeynum (int code);
+
 // Типы событий (паритет csdefs.qc IE_*, FTE CSIE_*).
 #ifndef IE_KEYDOWN
 #define IE_KEYDOWN	0

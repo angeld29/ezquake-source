@@ -115,8 +115,9 @@ typedef struct csqc_client_state_s
 	unsigned	csprogs_crc;	// *csprogs (md4 Com_BlockChecksum) / 0 если нет
 	int			csprogs_size;	// *csprogssize
 	char		csprogs_dl_path[MAX_QPATH];	// локальный файл после скачивания
-	int			numcmds;
-	char		cmds[16][64];
+	int			numcmds;	// число зарегистрированных команд модуля
+	int			maxcmds;	// ёмкость cmds (B18, динамическая)
+	char		**cmds;		// Q_malloc: имена команд модуля (снятие при выгрузке)
 	// Арена edicts клиентского инстанса (ADR 0017 P1/D2). Q_malloc, free в
 	// Disconnect/Load-start; bind в vm->edicts/game_edicts (entity-опкоды).
 	edict_t		*edicts;
@@ -697,19 +698,35 @@ static void CSQC_Client_ConsoleCommand_f (void);
 void CSQC_Client_RegisterCommand (const char *cmd)
 {
 	int i;
+	char *name;
+
 	if (!cmd || !cmd[0])
 		return;
 	for (i = 0; i < s_csqc.numcmds; i++)
 		if (!strcmp (s_csqc.cmds[i], cmd))
 			return;					// уже зарегистрирована
-	if (s_csqc.numcmds >= (int)(sizeof (s_csqc.cmds) / sizeof (s_csqc.cmds[0])))
-		return;
-	strlcpy (s_csqc.cmds[s_csqc.numcmds], cmd, sizeof (s_csqc.cmds[0]));
+
+	// B18 (FTE-parity, unlimited): динамический список вместо прежнего cap [16][64]
+	// (fteqw PF_cs_registercommand, pr_csqc.c:5426 -> Cmd_AddCommandD без лимита).
+	if (s_csqc.numcmds >= s_csqc.maxcmds)
+	{
+		int newmax = s_csqc.maxcmds ? s_csqc.maxcmds * 2 : 16;
+		s_csqc.cmds = (char **)Q_realloc (s_csqc.cmds, newmax * sizeof (s_csqc.cmds[0]));
+		s_csqc.maxcmds = newmax;
+	}
+
 	// Cmd_AddRemCommand копирует имя в Q_malloc-блок (в отличие от
 	// Cmd_AddCommand, который держит указатель на имя и аллоцит узел в hunk).
 	// Узел/имя переживают Host_ClearMemory и корректно удаляются RemoveCommand.
-	if (Cmd_AddRemCommand (s_csqc.cmds[s_csqc.numcmds], CSQC_Client_ConsoleCommand_f))
-		s_csqc.numcmds++;
+	// Своя копия нужна для снятия команды при выгрузке модуля.
+	name = Q_strdup (cmd);
+	if (!Cmd_AddRemCommand (name, CSQC_Client_ConsoleCommand_f))
+	{
+		Q_free (name);
+		return;
+	}
+	s_csqc.cmds[s_csqc.numcmds] = name;
+	s_csqc.numcmds++;
 }
 
 /*
@@ -833,8 +850,17 @@ static void CSQC_Client_ClearCommands (void)
 {
 	int i;
 	for (i = 0; i < s_csqc.numcmds; i++)
+	{
 		Cmd_RemoveCommand (s_csqc.cmds[i]);
+		Q_free (s_csqc.cmds[i]);
+	}
 	s_csqc.numcmds = 0;
+	if (s_csqc.cmds)
+	{
+		Q_free (s_csqc.cmds);
+		s_csqc.cmds = NULL;
+	}
+	s_csqc.maxcmds = 0;
 }
 
 /*
@@ -3176,10 +3202,248 @@ static void CSQC_Client_RunFrameThink (void)
 
 /*
 =================
+CSQC_Client_NotMenu / CSQC_Client_KeynumToQC / CSQC_Client_QCToKeynum
+
+B1/B6 (FTE-parity). Эталон FTE: notmenu — pr_csqc.c:8889
+(`!Key_Dest_Has(kdm_menu|kdm_cwindows)`); трансляция клавиш —
+pr_clcmd.c:14 (`MP_TranslateFTEtoQCCodes`, FTE->QC) и :218 (`MP_TranslateQCtoFTECodes`,
+QC->FTE). Внутренний домен ezq — keys.h:28-213 (K_*, K_MOUSE1=200, K_MWHEELUP=244);
+QC/CSQC-контракт — DP-нумерация (csdefs.qc:1377-1449).
+Модуль получает/отдаёт только QC-коды; неизвестные ключи уходят «нативными»
+(отрицательное значение собственного keynum) — как FTE-дефолт, round-trip сохраняется.
+=================
+*/
+qbool CSQC_Client_NotMenu (void)
+{
+	// Вариант (b): любое слоёное меню скрывает игру (FTE kdm_menu|kdm_cwindows);
+	// консоль/чат/стартовое демо остаются notmenu=1 (FTE не исключает kdm_console).
+	return !(key_dest == key_menu || key_dest == key_hudeditor
+		|| key_dest == key_demo_controls || key_dest == key_startupdemo_menu);
+}
+
+int CSQC_Client_KeynumToQC (int keynum)
+{
+	switch (keynum)
+	{
+	case K_TAB:			return 9;
+	case K_ENTER:		return 13;
+	case K_ESCAPE:		return 27;
+	case K_SPACE:		return 32;
+	case K_BACKSPACE:	return 127;
+
+	case K_UPARROW:		return 128;
+	case K_DOWNARROW:	return 129;
+	case K_LEFTARROW:	return 130;
+	case K_RIGHTARROW:	return 131;
+
+	case K_LALT:		return 132;
+	case K_LCTRL:		return 133;
+	case K_LSHIFT:		return 134;
+
+	case K_F1:			return 135;
+	case K_F2:			return 136;
+	case K_F3:			return 137;
+	case K_F4:			return 138;
+	case K_F5:			return 139;
+	case K_F6:			return 140;
+	case K_F7:			return 141;
+	case K_F8:			return 142;
+	case K_F9:			return 143;
+	case K_F10:			return 144;
+	case K_F11:			return 145;
+	case K_F12:			return 146;
+
+	case K_INS:			return 147;
+	case K_DEL:			return 148;
+	case K_PGDN:		return 149;
+	case K_PGUP:		return 150;
+	case K_HOME:		return 151;
+	case K_END:			return 152;
+	case K_PAUSE:		return 153;
+
+	case KP_NUMLOCK:	return 154;
+	case K_CAPSLOCK:	return 155;
+	case K_SCRLCK:		return 156;
+
+	case KP_INS:		return 157;
+	case KP_END:		return 158;
+	case KP_DOWNARROW:	return 159;
+	case KP_PGDN:		return 160;
+	case KP_LEFTARROW:	return 161;
+	case KP_5:			return 162;
+	case KP_RIGHTARROW:	return 163;
+	case KP_HOME:		return 164;
+	case KP_UPARROW:	return 165;
+	case KP_PGUP:		return 166;
+	case KP_DEL:		return 167;
+	case KP_SLASH:		return 168;
+	case KP_STAR:		return 169;
+	case KP_MINUS:		return 170;
+	case KP_PLUS:		return 171;
+	case KP_ENTER:		return 172;
+
+	case K_PRINTSCR:	return 174;
+
+	// mouse: DP интерливит колёса между MOUSE3 и MOUSE4 (pr_clcmd.c:74-83).
+	case K_MOUSE1:		return 512;
+	case K_MOUSE2:		return 513;
+	case K_MOUSE3:		return 514;
+	case K_MWHEELUP:	return 515;
+	case K_MWHEELDOWN:	return 516;
+	case K_MOUSE4:		return 517;
+	case K_MOUSE5:		return 518;
+	case K_MOUSE6:		return 519;
+	case K_MOUSE7:		return 520;
+	case K_MOUSE8:		return 521;
+
+	case K_JOY1:		return 768;
+	case K_JOY2:		return 769;
+	case K_JOY3:		return 770;
+	case K_JOY4:		return 771;
+
+	// FTE K_AUX1..16 -> 800..815 (замечание: csdefs.qc даёт 784..799 —
+	// известное расхождение констант модуля, вне Э5; см. ADR 0032).
+	case K_AUX1:		return 800;
+	case K_AUX2:		return 801;
+	case K_AUX3:		return 802;
+	case K_AUX4:		return 803;
+	case K_AUX5:		return 804;
+	case K_AUX6:		return 805;
+	case K_AUX7:		return 806;
+	case K_AUX8:		return 807;
+	case K_AUX9:		return 808;
+	case K_AUX10:		return 809;
+	case K_AUX11:		return 810;
+	case K_AUX12:		return 811;
+	case K_AUX13:		return 812;
+	case K_AUX14:		return 813;
+	case K_AUX15:		return 814;
+	case K_AUX16:		return 815;
+
+	default:
+		if (keynum == -1)			// модуль передал «нет клавиши»
+			return keynum;
+		if (keynum < 0)				// уже нативный отрицательный код
+			return -keynum;
+		if (keynum >= 0 && keynum < 128)	// printable/control ascii — identity
+			return keynum;
+		return -keynum;			// нет QC-эквивалента — нативный код
+	}
+}
+
+int CSQC_Client_QCToKeynum (int code)
+{
+	switch (code)
+	{
+	case 9:			return K_TAB;
+	case 13:		return K_ENTER;
+	case 27:		return K_ESCAPE;
+	case 32:		return K_SPACE;
+	case 127:		return K_BACKSPACE;
+
+	case 128:		return K_UPARROW;
+	case 129:		return K_DOWNARROW;
+	case 130:		return K_LEFTARROW;
+	case 131:		return K_RIGHTARROW;
+
+	case 132:		return K_LALT;
+	case 133:		return K_LCTRL;
+	case 134:		return K_LSHIFT;
+
+	case 135:		return K_F1;
+	case 136:		return K_F2;
+	case 137:		return K_F3;
+	case 138:		return K_F4;
+	case 139:		return K_F5;
+	case 140:		return K_F6;
+	case 141:		return K_F7;
+	case 142:		return K_F8;
+	case 143:		return K_F9;
+	case 144:		return K_F10;
+	case 145:		return K_F11;
+	case 146:		return K_F12;
+
+	case 147:		return K_INS;
+	case 148:		return K_DEL;
+	case 149:		return K_PGDN;
+	case 150:		return K_PGUP;
+	case 151:		return K_HOME;
+	case 152:		return K_END;
+	case 153:		return K_PAUSE;
+
+	case 154:		return KP_NUMLOCK;
+	case 155:		return K_CAPSLOCK;
+	case 156:		return K_SCRLCK;
+
+	case 157:		return KP_INS;
+	case 158:		return KP_END;
+	case 159:		return KP_DOWNARROW;
+	case 160:		return KP_PGDN;
+	case 161:		return KP_LEFTARROW;
+	case 162:		return KP_5;
+	case 163:		return KP_RIGHTARROW;
+	case 164:		return KP_HOME;
+	case 165:		return KP_UPARROW;
+	case 166:		return KP_PGUP;
+	case 167:		return KP_DEL;
+	case 168:		return KP_SLASH;
+	case 169:		return KP_STAR;
+	case 170:		return KP_MINUS;
+	case 171:		return KP_PLUS;
+	case 172:		return KP_ENTER;
+
+	case 174:		return K_PRINTSCR;
+
+	case 512:		return K_MOUSE1;
+	case 513:		return K_MOUSE2;
+	case 514:		return K_MOUSE3;
+	case 515:		return K_MWHEELUP;
+	case 516:		return K_MWHEELDOWN;
+	case 517:		return K_MOUSE4;
+	case 518:		return K_MOUSE5;
+	case 519:		return K_MOUSE6;
+	case 520:		return K_MOUSE7;
+	case 521:		return K_MOUSE8;
+
+	case 768:		return K_JOY1;
+	case 769:		return K_JOY2;
+	case 770:		return K_JOY3;
+	case 771:		return K_JOY4;
+
+	case 800:		return K_AUX1;
+	case 801:		return K_AUX2;
+	case 802:		return K_AUX3;
+	case 803:		return K_AUX4;
+	case 804:		return K_AUX5;
+	case 805:		return K_AUX6;
+	case 806:		return K_AUX7;
+	case 807:		return K_AUX8;
+	case 808:		return K_AUX9;
+	case 809:		return K_AUX10;
+	case 810:		return K_AUX11;
+	case 811:		return K_AUX12;
+	case 812:		return K_AUX13;
+	case 813:		return K_AUX14;
+	case 814:		return K_AUX15;
+	case 815:		return K_AUX16;
+
+	default:
+		if (code == -1)				// модуль передал «нет клавиши»
+			return code;
+		if (code < 0)				// нативный код — обратно
+			return -code;
+		if (code >= 0 && code < 128)	// printable/control ascii — identity
+			return code;
+		return -code;				// нет ezq-эквивалента
+	}
+}
+
+/*
+=================
 CSQC_Client_Update
 
 Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
-после входа в мир; далее CSQC_UpdateView(vid.width, vid.height, menushown).
+после входа в мир; далее CSQC_UpdateView(vid.width, vid.height, notmenu).
 Если модуль ждёт скачивания csprogs — при появлении валидного файла грузит
 его и продолжает как при входе в мир.
 =================
@@ -3274,7 +3538,7 @@ void CSQC_Client_Update (void)
 		s_listener_on = false;
 		vm->globals[OFS_PARM0] = vid.width;
 		vm->globals[OFS_PARM1] = vid.height;
-		vm->globals[OFS_PARM2] = (key_dest == key_menu) ? 1 : 0;
+		vm->globals[OFS_PARM2] = CSQC_Client_NotMenu () ? 1 : 0;	// B1 (FTE pr_csqc.c:8889)
 		CSQC_Client_Exec (s_csqc.func_update);
 	}
 
@@ -3807,6 +4071,10 @@ int CSQC_Client_InputEvent (int evtype, float a, float b, float c)
 
 	if (!CSQC_Client_HasInputEvent ())
 		return 0;
+	// B6: модуль работает в QC/DP-домене клавиш (csdefs.qc:1377-1449); переводим
+	// внутренний keynum ezq -> QC для key-событий (мышь/дельты — без трансляции).
+	if (evtype == IE_KEYDOWN || evtype == IE_KEYUP)
+		a = CSQC_Client_KeynumToQC ((int)a);
 	// Параметры модульной функции (4 float) — как CSQC_UpdateView.
 	vm->globals[OFS_PARM0] = evtype;
 	vm->globals[OFS_PARM1] = a;

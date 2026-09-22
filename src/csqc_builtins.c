@@ -1463,27 +1463,26 @@ static void csqc_readentitynum (void)
 }
 
 /*
-Слой D шаг 3 — ввод/интерфейс builtins. Отклонение от FTE: #340/#341 работают во
-внутреннем keynum-домене ezquake (K_*), без MP_Translate QC<->внутренние коды —
-модуль делает round-trip по именам клавиш, домен консистентен.
+Слой D шаг 3 — ввод/интерфейс builtins. B6 (FTE-parity): #340/#341 работают в
+QC/DP-домене клавиш (csdefs.qc:1377-1449) — вход/выход транслируется через
+CSQC_Client_QCToKeynum/CSQC_Client_KeynumToQC (эталон — fteqw pr_clcmd.c:14/:218).
 
 string(float keynum) keynumtostring = #340
-Возвращает имя клавиши для внутреннего keynum-домена ezquake (как bind/unbind).
-Key_KeynumToString возвращает статический буфер или имя из таблицы — CSQCVM_SetRetStr
-глубоко копирует в temp-ring инстанса.
+QC-код -> имя клавиши (Key_KeynumToString для внутреннего keynum ezq).
+CSQCVM_SetRetStr глубоко копирует в temp-ring инстанса.
 */
 static void csqc_keynumtostring (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	CSQCVM_SetRetStr (Key_KeynumToString ((int)vm->globals[OFS_PARM0]));
+	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0])));
 }
 
 /*
 float(string keyname) stringtokeynum = #341
-Возвращает keynum по имени клавиши; пустая строка/нет такого имени -> -1
-(Key_StringToKeynum и так возвращает -1).
+Имя клавиши -> QC-код; пустая строка/нет такого имени -> -1
+(Key_StringToKeynum даёт -1, KeynumToQC сохраняет -1).
 */
 static void csqc_stringtokeynum (void)
 {
@@ -1491,7 +1490,7 @@ static void csqc_stringtokeynum (void)
 	char *name = CSQCVM_Str (OFS_PARM0);
 	if (!vm)
 		return;
-	vm->globals[OFS_RETURN] = name ? Key_StringToKeynum (name) : -1;
+	vm->globals[OFS_RETURN] = name ? CSQC_Client_KeynumToQC (Key_StringToKeynum (name)) : -1;
 }
 
 /*
@@ -4468,11 +4467,11 @@ setmousetarget 989, getmousetarget 1007). ezq: keybindings[]/Key_* (keys.h);
 bindmaps/модификаторов/перечисления режимов нет — no-op/аппроксимации (parity).
 */
 
-/* string(float keynum) getkeybind = #342 — binding команда или "" */
+/* string(float keynum) getkeybind = #342 — binding команда или "" (B6: вход — QC-код) */
 static void csqc_getkeybind (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	int keynum = (int)vm->globals[OFS_PARM0];
+	int keynum = CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0]);
 	char *b;
 	if (!vm)
 		return;
@@ -4483,11 +4482,11 @@ static void csqc_getkeybind (void)
 	CSQCVM_SetRetStr (b ? b : "");
 }
 
-/* void(float keynum, string binding, optional float bindmap) setkeybind = #630 */
+/* void(float keynum, string binding, optional float bindmap) setkeybind = #630 (B6: вход — QC-код) */
 static void csqc_setkeybind (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	int keynum = (int)vm->globals[OFS_PARM0];
+	int keynum = CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0]);
 	char *binding = CSQCVM_Str (OFS_PARM1);
 	if (!vm)
 		return;
@@ -4495,29 +4494,30 @@ static void csqc_setkeybind (void)
 		Key_SetBinding (keynum, binding ? binding : "");
 }
 
-/* #520 keynumtostring_omgwtf / #609 keynumtostring_menu — как #340 (наш домен) */
+/* #520 keynumtostring_omgwtf / #609 keynumtostring_menu — как #340 (QC-домен, B6) */
 static void csqc_keynumtostring_menu (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	CSQCVM_SetRetStr (Key_KeynumToString ((int)vm->globals[OFS_PARM0]));
+	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0])));
 }
 
-/* float(string key) stringtokeynum_menu = #614 — как #341 */
+/* float(string key) stringtokeynum_menu = #614 — как #341 (QC-домен, B6) */
 static void csqc_stringtokeynum_menu (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *name = CSQCVM_Str (OFS_PARM0);
 	if (!vm)
 		return;
-	vm->globals[OFS_RETURN] = (name && name[0]) ? Key_StringToKeynum (name) : -1;
+	vm->globals[OFS_RETURN] = (name && name[0]) ? CSQC_Client_KeynumToQC (Key_StringToKeynum (name)) : -1;
 }
 
 /*
 string(string command, optional float bindmap) findkeysforcommand = #521
 string(string command, optional float bindmap) findkeysforcommand_dp = #610
-Скан keybindings[]; возврат списка имён ключей (наш формат; FTE — QCCode-числа).
+B9 (FTE-parity): скан keybindings[]; возврат QC-кодов в формате FTE
+` 'code' 'code'…` (fteqw pr_clcmd.c:388-408: `va(" '%i'", …)`).
 */
 static void csqc_findkeysforcommand (void)
 {
@@ -4530,13 +4530,10 @@ static void csqc_findkeysforcommand (void)
 	buf[0] = 0;
 	if (cmd && cmd[0])
 	{
-		for (i = 0; i < UNKNOWN + 256 && o < (int)sizeof (buf) - 2; i++)
+		for (i = 0; i < UNKNOWN + 256 && o < (int)sizeof (buf) - 8; i++)
 		{
 			if (keybindings[i] && !strcmp (keybindings[i], cmd))
-			{
-				const char *nm = Key_KeynumToString (i);
-				o += snprintf (buf + o, sizeof (buf) - o, "%s%s", (o ? " " : ""), nm ? nm : "?");
-			}
+				o += snprintf (buf + o, sizeof (buf) - o, " '%d'", CSQC_Client_KeynumToQC (i));
 		}
 	}
 	CSQCVM_SetRetStr (buf);
