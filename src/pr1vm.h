@@ -16,6 +16,7 @@ instance is added together with the loader/wiring (S3/S5).
 #define PR1VM_H
 
 #include "progs.h"	// dprograms_t/dstatement_t/..., edict_t, globalvars_t
+#include <setjmp.h>	// abort-stack (client VM unwind, A1)
 
 #define PR1VM_MAX_STACK	32
 #define PR1VM_LOCALSTACK	2048
@@ -83,6 +84,19 @@ struct pr1vm_s
 	void (*host_error)(pr1vm_t *vm, const char *msg);
 	void (*host_print)(pr1vm_t *vm, const char *msg);
 	void *host_udata;
+
+	// Abort-stack (ADR 0019, A1/A2): when abortbuf_valid is set (client VM),
+	// PR_RunError unwinds here instead of continuing the faulting statement.
+	// abortbuf points at the *outermost* active frame's stack-local jmp_buf
+	// (nested calls on the same VM reuse it, so an error unwinds the whole VM);
+	// NULL when no frame is active. context_prev_* remember the classic
+	// pr_globals/g_active that were active before attach, to restore on abnormal
+	// unwind / UnLoad while attached.
+	jmp_buf			*abortbuf;
+	qbool			abortbuf_valid;
+	qbool			context_saved;
+	float			*context_prev_globals;
+	pr1vm_t			*context_prev_active;
 };
 
 // Active instance (the one PR1 is currently executing inside; NULL outside a call).
@@ -97,6 +111,10 @@ void PR1VM_BindServer(pr1vm_t *vm);
 // S6: detach the instance from the module — clear lump mirrors and exec state,
 // keeping host callbacks (re)set by BindServer/client.
 void PR1VM_UnLoad(pr1vm_t *vm);
+
+// ADR 0019 (A2): if this instance is the active one, put the classic
+// pr_globals/g_active back to the context saved on attach. No-op otherwise.
+void PR1VM_RestoreContext(pr1vm_t *vm);
 
 // Load: byte-swap header+lumps and fill the instance mirrors (without
 // version/CRC validation — done by the server wrapper).

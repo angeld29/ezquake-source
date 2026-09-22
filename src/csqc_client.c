@@ -739,11 +739,16 @@ static void CSQC_Client_HostPrint (pr1vm_t *vm, const char *msg)
 
 static void CSQC_Client_HostError (pr1vm_t *vm, const char *msg)
 {
-	(void)vm;
 	Con_Printf ("CSQC (PR1VM) program error: %s\n", msg);
 	s_csqc.errored = true;
-	// Дальше спайк живёт: кадры отключаются (errored), перезагрузка при
-	// следующем ConnectCheck (новая карта/коннект).
+	// A1 (abort-stack): do not return into the interpreter — unwind back to the
+	// outermost active setjmp in PR1VM_ExecuteProgram (the client VM always has
+	// abortbuf_valid set). Frames stay disabled (errored); reload on the next
+	// ConnectCheck.
+	if (vm && vm->abortbuf_valid && vm->abortbuf)
+		longjmp (*vm->abortbuf, 1);
+	// No abort-buffer: fall back to the previous behavior (return; the caller
+	// PR_RunError then takes the fatal path).
 }
 
 /*
@@ -2492,6 +2497,7 @@ static qbool CSQC_Client_Load (const char *path)
 	vm = &s_csqc.vm;
 	vm->host_error = CSQC_Client_HostError;
 	vm->host_print = CSQC_Client_HostPrint;
+	vm->abortbuf_valid = true;	// A1: client VM unwinds via the abort-stack
 
 	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{

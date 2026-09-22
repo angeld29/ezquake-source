@@ -45,12 +45,31 @@ void PR1VM_Reset(pr1vm_t *vm)
 	memset(vm, 0, sizeof(*vm));
 }
 
+// ADR 0019 (A2): restore the classic pr_globals/g_active saved when this instance
+// was attached. Called on abnormal unwind (fatal client error → UnLoad) so the
+// next server frame never writes through freed client memory. No-op when the
+// instance is not the active one.
+void PR1VM_RestoreContext (pr1vm_t *vm)
+{
+	if (!vm || g_active != vm || !vm->context_saved)
+		return;
+	pr_globals = vm->context_prev_globals;
+	g_active = vm->context_prev_active;
+	vm->context_saved = false;
+	vm->context_prev_globals = NULL;
+	vm->context_prev_active = NULL;
+}
+
 // S6: full reset of mirrors/exec state; host callbacks are kept.
 void PR1VM_UnLoad (pr1vm_t *vm)
 {
 	void (*host_error)(pr1vm_t *, const char *) = vm->host_error;
 	void (*host_print)(pr1vm_t *, const char *) = vm->host_print;
 	void *host_udata = vm->host_udata;
+
+	// A2: if still attached (fatal client error during execution), restore the
+	// classic context before the mirrors are freed below.
+	PR1VM_RestoreContext (vm);
 
 	// Builtin tables are Q_malloc'd (server PR_InitBuiltins / client
 	// registration) — free them; the next load recreates them.
@@ -372,8 +391,12 @@ void PR_RunError (char *error, ...)
 
 	if (vm && vm->host_error)
 	{
+		// A1: the callback must not return into the interpreter. The client
+		// host_error longjmps to the abort-stack in PR1VM_ExecuteProgram; the
+		// server one calls SV_Error (never returns). If it returns anyway (no
+		// abort-buffer), fall through to the fatal path below so the faulting
+		// statement is never executed again.
 		vm->host_error (vm, string);
-		return;
 	}
 
 	// fallback (vm==NULL or host_error not set): previous behavior
@@ -457,7 +480,7 @@ int PR1VM_LeaveFunction (pr1vm_t *vm)
 	int i, c;
 
 	if (vm->depth <= 0)
-		SV_Error ("prog stack underflow");
+		PR_RunError ("prog stack underflow");
 
 	// restore locals from the stack
 	c = vm->xfunction->locals;
@@ -484,44 +507,80 @@ The interpretation main loop (per-instance)
 void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 {
 	eval_t *a = NULL, *b = NULL, *c = NULL;
-	pr1vm_t *saved_active;
-	float *saved_prglobals;	// ADR 0019: "classic" mirror context before attach
+	pr1vm_t *volatile saved_active;
+	float *volatile saved_prglobals;	// ADR 0019: "classic" mirror context before attach
 	int s;
 	dstatement_t *st = NULL;
 	dfunction_t *f, *newf;
 	int runaway;
 	int i;
 	edict_t *ed;
-	int exitdepth;
+	volatile int exitdepth;		// read after longjmp (A1)
+	volatile int saved_localstack_used;
+	volatile qbool owns_abort;	// this frame owns the abort target (A1)
+	volatile qbool saved_context;	// this frame saved the classic context (A2)
+	jmp_buf frame_abort;		// stack-local unwind target for this frame
 	eval_t *ptr;
-
-	saved_active = g_active;
-	g_active = vm;
-
-	if (!fnum || fnum >= vm->progs->numfunctions)
-	{
-		if (vm->global_struct && vm->global_struct->self && vm->edicts)
-			ED_Print (PR1VM_ProgToEdict(vm, vm->global_struct->self));
-		SV_Error ("PR_ExecuteProgram: NULL function");
-	}
 
 	// ADR 0019 (Step 0): attach the executing VM — for the duration of the loop
 	// the classic mirrors (pr_globals), which builtins read/write through the
 	// G_* macros, point at this VM's data. For the server instance this is
 	// identity (its mirrors are the default). Restored at the end of the
-	// function (incl. after a returning client host_error). Nesting
-	// (listen/PR_ExecuteProgram from client context) is safe: values are saved
-	// in this frame's locals and restored on exit.
+	// function (incl. after an abort-stack unwind). Nesting (listen/
+	// PR_ExecuteProgram from client context) is safe: values are saved in this
+	// frame's locals and restored on exit; the *outermost* frame keeps a durable
+	// copy in context_prev_* for UnLoad/RestoreContext (A2).
+	saved_active = g_active;
 	saved_prglobals = pr_globals;
+	// Only the abort-capable (client) VM keeps the durable context copy used by
+	// RestoreContext; the server/PR2 path stays exactly as before.
+	saved_context = (vm->abortbuf_valid && !vm->context_saved);
+	if (saved_context)
+	{
+		vm->context_saved = true;
+		vm->context_prev_active = saved_active;
+		vm->context_prev_globals = saved_prglobals;
+	}
+	g_active = vm;
 	pr_globals = vm->globals;
-
-	f = &vm->functions[fnum];
 
 	runaway = 100000;
 	vm->trace = false;
 
 	// make a stack frame
 	exitdepth = vm->depth;
+	saved_localstack_used = vm->localstack_used;
+
+	// A1 (abort-stack): the *outermost* client-VM frame owns the unwind target.
+	// Nested calls (e.g. #231 calltimeofday → PR1VM_ExecuteProgram on the same
+	// VM) do not re-arm it, so a PR_RunError anywhere unwinds the whole VM here
+	// instead of returning into the interpreter. Server/PR2 keep abortbuf_valid
+	// false and the previous fatal path (SV_Error).
+	owns_abort = (vm->abortbuf_valid && vm->abortbuf == NULL);
+	if (owns_abort)
+	{
+		vm->abortbuf = &frame_abort;
+		if (setjmp (frame_abort) != 0)
+		{
+			// Unwind to this (outermost) frame's entry: drop the VM stack and
+			// restore the classic context; the caller disables the module.
+			vm->abortbuf = NULL;
+			vm->depth = exitdepth;
+			vm->localstack_used = saved_localstack_used;
+			vm->xstatement = -1;
+			PR1VM_RestoreContext (vm);
+			return;
+		}
+	}
+
+	if (!fnum || fnum >= vm->progs->numfunctions)
+	{
+		if (vm->global_struct && vm->global_struct->self && vm->edicts)
+			ED_Print (PR1VM_ProgToEdict(vm, vm->global_struct->self));
+		PR_RunError ("PR_ExecuteProgram: NULL function");
+	}
+
+	f = &vm->functions[fnum];
 
 	s = PR1VM_EnterFunction (vm, f);
 
@@ -795,6 +854,14 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 				// context, then the active instance.
 				pr_globals = saved_prglobals;
 				g_active = saved_active;
+				if (saved_context)
+				{
+					vm->context_saved = false;
+					vm->context_prev_globals = NULL;
+					vm->context_prev_active = NULL;
+				}
+				if (owns_abort)
+					vm->abortbuf = NULL;
 				return;		// all done
 			}
 			break;
