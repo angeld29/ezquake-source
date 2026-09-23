@@ -434,6 +434,138 @@ static void csqc_strstrofs (void)
 }
 
 /*
+string(float ccase, float redalpha, float redchars, string str, ...) strconv = #224
+(FTE_STRINGS) Порт FTE PF_strconv + chrconv_number/chrconv_punct/chrchar_alpha
+(pr_bgcmd.c:4427-4556): bulk-конверсия регистра/цвета. ccase 0 same/1 lower/2 upper;
+redalpha 0 same/1 white/2 red/5 alternate/6 alternate-alternate; redchars — аналогично
+для цифр. Аргумент-строка — vararg с позиции 3 (как FTE PF_VarString(prinst,3,...)).
+*/
+static int csqc_chrconv_number (int i, int base, int conv)
+{
+	i -= base;
+	switch (conv)
+	{
+	default:
+	case 5:
+	case 6:
+	case 0:
+		break;
+	case 1:
+		base = '0';
+		break;
+	case 2:
+		base = '0' + 128;
+		break;
+	case 3:
+		base = '0' - 30;
+		break;
+	case 4:
+		base = '0' + 128 - 30;
+		break;
+	}
+	return i + base;
+}
+
+static int csqc_chrconv_punct (int i, int base, int conv)
+{
+	i -= base;
+	switch (conv)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		base = 0;
+		break;
+	case 2:
+		base = 128;
+		break;
+	}
+	return i + base;
+}
+
+static int csqc_chrchar_alpha (int i, int basec, int baset, int convc, int convt, int charnum)
+{
+	i -= baset + basec;
+	switch (convt)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		baset = 0;
+		break;
+	case 2:
+		baset = 128;
+		break;
+	case 5:
+	case 6:
+		baset = 128 * ((charnum & 1) == (convt - 5));
+		break;
+	}
+	switch (convc)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		basec = 'a';
+		break;
+	case 2:
+		basec = 'A';
+		break;
+	}
+	return i + basec + baset;
+}
+
+static void csqc_strconv (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	int ccase, redalpha, rednum, len, i;
+	const unsigned char *string;
+	unsigned char resbuf[2048];
+	unsigned char *result = resbuf;
+
+	if (!vm)
+		return;
+	ccase = (int)vm->globals[OFS_PARM0];
+	redalpha = (int)vm->globals[OFS_PARM1];
+	rednum = (int)vm->globals[OFS_PARM2];
+	string = (const unsigned char *)CSQCVM_VarString (3);
+	len = strlen ((const char *)string);
+	if (len >= (int)sizeof (resbuf))
+		len = sizeof (resbuf) - 1;
+
+	for (i = 0; i < len; i++, string++, result++)
+	{
+		if (*string >= '0' && *string <= '9')
+			*result = csqc_chrconv_number (*string, '0', rednum);
+		else if (*string >= '0' + 128 && *string <= '9' + 128)
+			*result = csqc_chrconv_number (*string, '0' + 128, rednum);
+		else if (*string >= '0' + 128 - 30 && *string <= '9' + 128 - 30)
+			*result = csqc_chrconv_number (*string, '0' + 128 - 30, rednum);
+		else if (*string >= '0' - 30 && *string <= '9' - 30)
+			*result = csqc_chrconv_number (*string, '0' - 30, rednum);
+		else if (*string >= 'a' && *string <= 'z')
+			*result = csqc_chrchar_alpha (*string, 'a', 0, ccase, redalpha, i);
+		else if (*string >= 'A' && *string <= 'Z')
+			*result = csqc_chrchar_alpha (*string, 'A', 0, ccase, redalpha, i);
+		else if (*string >= 'a' + 128 && *string <= 'z' + 128)
+			*result = csqc_chrchar_alpha (*string, 'a', 128, ccase, redalpha, i);
+		else if (*string >= 'A' + 128 && *string <= 'Z' + 128)
+			*result = csqc_chrchar_alpha (*string, 'A', 128, ccase, redalpha, i);
+		else if ((*string & 127) < 16 || !redalpha)
+			*result = *string;
+		else if (*string < 128)
+			*result = csqc_chrconv_punct (*string, 0, redalpha);
+		else
+			*result = csqc_chrconv_punct (*string, 128, redalpha);
+	}
+	*result = 0;
+	CSQCVM_SetRetStr ((char *)resbuf);
+}
+
+/*
 float(float property, ...) getproperty = #309
 
 Полный read-паритет FTE (PF_R_GetViewFlag, pr_csqc.c): чтение текущего состояния
@@ -1045,18 +1177,40 @@ static void csqc_drawrotpic_dp (void)
 
 /*
 string(string fmt, ...) sprintf = #627
-Мини-форматтер (QC): %d/%i (int), %s (string), %f/%g (+ %.Nprec), %v (vector),
-%%. Аргументы читаются по порядку из парам-слотов (начиная с OFS_PARM1);
-число слотов не ограничиваем длиной формата (vararg-call счётчик движка
-ненадёжен для vector-аргументов).
+Мини-форматтер (QC) с width/flags/precision — подмножество FTE PF_sprintf_internal
+(pr_bgcmd.c:7295). Разбор %[flags][width][.precision]conv; flags - 0 + ' ' #;
+width/precision — только литеральные (без '*'/'%$' — отклонение от FTE, задокументировано).
+Конверсии d i u x X c s f g e + v ('x y z'); %o/%p/%S/%E/%F/%G/%V/length не поддержаны.
+Неизвестная конверсия — директива verbatim. Аргументы — из парам-слотов
+(OFS_PARM0 + 3*n), границы vm->argc; строки — CSQC_Client_GetString с валидацией offset.
 */
+static char *csqc_sprintf_put_int (char *f, int v)
+{
+	char tmp[12];
+	int n = 0;
+
+	if (v <= 0)
+	{
+		*f++ = '0';
+		return f;
+	}
+	while (v > 0 && n < (int)sizeof (tmp))
+	{
+		tmp[n++] = (char)('0' + v % 10);
+		v /= 10;
+	}
+	while (n > 0)
+		*f++ = tmp[--n];
+	return f;
+}
+
 static void csqc_sprintf (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char buf[2048];
 	char tmp[512];
 	const char *fmt, *p;
-	int pn = 1;		// номер аргумента (после fmt); base = OFS_PARM0 + pn*3
+	int pn = 1;		// номер аргумента после fmt (base = OFS_PARM0 + pn*3)
 	size_t o = 0;
 
 	if (!vm)
@@ -1067,103 +1221,165 @@ static void csqc_sprintf (void)
 
 	for (p = fmt; *p && o < sizeof (buf) - 1; p++)
 	{
-		char conv;
-		int prec = -1;
-		double dv;
+		char conv, formatbuf[32], *f;
+		const char *dir;
+		int flags = 0, width = -1, prec = -1, haswidth = 0;
 
 		if (*p != '%')
 		{
 			buf[o++] = *p;
 			continue;
 		}
+		dir = p;
 		p++;
 		if (*p == '%')
 		{
 			buf[o++] = '%';
 			continue;
 		}
+
+		// flags: # alternate, 0 zeropad, - left, ' ' space, + sign
+		for (;; p++)
+		{
+			if (*p == '#' || *p == '0' || *p == '-' || *p == ' ' || *p == '+')
+				flags |= 1 << (*p == '#' ? 0 : *p == '0' ? 1 : *p == '-' ? 2 : *p == ' ' ? 3 : 4);
+			else
+				break;
+		}
+		// width — только литеральное число (без '*')
+		if (*p >= '1' && *p <= '9')
+		{
+			int nd = 0;
+			width = 0;
+			haswidth = 1;
+			while (*p >= '0' && *p <= '9' && nd < 9)
+				width = width * 10 + (*p++ - '0'), nd++;
+			while (*p >= '0' && *p <= '9')
+				p++;
+			if (width > 2047)
+				width = 2047;
+		}
+		// precision — только литеральное число
 		if (*p == '.')
 		{
-			prec = 0;
+			int nd = 0;
 			p++;
+			prec = 0;
+			while (*p >= '0' && *p <= '9' && nd < 9)
+				prec = prec * 10 + (*p++ - '0'), nd++;
 			while (*p >= '0' && *p <= '9')
-				prec = prec * 10 + (*p++ - '0');
+				p++;
+			if (prec > 2047)
+				prec = 2047;
 		}
 		conv = *p;
 		if (!conv)
 			break;
 
-		switch (conv)
+		// собрать C-формат: %[#][0][-][ ][+][width][.prec]
+		f = formatbuf;
+		*f++ = '%';
+		if (conv != 's' && conv != 'c' && (flags & 1))
+			*f++ = '#';
+		if (flags & 2) *f++ = '0';
+		if (flags & 4) *f++ = '-';
+		if (flags & 8) *f++ = ' ';
+		if (flags & 16) *f++ = '+';
+		if (haswidth)
+			f = csqc_sprintf_put_int (f, width);
+		if (prec >= 0)
 		{
-		case 'd':
-		case 'i':
-			if (pn < 32)
-				snprintf (tmp, sizeof (tmp), "%d", (int)vm->globals[OFS_PARM0 + pn * 3]);
-			else
-				tmp[0] = 0;
-			pn++;
-			break;
-		case 'f':
-			dv = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
-			pn++;
-			if (prec >= 0)
-				snprintf (tmp, sizeof (tmp), "%.*f", prec, dv);
-			else
-				snprintf (tmp, sizeof (tmp), "%f", dv);
-			break;
-		case 'g':
-			dv = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
-			pn++;
-			if (prec >= 0)
-				snprintf (tmp, sizeof (tmp), "%.*g", prec, dv);
-			else
-				snprintf (tmp, sizeof (tmp), "%g", dv);
-			break;
-		case 's':
-			{
-				int off = (pn < 32) ? *(int *)&vm->globals[OFS_PARM0 + pn * 3] : 0;
-				char *s = NULL;
-				static int warned = 0;
-				pn++;
-				if (pn - 1 < 32)
-				{
-					s = CSQC_Client_GetString (vm, off);
-					// Валидация: неотрицательный offset обязан лежать в строковой
-					// области модуля; отрицательные — во временных таблицах.
-					if (s && off >= 0 && (unsigned)off >= (unsigned)vm->progs->numstrings)
-						s = NULL;
-					if (!s && !warned)
-					{
-						int k;
-						warned = 1;
-						Con_Printf ("csqc_sprintf: bad string arg (fmt=\"%s\" arg=%d off=%d argc=%d)\n",
-							fmt, pn - 1, off, vm->argc);
-						for (k = 0; k <= 15; k++)
-							Con_Printf ("  w%d int=%d float=%g\n", k,
-								*(int *)&vm->globals[OFS_PARM0 + k],
-								vm->globals[OFS_PARM0 + k]);
-					}
-				}
-				if (s)
-					snprintf (tmp, sizeof (tmp), "%s", s);
-				else
-					tmp[0] = 0;
-			}
-			break;
-		case 'v':
-			{
-				double x = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3] : 0;
-				double y = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3 + 1] : 0;
-				double z = (pn < 32) ? (double)vm->globals[OFS_PARM0 + pn * 3 + 2] : 0;
-				pn++;
-				snprintf (tmp, sizeof (tmp), "%g %g %g", x, y, z);
-			}
-			break;
-		default:
-			tmp[0] = conv;
-			tmp[1] = 0;
-			break;
+			*f++ = '.';
+			f = csqc_sprintf_put_int (f, prec);
 		}
+
+		if (conv == 'v')
+		{
+			double x = 0, y = 0, z = 0;
+			char vfmt[192];
+			*f++ = 'g';
+			*f = 0;
+			if (pn < vm->argc)
+			{
+				x = (double)vm->globals[OFS_PARM0 + pn * 3];
+				y = (double)vm->globals[OFS_PARM0 + pn * 3 + 1];
+				z = (double)vm->globals[OFS_PARM0 + pn * 3 + 2];
+			}
+			pn++;
+			snprintf (vfmt, sizeof (vfmt), "%s %s %s", formatbuf, formatbuf, formatbuf);
+			snprintf (tmp, sizeof (tmp), vfmt, x, y, z);
+		}
+		else if (conv == 's')
+		{
+			const char *s = "";
+			*f++ = 's';
+			*f = 0;
+			if (pn < vm->argc)
+			{
+				int off = *(int *)&vm->globals[OFS_PARM0 + pn * 3];
+				char *gs = CSQC_Client_GetString (vm, off);
+				// Валидация: неотрицательный offset обязан лежать в строковой
+				// области модуля; отрицательные — во временных таблицах.
+				if (gs && off >= 0 && (unsigned)off >= (unsigned)vm->progs->numstrings)
+					gs = NULL;
+				if (gs)
+					s = gs;
+			}
+			pn++;
+			snprintf (tmp, sizeof (tmp), formatbuf, s);
+		}
+		else
+		{
+			int argok = (pn < vm->argc);
+			float av = argok ? vm->globals[OFS_PARM0 + pn * 3] : 0;
+
+			switch (conv)
+			{
+			case 'd':
+			case 'i':
+				*f++ = 'd';
+				*f = 0;
+				snprintf (tmp, sizeof (tmp), formatbuf, (int)av);
+				pn++;
+				break;
+			case 'u':
+				*f++ = 'u';
+				*f = 0;
+				snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)(int)av);
+				pn++;
+				break;
+			case 'x':
+			case 'X':
+				*f++ = conv;
+				*f = 0;
+				snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)(int)av);
+				pn++;
+				break;
+			case 'c':
+				*f++ = 'c';
+				*f = 0;
+				snprintf (tmp, sizeof (tmp), formatbuf, (int)av);
+				pn++;
+				break;
+			case 'f':
+			case 'e':
+			case 'g':
+				*f++ = conv;
+				*f = 0;
+				snprintf (tmp, sizeof (tmp), formatbuf, (double)av);
+				pn++;
+				break;
+			default:
+				// неизвестная конверсия — директива verbatim
+				{
+					const char *q;
+					for (q = dir; q <= p && o < sizeof (buf) - 1; q++)
+						buf[o++] = *q;
+				}
+				continue;
+			}
+		}
+
 		{
 			size_t l = strlen (tmp);
 			if (o + l >= sizeof (buf))
@@ -3090,16 +3306,56 @@ static void csqc_registercvar (void)
 
 /*
 float(string ext) checkextension = #99
-Клиентский список поддерживаемых расширений (подмножество реализованного).
+FTE-паритет: PF_checkextension (pr_csqc.c:4579) ищет имя в QSG_Extensions (pr_bgcmd.c:8227)
+и отдаёт extensioncheck() при наличии, иначе — все ли builtins расширения поддержаны.
+Здесь — статическая таблица-зеркало подмножества, реализованного в ezq (Q1: no-op не
+рекламируем; исключение Q5 — эффект-таблицы с заглушками te_teleport/te_lightningblood/
+te_bloodqw). Имена — точные написания FTE, включая ведущий '_' у _DP_TE_*. EXT_CSQC —
+спец-кейс (протокол, не builtins): 1 при активной CSQC-сессии (cls.fteprotocolextensions).
+Осознанно НЕ рекламируем (FTE рекламирует, ezq — no-op): FRIK_FILE, FTE_QC_INTCONV,
+_DP_TE_FLAMEJET/_DP_TE_PLASMABURN, DP_QC_STRINGBUFFERS (R6), DP_QC_FS_SEARCH(_PACKFILE),
+DP_QC_GETSURFACE, DP_QC_FINDCHAIN(FLOAT)/FINDFLAGS/FINDCHAINFLAGS, DP_QC_COPYENTITY,
+DP_QC_WHICHPACK, DP_QC_URI_ESCAPE, KRIMZON_SV_PARSECLIENTCOMMAND.
 */
 static void csqc_checkextension (void)
 {
 	static const char *supported[] = {
-		"FTE_CSQC",
-		"DP_REGISTERCVAR",
+		"DP_QC_SINCOSSQRTPOW",
 		"DP_QC_MINMAXBOUND",
 		"DP_QC_RANDOMVEC",
-		"DP_QC_SINCOSSQRTPOW",
+		"DP_REGISTERCVAR",
+		"DP_QC_CVAR_STRING",
+		"DP_QC_CVAR_DEFSTRING",
+		"DP_QC_CVAR_TYPE",
+		"DP_QC_EDICT_NUM",
+		"DP_QC_ETOS",
+		"DP_QC_FINDFLOAT",
+		"DP_QC_STRFTIME",
+		"DP_QC_STRREPLACE",
+		"DP_QC_TOKENIZEBYSEPARATOR",
+		"DP_QC_SPRINTF",
+		"DP_QC_STRING_CASE_FUNCTIONS",
+		"DP_QC_STRINGCOLORFUNCTIONS",
+		"DP_QC_CRC16",
+		"DP_QC_ASINACOSATANATAN2TAN",
+		"DP_QC_CHANGEPITCH",
+		"DP_QC_VECTORVECTORS",
+		"DP_QC_TRACEBOX",
+		"DP_QC_ENTITYDATA",
+		"EXT_BITSHIFT",
+		"DP_TE_BLOOD",
+		"_DP_TE_BLOODSHOWER",
+		"DP_TE_EXPLOSIONRGB",
+		"DP_TE_PARTICLECUBE",
+		"DP_TE_PARTICLERAIN",
+		"DP_TE_PARTICLESNOW",
+		"DP_TE_SPARK",
+		"DP_TE_SMALLFLASH",
+		"DP_TE_CUSTOMFLASH",
+		"_DP_TE_QUADEFFECTS1",
+		"FTE_STRINGS",
+		"DP_TE_STANDARDEFFECTBUILTINS",
+		"FTE_TE_STANDARDEFFECTBUILTINS",
 		NULL
 	};
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -3111,8 +3367,13 @@ static void csqc_checkextension (void)
 	vm->globals[OFS_RETURN] = 0;
 	if (!ext)
 		return;
+	if (!strcmp (ext, "EXT_CSQC"))		// FTE pr_bgcmd.c:8368 (check_pext_csqc)
+	{
+		vm->globals[OFS_RETURN] = (cls.fteprotocolextensions & FTE_PEXT_CSQC) ? 1 : 0;
+		return;
+	}
 	for (i = 0; supported[i]; i++)
-		if (!strcasecmp (supported[i], ext))
+		if (!strcmp (supported[i], ext))
 		{
 			vm->globals[OFS_RETURN] = 1;
 			return;
@@ -5613,7 +5874,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, 740, (builtin_t)csqc_light_nop_ret0); // #740 float() controller_query
 	// L2 заглушки: STRING (18) — тип-correct no-op.
 	PR1VM_RegisterBuiltin (vm, 112, (builtin_t)csqc_nop_str); // #112 string(float fnum) fgets (FRIK_FILE)
-	PR1VM_RegisterBuiltin (vm, 224, (builtin_t)csqc_nop_str); // #224 string(float ccase, float redalpha, float redchars, string str, ...) strconv (FTE_STRINGS)
+	PR1VM_RegisterBuiltin (vm, 224, (builtin_t)csqc_strconv); // #224 string(float ccase, float redalpha, float redchars, string str, ...) strconv (FTE_STRINGS)
 	PR1VM_RegisterBuiltin (vm, 266, (builtin_t)csqc_nop_str); // #266 string(float skel, float bonenum) skel_get_bonename
 	PR1VM_RegisterBuiltin (vm, 284, (builtin_t)csqc_nop_str); // #284 string(float modidx, float framenum) frametoname
 	PR1VM_RegisterBuiltin (vm, 285, (builtin_t)csqc_nop_str); // #285 string(float modidx, float skin) skintoname
