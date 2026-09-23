@@ -110,6 +110,7 @@ static char *CSQCVM_VarString (int first)
 // Defined below (entity section); forward-declared for the #347/#459/te_beam users.
 static int csqc_ent_of (pr1vm_t *vm, int parmofs);
 static float *csqc_ent_field (pr1vm_t *vm, int entnum, const char *name);
+static float *csqc_ent_ofs (pr1vm_t *vm, int entnum, int fldofs);	// C2: доступ по кэш-офсету
 static void csqc_ret_entity (pr1vm_t *vm, int entnum);
 static void csqc_add_one_entity (int e);	// Ф3: arena-эдикт -> ezq entity_t
 
@@ -770,7 +771,7 @@ static void csqc_addentities (void)
 		float *dm;
 		if (!CSQC_Client_EntUsed (e))
 			continue;
-		dm = csqc_ent_field (vm, e, "drawmask");
+		dm = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_DRAWMASK));
 		if (!dm || !((int)dm[0] & mask))
 			continue;
 		csqc_add_one_entity (e);
@@ -3784,6 +3785,17 @@ static float *csqc_ent_field (pr1vm_t *vm, int entnum, const char *name)
 	return slot ? &slot[ofs] : NULL;
 }
 
+// C2 (Wave C): доступ к полю по кэш-офсету (CSQC_Client_FieldOfs) — без скана
+// fielddefs на каждый вызов (горячий путь addentities).
+static float *csqc_ent_ofs (pr1vm_t *vm, int entnum, int fldofs)
+{
+	float *slot;
+	if (fldofs < 0)
+		return NULL;
+	slot = csqc_ent_slot (vm, entnum);
+	return slot ? &slot[fldofs] : NULL;
+}
+
 static void csqc_ret_entity (pr1vm_t *vm, int entnum)
 {
 	*(int *)&vm->globals[OFS_RETURN] = entnum * vm->edict_size;
@@ -3814,7 +3826,7 @@ static void csqc_add_one_entity (int e)
 	// или удаление эдикта -> не добавлять. RF_NOAUTOADD в FTE удалён (pr_common.h:881)
 	// в пользу возврата predraw — не проверяем. Function-значение поля — сырые int-биты
 	// (EV_FUNCTION): читаем как int, а не через float (иначе denormal -> 0).
-	if ((f = csqc_ent_field (vm, e, "predraw")) && *(int *)&f[0] > 0)
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_PREDRAW))) && *(int *)&f[0] > 0)
 	{
 		qbool removed = false;
 		float pret = CSQC_Client_CallPredraw (e, *(int *)&f[0], &removed);
@@ -3827,7 +3839,7 @@ static void csqc_add_one_entity (int e)
 		return;
 	// model: .modelindex (Ф3, FTE-паритет) с fallback на .model-строку
 	model = NULL;
-	if ((ofs = CSQC_Client_FindField (vm, "modelindex")) >= 0)
+	if ((ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELINDEX)) >= 0)
 	{
 		int mi = (int)slot[ofs];
 		if (mi > 0)
@@ -3835,7 +3847,7 @@ static void csqc_add_one_entity (int e)
 	}
 	if (!model)
 	{
-		if ((ofs = CSQC_Client_FindField (vm, "model")) < 0)
+		if ((ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODEL)) < 0)
 			return;
 		mname = CSQC_Client_GetString (vm, (string_t)*(int *)&slot[ofs]);
 		if (!mname || !mname[0])
@@ -3855,7 +3867,7 @@ static void csqc_add_one_entity (int e)
 	// FTE CopyCSQCEdictToEntity maps the index to playerindex/topcolour
 	// (pr_csqc.c:861-879); values > MAX_CLIENTS (DP colormap) fall back to
 	// vid.colormap / NULL scoreboard (documented deviation).
-	if ((f = csqc_ent_field (vm, e, "colormap")))
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_COLORMAP))))
 	{
 		int cm = (int)f[0];
 		if (cm > 0 && cm <= MAX_CLIENTS && model->modhint == MOD_PLAYER)
@@ -3867,15 +3879,15 @@ static void csqc_add_one_entity (int e)
 	}
 	ent.oldframe = ent.frame;
 	ent.framelerp = -1;
-	if ((f = csqc_ent_field (vm, e, "origin")))		VectorCopy (f, ent.origin);
-	if ((f = csqc_ent_field (vm, e, "angles")))		VectorCopy (f, ent.angles);
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN))))		VectorCopy (f, ent.origin);
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ANGLES))))		VectorCopy (f, ent.angles);
 	// Stage 4b: player render pitch = -viewangles/3, same as the engine player
 	// render (cl_ents.c:2240) and the FTE CSQC bridge (pr_csqc.c:5626,
 	// r_meshpitch=-1). Render-side only: does not touch the module's .angles
 	// (used by #347/prediction). Roll is left 0 (FTE CSQC bridge also 0).
 	if (playernum >= 0)
 		ent.angles[PITCH] = -ent.angles[PITCH] / 3;
-	if ((f = csqc_ent_field (vm, e, "frame")))		ent.frame = ent.oldframe = (int)f[0];
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_FRAME))))		ent.frame = ent.oldframe = (int)f[0];
 	// Stage 4b: player frame interpolation — exact engine formula (CL_LinkPlayers,
 	// cl_ents.c:2228-2237). Without it CSQC renders the raw frame while the engine
 	// lerps, so the pose jumps when toggling csqc_delta. FTE has no jump because
@@ -3917,16 +3929,16 @@ static void csqc_add_one_entity (int e)
 				return;
 		}
 	}
-	if ((f = csqc_ent_field (vm, e, "skin")))		ent.skinnum = (int)f[0];
-	if ((f = csqc_ent_field (vm, e, "effects")))	ent.effects = (int)f[0];
-	if ((f = csqc_ent_field (vm, e, "alpha")))		ent.alpha = f[0];
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SKIN))))		ent.skinnum = (int)f[0];
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_EFFECTS))))	ent.effects = (int)f[0];
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ALPHA))))		ent.alpha = f[0];
 	// .scale: uniform render scale (FTE pr_csqc.c:841-844, 0 remapped to 1).
 	// 0 stays 0 here — the render helper/culling treat 0 as unscaled.
-	if ((f = csqc_ent_field (vm, e, "scale")))		ent.scale = f[0];
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SCALE))))		ent.scale = f[0];
 	// C4 Этап 1: .renderflags (CSQCRF_*) -> ent.renderfx (RF_*). Маппим доступное
 	// подмножество (FTE pr_csqc.c:773-799); DEPTHHACK/EXTERNALMODEL/FIRSTPERSON/USEAXIS
 	// без прямого ezq-аналога — отклонение (parity-audit).
-	if ((f = csqc_ent_field (vm, e, "renderflags")))
+	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_RENDERFLAGS))))
 	{
 		int rflags = (int)f[0];
 		if (rflags & 1)		// CSQCRF_VIEWMODEL
@@ -3982,7 +3994,7 @@ static void csqc_setorigin (void)
 	if (!vm)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
-	f = csqc_ent_field (vm, e, "origin");
+	f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
 	if (!f)
 		return;
 	o = &vm->globals[OFS_PARM0 + 3];
@@ -4001,9 +4013,9 @@ static void csqc_model_bbox (pr1vm_t *vm, int e, model_t *model)
 
 	if (!vm || e <= 0)
 		return;
-	fmn = csqc_ent_field (vm, e, "mins");
-	fmx = csqc_ent_field (vm, e, "maxs");
-	fsz = csqc_ent_field (vm, e, "size");
+	fmn = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MINS));
+	fmx = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MAXS));
+	fsz = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SIZE));
 	if (model)
 	{
 		if (fmn) { fmn[0] = model->mins[0]; fmn[1] = model->mins[1]; fmn[2] = model->mins[2]; }
@@ -4038,18 +4050,18 @@ static void csqc_setmodel (void)
 	slot = csqc_ent_slot (vm, e);
 	if (!slot || !s)
 		return;
-	ofs = CSQC_Client_FindField (vm, "model");
+	ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODEL);
 	if (ofs >= 0)
 		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s);
 	// Ф3: .modelindex из CSQC-реестра (рендер arena-эдиктов по индексу, FTE-паритет)
 	idx = CSQC_Client_ModelIndex (s);
-	ofs = CSQC_Client_FindField (vm, "modelindex");
+	ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELINDEX);
 	if (ofs >= 0)
 		slot[ofs] = (float)idx;
 	// B20: bbox из модели + .modelflags (FTE pr_csqc.c:3096-3155, PF_cs_SetModel :3178).
 	model = idx ? CSQC_Client_ModelForIndex (idx) : NULL;
 	csqc_model_bbox (vm, e, model);
-	ofs = CSQC_Client_FindField (vm, "modelflags");
+	ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELFLAGS);
 	if (ofs >= 0 && model)
 		slot[ofs] = (float)model->flags;
 }
@@ -4066,7 +4078,7 @@ static void csqc_setmodelindex (void)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
 	idx = (int)vm->globals[OFS_PARM0 + 3];
-	f = csqc_ent_field (vm, e, "modelindex");
+	f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELINDEX));
 	if (f)
 		f[0] = (float)idx;
 	// B20 (FTE PF_cs_SetModelIndex, pr_csqc.c:3180-3186 -> csqc_setmodel): резолв
@@ -4077,7 +4089,7 @@ static void csqc_setmodelindex (void)
 		return;
 	name = CSQC_Client_ModelNameForIndex (idx);
 	slot = csqc_ent_slot (vm, e);
-	ofs = CSQC_Client_FindField (vm, "model");
+	ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODEL);
 	if (ofs >= 0 && slot && name)
 		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], (char *)name);
 	csqc_model_bbox (vm, e, model);
@@ -4092,8 +4104,8 @@ static void csqc_setsize (void)
 	if (!vm)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
-	fmin = csqc_ent_field (vm, e, "mins");
-	fmax = csqc_ent_field (vm, e, "maxs");
+	fmin = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MINS));
+	fmax = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MAXS));
 	if (!fmin || !fmax)
 		return;
 	mn = &vm->globals[OFS_PARM0 + 3];
@@ -4101,7 +4113,7 @@ static void csqc_setsize (void)
 	fmin[0] = mn[0]; fmin[1] = mn[1]; fmin[2] = mn[2];
 	fmax[0] = mx[0]; fmax[1] = mx[1]; fmax[2] = mx[2];
 	// B20: .size = maxs - mins (FTE PF_cs_SetSize, pr_csqc.c:2911)
-	fsz = csqc_ent_field (vm, e, "size");
+	fsz = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SIZE));
 	if (fsz)
 	{
 		fsz[0] = mx[0] - mn[0];
@@ -4187,20 +4199,20 @@ static void csqc_findradius (void)
 		return;
 	org = &vm->globals[OFS_PARM0];
 	rad = vm->globals[OFS_PARM0 + 3];
-	chain_ofs = CSQC_Client_FindField (vm, "chain");
+	chain_ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_CHAIN);
 	prev = 0;	// голова цепочки; world(0) — терминатор (FTE pr_bgcmd.c:4012/4058)
 	for (e = CSQC_Client_EntSpawnBase (); e < vm->num_edicts; e++)
 	{
 		if (!CSQC_Client_EntUsed (e))
 			continue;
-		o = csqc_ent_field (vm, e, "origin");
+		o = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
 		if (!o)
 			continue;
 		// FTE pr_bgcmd.c:4040 — не-solid пропускается, если нет FL_FINDABLE_NONSOLID.
-		fld = csqc_ent_field (vm, e, "solid");
+		fld = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SOLID));
 		if (fld && (int)*fld == CSQC_SOLID_NOT)
 		{
-			fld = csqc_ent_field (vm, e, "flags");
+			fld = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_FLAGS));
 			if (!fld || !((int)*fld & CSQC_FL_FINDABLE_NONSOLID))
 				continue;
 		}
@@ -4353,31 +4365,32 @@ static trace_t csqc_world_trace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t 
 static void csqc_store_trace (pr1vm_t *vm, trace_t *tr)
 {
 	int o;
-	if ((o = PR1VM_FindGlobal (vm, "trace_fraction")) >= 0)
+	// C2 (Wave C): офсеты из кэша (резолв при загрузке), не скан globaldefs.
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_FRACTION)) >= 0)
 		vm->globals[o] = tr->fraction;
-	if ((o = PR1VM_FindGlobal (vm, "trace_allsolid")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_ALLSOLID)) >= 0)
 		vm->globals[o] = tr->allsolid;
-	if ((o = PR1VM_FindGlobal (vm, "trace_startsolid")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_STARTSOLID)) >= 0)
 		vm->globals[o] = tr->startsolid;
-	if ((o = PR1VM_FindGlobal (vm, "trace_inopen")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_INOPEN)) >= 0)
 		vm->globals[o] = tr->inopen;
-	if ((o = PR1VM_FindGlobal (vm, "trace_inwater")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_INWATER)) >= 0)
 		vm->globals[o] = tr->inwater;
-	if ((o = PR1VM_FindGlobal (vm, "trace_plane_dist")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_PLANE_DIST)) >= 0)
 		vm->globals[o] = tr->plane.dist;
-	if ((o = PR1VM_FindGlobal (vm, "trace_endpos")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_ENDPOS)) >= 0)
 	{
 		vm->globals[o] = tr->endpos[0];
 		vm->globals[o + 1] = tr->endpos[1];
 		vm->globals[o + 2] = tr->endpos[2];
 	}
-	if ((o = PR1VM_FindGlobal (vm, "trace_plane_normal")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_PLANE_NORMAL)) >= 0)
 	{
 		vm->globals[o] = tr->plane.normal[0];
 		vm->globals[o + 1] = tr->plane.normal[1];
 		vm->globals[o + 2] = tr->plane.normal[2];
 	}
-	if ((o = PR1VM_FindGlobal (vm, "trace_ent")) >= 0)
+	if ((o = CSQC_Client_TraceGlobal (vm, CSQC_TRACEG_ENT)) >= 0)
 	{
 		// entity-значение = slot*edict_size (int-биты); 0 — world.
 		*(int *)&vm->globals[o] = (tr->e.entnum > 0) ? tr->e.entnum * vm->edict_size : 0;
@@ -4440,12 +4453,12 @@ static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end,
 	if (forent < 0 || forent >= vm->num_edicts)
 		forent = 0;	// world — forent-проверок нет
 
-	ofs_o = CSQC_Client_FindField (vm, "origin");
-	ofs_mn = CSQC_Client_FindField (vm, "mins");
-	ofs_mx = CSQC_Client_FindField (vm, "maxs");
-	ofs_sol = CSQC_Client_FindField (vm, "solid");
-	ofs_fl = CSQC_Client_FindField (vm, "flags");
-	ofs_own = CSQC_Client_FindField (vm, "owner");
+	ofs_o = CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN);
+	ofs_mn = CSQC_Client_FieldOfs (vm, CSQC_FLD_MINS);
+	ofs_mx = CSQC_Client_FieldOfs (vm, CSQC_FLD_MAXS);
+	ofs_sol = CSQC_Client_FieldOfs (vm, CSQC_FLD_SOLID);
+	ofs_fl = CSQC_Client_FieldOfs (vm, CSQC_FLD_FLAGS);
+	ofs_own = CSQC_Client_FieldOfs (vm, CSQC_FLD_OWNER);
 	if (ofs_o < 0 || ofs_mn < 0 || ofs_mx < 0)
 		return;	// модуль без геометрии полей — entity-слой недоступен
 
@@ -4597,7 +4610,7 @@ static void csqc_walkmove (void)
 	if (ofs >= 0)
 	{
 		entnum = *(int *)&vm->globals[ofs] / vm->edict_size;
-		org = csqc_ent_field (vm, entnum, "origin");
+		org = csqc_ent_ofs (vm, entnum, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
 	}
 	if (!org)
 	{
@@ -4634,7 +4647,7 @@ static void csqc_droptofloor (void)
 	if (ofs >= 0)
 	{
 		entnum = *(int *)&vm->globals[ofs] / vm->edict_size;
-		org = csqc_ent_field (vm, entnum, "origin");
+		org = csqc_ent_ofs (vm, entnum, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
 	}
 	if (!org)
 	{
@@ -4653,7 +4666,7 @@ static void csqc_droptofloor (void)
 	// FTE pr_csqc.c:5273-5274 — посадка на землю помечается FL_ONGROUND и
 	// groundentity (мир = world(0); мир-трасса ezq сущностей не бьёт — подмножество).
 	{
-		float *ff = csqc_ent_field (vm, entnum, "flags");
+		float *ff = csqc_ent_ofs (vm, entnum, CSQC_Client_FieldOfs (vm, CSQC_FLD_FLAGS));
 		float *gf = csqc_ent_field (vm, entnum, "groundentity");
 		if (ff)
 			*ff = (float)((int)*ff | CSQC_FL_ONGROUND);

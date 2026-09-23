@@ -48,6 +48,51 @@ qbool CSQC_Client_EntUsed (int slot);			// слот занят (сеть или 
 int CSQC_Client_EntSpawnBase (void);			// первый используемый слот (1)
 int CSQC_Client_EntUsedCount (void);			// число занятых слотов пула
 int CSQC_Client_FindField (struct pr1vm_s *vm, const char *name);	// offset поля в float-словах / -1
+// C2 (Wave C): кэш офсетов «горячего пути» (резолв один раз при загрузке модуля;
+// builtins читают массив, а не сканируют globaldefs/fielddefs по имени каждый кадр).
+// Аналог FTE csqcg (pr_common.h:1109-1118) / overlay csqcentvars_t (pr_csqc.c:353-395).
+typedef enum
+{
+	CSQC_TRACEG_FRACTION = 0,
+	CSQC_TRACEG_ALLSOLID,
+	CSQC_TRACEG_STARTSOLID,
+	CSQC_TRACEG_INOPEN,
+	CSQC_TRACEG_INWATER,
+	CSQC_TRACEG_PLANE_DIST,
+	CSQC_TRACEG_ENDPOS,
+	CSQC_TRACEG_PLANE_NORMAL,
+	CSQC_TRACEG_ENT,
+	CSQC_TRACEG_COUNT
+} csqc_traceglobal_id_t;
+
+typedef enum
+{
+	CSQC_FLD_PREDRAW = 0,
+	CSQC_FLD_MODELINDEX,
+	CSQC_FLD_MODEL,
+	CSQC_FLD_COLORMAP,
+	CSQC_FLD_ORIGIN,
+	CSQC_FLD_ANGLES,
+	CSQC_FLD_FRAME,
+	CSQC_FLD_SKIN,
+	CSQC_FLD_EFFECTS,
+	CSQC_FLD_ALPHA,
+	CSQC_FLD_SCALE,
+	CSQC_FLD_RENDERFLAGS,
+	CSQC_FLD_SIZE,
+	CSQC_FLD_MINS,
+	CSQC_FLD_MAXS,
+	CSQC_FLD_MODELFLAGS,
+	CSQC_FLD_CHAIN,
+	CSQC_FLD_SOLID,
+	CSQC_FLD_FLAGS,
+	CSQC_FLD_OWNER,
+	CSQC_FLD_DRAWMASK,
+	CSQC_FLD_COUNT
+} csqc_field_id_t;
+
+int CSQC_Client_TraceGlobal (struct pr1vm_s *vm, int id);	// офсет глобала (или -1)
+int CSQC_Client_FieldOfs (struct pr1vm_s *vm, int id);		// офсет поля (или -1)
 // Окружение builtins «как в FTE»: публикация player_localentnum каждый 2D-кадр
 // до CSQC_UpdateView. Сущности игроков НЕ фабрикуются (см. csqc_client.c).
 void CSQC_Client_UpdateLocalEntnum (void);

@@ -65,6 +65,9 @@ typedef struct csqc_client_state_s
 	pr1vm_t		vm;
 	qbool		loaded;		// модуль загружен в инстанс
 	qbool		inited;		// CSQC_Init вызван
+	// C3 (Wave C): кэш cvar csqc_dbg (модуль регистрирует его в CSQC_Init через
+	// registercvar; резолвим после init, чтобы не звать Cvar_Find на каждую сущность).
+	cvar_t		*csqc_dbg_cvar;
 	qbool		errored;	// PR_RunError на клиентском инстансе (кадры отключены)
 	qbool		mayread;	// модуль вправе читать net-message — только parse-callback'и
 						// (CSQC_Ent_Update/CSQC_Parse_Event; R7/T1.4a, FTE csqc_mayread)
@@ -1153,14 +1156,8 @@ CSQC_Client_ValidateFile
 Com_BlockChecksum, md4.c). Аналог FTE CSQC_ValidateMainCSProgs (pr_csqc.c).
 =================
 */
-static qbool CSQC_Client_ValidateFile (const char *path, int size, unsigned crc)
+static qbool CSQC_Client_ValidateData (byte *data, int filesize, int size, unsigned crc)
 {
-	byte *data;
-	int filesize;
-
-	if (!path || !path[0])
-		return false;
-	data = (byte *)FS_LoadHunkFile ((char *)path, &filesize);
 	if (!data)
 		return false;
 	if (size > 0 && filesize != size)
@@ -1168,6 +1165,23 @@ static qbool CSQC_Client_ValidateFile (const char *path, int size, unsigned crc)
 	if (crc && Com_BlockChecksum (data, filesize) != crc)
 		return false;
 	return true;
+}
+
+static qbool CSQC_Client_ValidateFile (const char *path, int size, unsigned crc)
+{
+	byte *data;
+	int filesize;
+	qbool ok;
+
+	if (!path || !path[0])
+		return false;
+	// C1 (Wave C): heap-буфер + Q_free, не низкий hunk. ValidateFile зовётся в т.ч.
+	// каждый кадр в CSQC_Client_Update, пока идёт скачивание; Hunk_AllocName копил бы
+	// копии csprogs до смены карты.
+	data = (byte *)FS_LoadHeapFile (path, &filesize);
+	ok = CSQC_Client_ValidateData (data, filesize, size, crc);
+	Q_free (data);
+	return ok;
 }
 
 /*
@@ -1212,41 +1226,45 @@ static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
 
 	for (i = 0; i < nc; i++)
 	{
-		if (CSQC_Client_ValidateFile (cands[i], anycsqc ? 0 : sizep, anycsqc ? 0 : crc))
+		byte *data;
+		int len;
+
+		// C1 (Wave C): грузим кандидата один раз (heap) — валидация и write-back
+		// из одного буфера; раньше было две HunkFile-загрузки на кандидата.
+		data = (byte *)FS_LoadHeapFile (cands[i], &len);
+		if (!CSQC_Client_ValidateData (data, len, anycsqc ? 0 : sizep, anycsqc ? 0 : crc))
 		{
-			strlcpy (pathbuf, cands[i], bufsz);
-			// FTE write-back: валидный name-файл копируем в кэш на будущее.
-			// При anycsqc/demo crc не подтверждён — в кэш не пишем.
-			if (crc && !anycsqc && !cls.demoplayback)
-			{
-				byte *data;
-				int len;
-				char dest[MAX_OSPATH], dir[MAX_OSPATH];
-				char *slash;
-				FILE *f;
-				data = (byte *)FS_LoadHunkFile ((char *)cands[i], &len);
-				if (data)
-				{
-					snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
-						cls.gamedir, crc);
-					strlcpy (dir, dest, sizeof (dir));
-					slash = strrchr (dir, '/');
-					if (slash && slash != dir)
-					{
-						*slash = 0;
-						Sys_mkdir (dir);
-					}
-					f = fopen (dest, "wb");
-					if (f)
-					{
-						fwrite (data, 1, len, f);
-						fclose (f);
-						Con_Printf ("CSQC: cached csprogsvers/%x.dat\n", crc);
-					}
-				}
-			}
-			return true;
+			Q_free (data);
+			continue;
 		}
+
+		strlcpy (pathbuf, cands[i], bufsz);
+		// FTE write-back: валидный name-файл копируем в кэш на будущее.
+		// При anycsqc/demo crc не подтверждён — в кэш не пишем.
+		if (crc && !anycsqc && !cls.demoplayback)
+		{
+			char dest[MAX_OSPATH], dir[MAX_OSPATH];
+			char *slash;
+			FILE *f;
+			snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
+				cls.gamedir, crc);
+			strlcpy (dir, dest, sizeof (dir));
+			slash = strrchr (dir, '/');
+			if (slash && slash != dir)
+			{
+				*slash = 0;
+				Sys_mkdir (dir);
+			}
+			f = fopen (dest, "wb");
+			if (f)
+			{
+				fwrite (data, 1, len, f);
+				fclose (f);
+				Con_Printf ("CSQC: cached csprogsvers/%x.dat\n", crc);
+			}
+		}
+		Q_free (data);
+		return true;
 	}
 	return false;
 }
@@ -1371,6 +1389,69 @@ int CSQC_Client_FindField (pr1vm_t *vm, const char *name)
 			return vm->fielddefs[i].ofs;
 	}
 	return -1;
+}
+
+/*
+=================
+C2 (Wave C): кэш офсетов горячего пути
+
+Резолв traced-глобалов и entity-полей, читаемых каждый кадр (csqc_store_trace,
+csqc_add_one_entity, csqc_addentities), выполняется один раз при загрузке модуля
+(CSQC_Client_OffsetCacheResolve). Раньше каждый вызов звал PR1VM_FindGlobal /
+CSQC_Client_FindField — линейный скан globaldefs/fielddefs по strcmp.
+
+FTE-эталон: глобалы — csqcg (pr_common.h:1109-1118, CSQC_FindGlobals pr_csqc.c:290-296,
+store :2917-2923); entity-поля — overlay csqcentvars_t (pr_csqc.c:353-395).
+=================
+*/
+static const char *s_traceg_names[CSQC_TRACEG_COUNT] =
+{
+	"trace_fraction", "trace_allsolid", "trace_startsolid", "trace_inopen",
+	"trace_inwater", "trace_plane_dist", "trace_endpos", "trace_plane_normal",
+	"trace_ent"
+};
+
+static const char *s_fieldcache_names[CSQC_FLD_COUNT] =
+{
+	"predraw", "modelindex", "model", "colormap", "origin", "angles",
+	"frame", "skin", "effects", "alpha", "scale", "renderflags",
+	"size", "mins", "maxs", "modelflags", "chain", "solid", "flags",
+	"owner", "drawmask"
+};
+
+static int s_traceg[CSQC_TRACEG_COUNT];
+static int s_fieldcache[CSQC_FLD_COUNT];
+
+static void CSQC_Client_OffsetCacheReset (void)
+{
+	int i;
+
+	for (i = 0; i < CSQC_TRACEG_COUNT; i++)
+		s_traceg[i] = -1;
+	for (i = 0; i < CSQC_FLD_COUNT; i++)
+		s_fieldcache[i] = -1;
+}
+
+static void CSQC_Client_OffsetCacheResolve (pr1vm_t *vm)
+{
+	int i;
+
+	for (i = 0; i < CSQC_TRACEG_COUNT; i++)
+		s_traceg[i] = PR1VM_FindGlobal (vm, s_traceg_names[i]);
+	for (i = 0; i < CSQC_FLD_COUNT; i++)
+		s_fieldcache[i] = CSQC_Client_FindField (vm, s_fieldcache_names[i]);
+}
+
+int CSQC_Client_TraceGlobal (pr1vm_t *vm, int id)
+{
+	(void)vm;
+	return (id >= 0 && id < CSQC_TRACEG_COUNT) ? s_traceg[id] : -1;
+}
+
+int CSQC_Client_FieldOfs (pr1vm_t *vm, int id)
+{
+	(void)vm;
+	return (id >= 0 && id < CSQC_FLD_COUNT) ? s_fieldcache[id] : -1;
 }
 
 /*
@@ -1577,9 +1658,14 @@ static byte s_delta_seen[CSQC_MAX_NUM];
 // C4 Э3 (MASK_DELTA): callback вернул !=0 → движок не рисует сущность (рисует модуль).
 static byte s_delta_player_owned[MAX_CLIENTS];
 static byte s_delta_ent_owned[CSQC_MAX_NUM];
+// C4 (Wave C): есть ли хоть один зарегистрированный deltalisten (func>0). Если нет —
+// Delta* не memset'ит 4096-массивы и не сканирует пакетные сущности каждый кадр
+// (FTE: deltafunction[] пуст -> CSQC_DeltaUpdate не работает, pr_csqc.c:7691/:5733).
+static qbool s_delta_any;
 
 static void CSQC_Client_DeltaReset (void)
 {
+	s_delta_any = false;
 	memset (s_delta_func, 0, sizeof (s_delta_func));
 	memset (s_delta_flags, 0, sizeof (s_delta_flags));
 	memset (s_player_slot, 0, sizeof (s_player_slot));
@@ -1612,6 +1698,8 @@ void CSQC_Client_DeltaListen (const char *model, int func, int flags)
 			s_delta_func[i] = (func > 0) ? func : 0;
 			s_delta_flags[i] = flags;
 		}
+		if (func > 0)
+			s_delta_any = true;	// C4: хотя бы один слушатель — Delta* активны
 		return;
 	}
 	for (i = 1; i < MAX_MODELS; i++)
@@ -1622,6 +1710,8 @@ void CSQC_Client_DeltaListen (const char *model, int func, int flags)
 		{
 			s_delta_func[i] = (func > 0) ? func : 0;
 			s_delta_flags[i] = flags;
+			if (func > 0)
+				s_delta_any = true;
 			break;
 		}
 	}
@@ -1633,6 +1723,8 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 
 	if (!vm || !vm->game_edicts || !vm->edict_size)
 		return;
+	if (!s_delta_any)
+		return;		// C4: нет слушателей — работа не нужна
 	if (cls.demoplayback || cls.mvdplayback)
 		return;		// предикция — только живая игра (как C5-A)
 	memset (s_delta_player_owned, 0, sizeof (s_delta_player_owned));
@@ -1738,6 +1830,8 @@ static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
 
 	if (!vm || !vm->game_edicts || !vm->edict_size)
 		return;
+	if (!s_delta_any)
+		return;		// C4: нет слушателей — не memset'им/сканируем 4096 каждый кадр
 	if (cls.demoplayback || cls.mvdplayback)
 		return;
 	if (!cl.validsequence)
@@ -2874,6 +2968,9 @@ static qbool CSQC_Client_Load (const char *path)
 	pr1vm_t *vm;
 	dfunction_t *f;
 
+	// C1 (Wave C): здесь намеренно FS_LoadHunkFile (низкий hunk), а не heap/temp —
+	// PR1VM_LoadData не копирует буфер (vm->progs/... ссылаются в data), поэтому
+	// данные должны жить до выгрузки модуля. Обоснование — ADR 0019/0031.
 	data = (byte *)FS_LoadHunkFile ((char *)path, &filesize);
 	if (!data)
 	{
@@ -2920,6 +3017,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
+	CSQC_Client_OffsetCacheReset ();	// C2 (Wave C): офсеты горячего пути — до резолва
 	s_last_seq = 0;
 	s_ccframe = 0;
 
@@ -3048,6 +3146,9 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_player_localnum = PR1VM_FindGlobal (vm, "player_localnum");
 	s_csqc.g_intermission = PR1VM_FindGlobal (vm, "intermission");
 
+	// C2 (Wave C): резолв кэша офсетов горячего пути (traceline/addentities).
+	CSQC_Client_OffsetCacheResolve (vm);
+
 	s_csqc.loaded = true;
 
 	Con_Printf ("CSQC: loaded %s (%d statements, crc=0x%x), funcs i=%d w=%d u=%d "
@@ -3073,6 +3174,9 @@ static qbool CSQC_Client_Load (const char *path)
 		CSQC_Client_Exec (s_csqc.func_init);
 		s_csqc.inited = !s_csqc.errored;
 	}
+	// C3 (Wave C): модуль зарегистрировал csqc_dbg через registercvar (#93) в
+	// CSQC_Init — кэшируем указатель для горячего пути (CSQC_Client_ParseEntities).
+	s_csqc.csqc_dbg_cvar = Cvar_Find ("csqc_dbg");
 	return true;
 }
 
@@ -3954,7 +4058,7 @@ void CSQC_Client_ParseEntities (qbool sized)
 					// консоль (≤32 строк на сессию csqc_dbg>=3).
 					{
 						static int s_dbg_lines = 0;
-						cvar_t *dbg = Cvar_Find ("csqc_dbg");
+						cvar_t *dbg = s_csqc.csqc_dbg_cvar;	// C3: кэш (резолв после CSQC_Init)
 						if (dbg && dbg->value >= 3)
 						{
 							if (s_dbg_lines < 32)
@@ -4806,6 +4910,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
+	CSQC_Client_OffsetCacheReset ();	// C2 (Wave C): офсеты горячего пути
 	s_last_seq = 0;
 	s_ccframe = 0;
 }
