@@ -29,6 +29,8 @@ implemented (drawstring/getstatf/read builtins/sprintf are P2.2/P2.3).
 #include "pr1vm.h"
 #include "csqc_client.h"	// accessor'ы к клиентскому состоянию/выводу (Фаза 5)
 #include "utils.h"		// HexToInt (#476/#477 strlennocol/strdecolorize)
+#include "sbar.h"		// Sbar_ColorForMap (B10 topcolor_rgb/bottomcolor_rgb)
+#include "net.h"		// NET_AdrToString (B10 serverkey "ip")
 
 static pr1vm_t *CSQCVM_Active (void)
 {
@@ -727,14 +729,16 @@ static void csqc_drawstring (void)
 
 /*
 float(float stnum) getstati = #330
-int-значение стата: 0..31 — cl.stats, 32..127 — ext-хранилище (CSQC_Client_GetStat).
+FTE PF_cs_getstat_int (pr_csqc.c:2812): G_INT(OFS_RETURN) = stats[stnum] — возвращаются
+raw int-биты (не число). Числовое значение модуль читает через getstatf (#331).
+0..31 — cl.stats, 32..127 — ext-хранилище (CSQC_Client_GetStatInt).
 */
 static void csqc_getstati (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	vm->globals[OFS_RETURN] = CSQC_Client_GetStat ((int)vm->globals[OFS_PARM0]);
+	*(int *)&vm->globals[OFS_RETURN] = CSQC_Client_GetStatInt ((int)vm->globals[OFS_PARM0]);
 }
 
 /*
@@ -1511,15 +1515,41 @@ static void csqc_isdemo (void)
 
 /*
 string(string key) serverkey = #354
-Значение ключа из cl.serverinfo; нет ключа -> "" (Info_ValueForKey уже возвращает "").
+FTE PF_cl_serverkey_internal (pr_clcmd.c:1391): синтетические ключи ip/maxplayers/protocol/
+dlstate, затем fallback на serverinfo. Deviation (accept+doc): protocol — упрощённая строка
+(без разбора QW/ZQ/FTE), dlstate — только процент (FTE — многополевая строка).
 */
 static void csqc_serverkey (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *key = CSQCVM_Str (OFS_PARM0);
+	char buf[64];
+	const char *v = NULL;
 	if (!vm)
 		return;
-	CSQCVM_SetRetStr (Info_ValueForKey (cl.serverinfo, key ? key : ""));
+	if (!key)
+		key = "";
+	if (!strcmp (key, "ip"))				// FTE :1396
+	{
+		if (cls.demoplayback)
+			v = cls.demoname;
+		else
+			v = NET_AdrToString (cls.netchan.remote_address);
+	}
+	else if (!strcmp (key, "maxplayers"))			// FTE :1430
+		snprintf (buf, sizeof (buf), "%d", cl.sv_maxclients), v = buf;
+	else if (!strcmp (key, "protocol"))			// FTE :1452 (упрощено)
+		v = cls.demoplayback ? "QuakeWorld demo" : "QuakeWorld";
+	else if (!strcmp (key, "dlstate"))			// FTE :1434 (упрощено)
+	{
+		if (!cls.download)
+			v = "";
+		else
+			snprintf (buf, sizeof (buf), "%d", (int)cls.downloadpercent), v = buf;
+	}
+	else
+		v = Info_ValueForKey (cl.serverinfo, key);
+	CSQCVM_SetRetStr ((char *)(v ? v : ""));
 }
 
 /*
@@ -2073,7 +2103,7 @@ static void csqc_getplayerkeyvalue (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	int pnum;
 	char *key;
-	char buf[32];
+	char buf[64];
 	player_info_t *pi;
 	char *v = NULL;
 
@@ -2092,6 +2122,9 @@ static void csqc_getplayerkeyvalue (void)
 		CSQCVM_SetRetStr ("");	// пустой слот — игрока нет
 		return;
 	}
+	// B10 (Э8.2): ключи FTE PF_cs_getplayerkey_internal (pr_csqc.c:4344): к уже
+	// имевшимся frags/ping/userid/spectator/name + userinfo добавлены pl,
+	// activetime, ignored, viewentity, topcolor_rgb/bottomcolor_rgb.
 	if (!strcmp (key, "frags"))
 		snprintf (buf, sizeof (buf), "%d", pi->frags), v = buf;
 	else if (!strcmp (key, "ping"))
@@ -2100,6 +2133,29 @@ static void csqc_getplayerkeyvalue (void)
 		snprintf (buf, sizeof (buf), "%d", pi->userid), v = buf;
 	else if (!strcmp (key, "spectator"))
 		snprintf (buf, sizeof (buf), "%d", (int)pi->spectator), v = buf;
+	else if (!strcmp (key, "pl"))				// packet loss (FTE :4375)
+		snprintf (buf, sizeof (buf), "%d", (int)pi->pl), v = buf;
+	else if (!strcmp (key, "activetime"))			// FTE :4382 (realtime - entertime)
+		snprintf (buf, sizeof (buf), "%f", cls.realtime - pi->entertime), v = buf;
+	else if (!strcmp (key, "ignored"))
+		snprintf (buf, sizeof (buf), "%d", (int)pi->ignored), v = buf;
+	else if (!strcmp (key, "viewentity"))			// FTE :4351 (DP-compat: pnum+1)
+		snprintf (buf, sizeof (buf), "%d", pnum + 1), v = buf;
+	else if (!strcmp (key, "topcolor_rgb") || !strcmp (key, "bottomcolor_rgb"))
+	{
+		// FTE :4392-4415 — палитра-цвет (real_*); DP-RGB (col>=16) не поддержан
+		// (accept+doc). Формат — "'r g b'" (%g).
+		int col = (key[0] == 't') ? (int)pi->real_topcolor : (int)pi->real_bottomcolor;
+		if (col < 16)
+		{
+			int pal = Sbar_ColorForMap (col);
+			snprintf (buf, sizeof (buf), "'%g %g %g'",
+				host_basepal[pal * 3 + 0] / 255.0,
+				host_basepal[pal * 3 + 1] / 255.0,
+				host_basepal[pal * 3 + 2] / 255.0);
+			v = buf;
+		}
+	}
 	else if (!strcmp (key, "name"))
 		v = pi->name;
 	else
