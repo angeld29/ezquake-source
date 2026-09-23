@@ -240,6 +240,9 @@ static csqc_cursormode_t s_cursormode;
 static qbool s_used[CSQC_MAX_EDICTS];
 static qbool s_own[CSQC_MAX_EDICTS];
 static int s_numslot[CSQC_MAX_NUM];
+// B16: обратная карта slot→номер. Invariant: s_numslot[N] не должен переживать
+// освобождение слота — иначе движок возьмёт stale-слот (review add #9).
+static int s_slotnum[CSQC_MAX_EDICTS];
 
 // Extended CSQC-статы 32..127 (clientstat/pointerstat от mvdsv). Стандартные
 // 0..31 живут в cl.stats[] (клиентская структура); расширенные хранятся здесь
@@ -1330,6 +1333,7 @@ static void CSQC_Client_AllocArena (pr1vm_t *vm)
 	memset (s_used, 0, sizeof (s_used));
 	memset (s_own, 0, sizeof (s_own));
 	memset (s_numslot, 0, sizeof (s_numslot));
+	memset (s_slotnum, 0, sizeof (s_slotnum));
 
 	s_csqc.game_edicts = (byte *)Q_malloc ((size_t)CSQC_MAX_EDICTS * vm->edict_size);
 	s_csqc.edicts = (edict_t *)Q_malloc (sizeof (edict_t) * CSQC_MAX_EDICTS);
@@ -1487,6 +1491,12 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 		return;
 	if (!s_own[entnum])
 		return;	// сетевая сущность — не трогаем (ADR 0017)
+	// B16: снять обратную карту slot→N, иначе s_numslot[N] остаётся валидным на
+	// освобождённый слот, который может быть переиспользован (review add #9).
+	if (s_slotnum[entnum] > 0 && s_slotnum[entnum] < CSQC_MAX_NUM
+		&& s_numslot[s_slotnum[entnum]] == entnum)
+		s_numslot[s_slotnum[entnum]] = 0;
+	s_slotnum[entnum] = 0;
 	s_used[entnum] = false;
 	s_own[entnum] = false;
 	s = (float *)((byte *)vm->game_edicts + (size_t)entnum * vm->edict_size);
@@ -1507,6 +1517,8 @@ void CSQC_Client_NetFreeSlot (int slot, int number)
 		s_used[slot] = false;
 		s_own[slot] = false;
 	}
+	if (slot > 0 && slot < CSQC_MAX_EDICTS)
+		s_slotnum[slot] = 0;	// B16: обратная карта не переживает фриз
 	if (number > 0 && number < CSQC_MAX_NUM && s_numslot[number] == slot)
 		s_numslot[number] = 0;
 }
@@ -1540,6 +1552,8 @@ int CSQC_Client_MapNumber (int number, int slot)
 {
 	if (number > 0 && number < CSQC_MAX_NUM)
 		s_numslot[number] = slot;
+	if (slot > 0 && slot < CSQC_MAX_EDICTS)
+		s_slotnum[slot] = (number > 0 && number < CSQC_MAX_NUM) ? number : 0;
 	return slot;
 }
 

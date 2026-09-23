@@ -3989,13 +3989,48 @@ static void csqc_setorigin (void)
 	f[0] = o[0]; f[1] = o[1]; f[2] = o[2];
 }
 
+/*
+B20 (FTE-паритет): перенос bbox модели в поля арена-эдикта.
+FTE csqc_setmodel копирует model->mins/maxs и size (pr_csqc.c:3129-3131);
+PF_cs_SetSize пишет .size = maxs-mins (pr_csqc.c:2911). model == NULL ->
+обнулить (FTE-ветка «model NULL», pr_csqc.c:3146-3150).
+*/
+static void csqc_model_bbox (pr1vm_t *vm, int e, model_t *model)
+{
+	float *fmn, *fmx, *fsz;
+
+	if (!vm || e <= 0)
+		return;
+	fmn = csqc_ent_field (vm, e, "mins");
+	fmx = csqc_ent_field (vm, e, "maxs");
+	fsz = csqc_ent_field (vm, e, "size");
+	if (model)
+	{
+		if (fmn) { fmn[0] = model->mins[0]; fmn[1] = model->mins[1]; fmn[2] = model->mins[2]; }
+		if (fmx) { fmx[0] = model->maxs[0]; fmx[1] = model->maxs[1]; fmx[2] = model->maxs[2]; }
+		if (fsz)
+		{
+			fsz[0] = model->maxs[0] - model->mins[0];
+			fsz[1] = model->maxs[1] - model->mins[1];
+			fsz[2] = model->maxs[2] - model->mins[2];
+		}
+	}
+	else
+	{
+		if (fmn) { fmn[0] = fmn[1] = fmn[2] = 0; }
+		if (fmx) { fmx[0] = fmx[1] = fmx[2] = 0; }
+		if (fsz) { fsz[0] = fsz[1] = fsz[2] = 0; }
+	}
+}
+
 /* void(entity e, string m) setmodel = #3 */
 static void csqc_setmodel (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *s;
-	int e, ofs;
+	int e, ofs, idx;
 	float *slot;
+	model_t *model;
 	if (!vm)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
@@ -4007,28 +4042,52 @@ static void csqc_setmodel (void)
 	if (ofs >= 0)
 		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], s);
 	// Ф3: .modelindex из CSQC-реестра (рендер arena-эдиктов по индексу, FTE-паритет)
+	idx = CSQC_Client_ModelIndex (s);
 	ofs = CSQC_Client_FindField (vm, "modelindex");
 	if (ofs >= 0)
-		slot[ofs] = (float)CSQC_Client_ModelIndex (s);
+		slot[ofs] = (float)idx;
+	// B20: bbox из модели + .modelflags (FTE pr_csqc.c:3096-3155, PF_cs_SetModel :3178).
+	model = idx ? CSQC_Client_ModelForIndex (idx) : NULL;
+	csqc_model_bbox (vm, e, model);
+	ofs = CSQC_Client_FindField (vm, "modelflags");
+	if (ofs >= 0 && model)
+		slot[ofs] = (float)model->flags;
 }
 
 /* void(entity e, float mdlindex) setmodelindex = #333 (Ф3) */
 static void csqc_setmodelindex (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	float *f;
+	float *f, *slot;
+	int e, idx, ofs;
+	const char *name;
+	model_t *model;
 	if (!vm)
 		return;
-	f = csqc_ent_field (vm, csqc_ent_of (vm, OFS_PARM0), "modelindex");
+	e = csqc_ent_of (vm, OFS_PARM0);
+	idx = (int)vm->globals[OFS_PARM0 + 3];
+	f = csqc_ent_field (vm, e, "modelindex");
 	if (f)
-		f[0] = (float)(int)vm->globals[OFS_PARM0 + 3];
+		f[0] = (float)idx;
+	// B20 (FTE PF_cs_SetModelIndex, pr_csqc.c:3180-3186 -> csqc_setmodel): резолв
+	// CSQC-реестра -> .model + bbox. Нерезолвнутый/неположительный индекс -> .model не
+	// трогаем (паритет FTE early-return). Единое positive-пространство — ADR 0024.
+	model = (idx > 0) ? CSQC_Client_ModelForIndex (idx) : NULL;
+	if (!model)
+		return;
+	name = CSQC_Client_ModelNameForIndex (idx);
+	slot = csqc_ent_slot (vm, e);
+	ofs = CSQC_Client_FindField (vm, "model");
+	if (ofs >= 0 && slot && name)
+		PR1VM_ClientSetString (vm, (string_t *)&slot[ofs], (char *)name);
+	csqc_model_bbox (vm, e, model);
 }
 
 /* void(entity e, vector min, vector max) setsize = #4 */
 static void csqc_setsize (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	float *fmin, *fmax, *mn, *mx;
+	float *fmin, *fmax, *fsz, *mn, *mx;
 	int e;
 	if (!vm)
 		return;
@@ -4041,6 +4100,14 @@ static void csqc_setsize (void)
 	mx = &vm->globals[OFS_PARM0 + 6];
 	fmin[0] = mn[0]; fmin[1] = mn[1]; fmin[2] = mn[2];
 	fmax[0] = mx[0]; fmax[1] = mx[1]; fmax[2] = mx[2];
+	// B20: .size = maxs - mins (FTE PF_cs_SetSize, pr_csqc.c:2911)
+	fsz = csqc_ent_field (vm, e, "size");
+	if (fsz)
+	{
+		fsz[0] = mx[0] - mn[0];
+		fsz[1] = mx[1] - mn[1];
+		fsz[2] = mx[2] - mn[2];
+	}
 }
 
 /* entity(entity e) nextent = #47 — модульный резерв (сетевые не «used») */
