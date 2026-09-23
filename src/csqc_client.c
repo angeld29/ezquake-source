@@ -114,7 +114,11 @@ typedef struct csqc_client_state_s
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
 	qbool		csprogs_dl_pending;
-	double		csprogs_dl_start;
+	// B17: таймаут — по отсутствию прогресса, а не плоские 20 c от старта.
+	double		csprogs_dl_lastprogress;	// время последнего роста downloadpercent
+	int			csprogs_dl_percent;			// последний виденный cls.downloadpercent
+	qbool		csprogs_dl_started;			// наше скачивание уже открывалось (cls.download)
+	char		csprogs_dl_localname[MAX_OSPATH];	// cls.downloadname нашего файла (гейт)
 	unsigned	csprogs_crc;	// *csprogs (md4 Com_BlockChecksum) / 0 если нет
 	int			csprogs_size;	// *csprogssize
 	char		csprogs_dl_path[MAX_QPATH];	// локальный файл после скачивания
@@ -1283,7 +1287,12 @@ static void CSQC_Client_StartDownload (const char *remote, const char *localrel)
 	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
 	MSG_WriteString (&cls.netchan.message, va ("download \"%s\"", remote));
 	cls.downloadnumber++;
-	s_csqc.csprogs_dl_start = Sys_DoubleTime ();
+	// B17: старт окна отсутствия прогресса + запоминаем имя нашего downloadname
+	// (cls.download общий для всех загрузок — прогресс считаем только по своему файлу).
+	s_csqc.csprogs_dl_lastprogress = Sys_DoubleTime ();
+	s_csqc.csprogs_dl_percent = 0;
+	s_csqc.csprogs_dl_started = false;
+	strlcpy (s_csqc.csprogs_dl_localname, cls.downloadname, sizeof (s_csqc.csprogs_dl_localname));
 }
 
 /*
@@ -3658,11 +3667,36 @@ void CSQC_Client_Update (void)
 		}
 		else
 		{
-			// файла всё ещё нет: если скачивание не идёт и прошло >20 c — сдаёмся
-			if (Sys_DoubleTime () - s_csqc.csprogs_dl_start > 20)
+			// B17: таймаут по отсутствию прогресса (FTE своего лимита не имеет —
+			// опирается на общую download-машину; плоские 20 c от старта сдавались
+			// на медленном линке, хотя загрузка шла).
+			double now = Sys_DoubleTime ();
+			qbool ours = cls.download
+				&& !strcmp (cls.downloadname, s_csqc.csprogs_dl_localname);
+
+			if (ours)
 			{
+				int pct = (int)cls.downloadpercent;
+
+				if (pct > s_csqc.csprogs_dl_percent)
+				{
+					s_csqc.csprogs_dl_percent = pct;
+					s_csqc.csprogs_dl_lastprogress = now;
+				}
+				s_csqc.csprogs_dl_started = true;
+			}
+			else if (s_csqc.csprogs_dl_started)
+			{
+				// наше скачивание завершилось без валидного файла (сбой/отмена)
 				s_csqc.csprogs_dl_pending = false;
-				Con_Printf ("CSQC: csprogs download failed/timed out\n");
+				Con_Printf ("CSQC: csprogs download failed\n");
+				CSQC_Client_NotifyCSQC (false);
+			}
+			else if (now - s_csqc.csprogs_dl_lastprogress > 20)
+			{
+				// прогресса нет дольше окна (в т.ч. загрузка так и не началась)
+				s_csqc.csprogs_dl_pending = false;
+				Con_Printf ("CSQC: csprogs download timed out (no progress)\n");
 				CSQC_Client_NotifyCSQC (false);
 			}
 			return;
