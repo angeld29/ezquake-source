@@ -3777,20 +3777,34 @@ static void csqc_find (void)
 	csqc_ret_entity (vm, 0);
 }
 
+/* SOLID/FL/MOVE-константы (паритет csdefs.qc). Вынесены выше csqc_findradius,
+   который использует solid/FL_FINDABLE_NONSOLID (FTE pr_bgcmd.c:4040). */
+#define CSQC_SOLID_NOT		0
+#define CSQC_SOLID_TRIGGER	1
+#define CSQC_SOLID_BSP		4
+#define CSQC_FL_MONSTER		32
+#define CSQC_FL_FINDABLE_NONSOLID	16384
+#define CSQC_FL_ONGROUND	512
+#define CSQC_MOVE_NOMONSTERS	1
+#define CSQC_MOVE_MISSILE	2
+#define CSQC_MOVE_HITMODEL	4
+#define CSQC_MOVE_TRIGGERS	16
+#define CSQC_MOVE_EVERYTHING	32
+#define CSQC_MOVE_LAGGED	64
+
 /* entity(vector org, float rad) findradius = #22 — резерв; chain если поле есть */
 static void csqc_findradius (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	float *org, *o, rad, d;
+	float *org, *o, *fld, rad, d;
 	float *chslot;
-	int e, chain_ofs, first, prev;
+	int e, chain_ofs, prev;
 	if (!vm)
 		return;
 	org = &vm->globals[OFS_PARM0];
 	rad = vm->globals[OFS_PARM0 + 3];
 	chain_ofs = CSQC_Client_FindField (vm, "chain");
-	first = 0;
-	prev = 0;
+	prev = 0;	// голова цепочки; world(0) — терминатор (FTE pr_bgcmd.c:4012/4058)
 	for (e = CSQC_Client_EntSpawnBase (); e < vm->num_edicts; e++)
 	{
 		if (!CSQC_Client_EntUsed (e))
@@ -3798,22 +3812,28 @@ static void csqc_findradius (void)
 		o = csqc_ent_field (vm, e, "origin");
 		if (!o)
 			continue;
+		// FTE pr_bgcmd.c:4040 — не-solid пропускается, если нет FL_FINDABLE_NONSOLID.
+		fld = csqc_ent_field (vm, e, "solid");
+		if (fld && (int)*fld == CSQC_SOLID_NOT)
+		{
+			fld = csqc_ent_field (vm, e, "flags");
+			if (!fld || !((int)*fld & CSQC_FL_FINDABLE_NONSOLID))
+				continue;
+		}
 		d = (o[0]-org[0])*(o[0]-org[0]) + (o[1]-org[1])*(o[1]-org[1]) + (o[2]-org[2])*(o[2]-org[2]);
 		if (d > rad * rad)
 			continue;
+		// FTE: ent.v.chain = chain; chain = ent -> возврат последнего (головы),
+		// прочие совпадения доступны обходом `.chain` (FTE pr_bgcmd.c:4058/4088/4093).
 		if (chain_ofs >= 0)
 		{
 			chslot = csqc_ent_slot (vm, e);
 			if (chslot)
 				*(int *)&chslot[chain_ofs] = prev * vm->edict_size;
-			prev = e;
 		}
-		if (!first)
-			first = e;
+		prev = e;
 	}
-	if (first && chain_ofs < 0)
-		first = prev;	// без поля chain — возврат только последнего совпадения
-	csqc_ret_entity (vm, first);
+	csqc_ret_entity (vm, prev);
 }
 
 /* void() changeyaw = #49 — no-op (отклонение; без серверной физики) */
@@ -4013,19 +4033,9 @@ FTE-пул Шаг 7 (часть 2): dispatch MOVE_* + forent/owner-ignore над
 AABB-приближение (без hull/movetype-семантики; .solid/.flags/.owner — как в csdefs.qc).
 moveflags — 3-й арг traceline / 5-й tracebox (маска MOVE_* FTE); forent — slot сущности,
 которую и её владельца трасса не бьёт. boxmin/boxmax != NULL — tracebox: AABB сущности
-расширяется на бокс (swept-приближение). Константы SOLID/FL/MOVE — паритет csdefs.qc.
+расширяется на бокс (swept-приближение). Константы SOLID/FL/MOVE — определены выше
+(перед csqc_findradius; паритет csdefs.qc).
 */
-#define CSQC_SOLID_NOT		0
-#define CSQC_SOLID_TRIGGER	1
-#define CSQC_SOLID_BSP		4
-#define CSQC_FL_MONSTER		32
-#define CSQC_FL_FINDABLE_NONSOLID	16384
-#define CSQC_MOVE_NOMONSTERS	1
-#define CSQC_MOVE_MISSILE	2
-#define CSQC_MOVE_HITMODEL	4
-#define CSQC_MOVE_TRIGGERS	16
-#define CSQC_MOVE_EVERYTHING	32
-#define CSQC_MOVE_LAGGED	64
 
 static void csqc_trace_ents (pr1vm_t *vm, vec3_t start, vec3_t end,
 	int moveflags, int forent, vec3_t boxmin, vec3_t boxmax, trace_t *tr)
@@ -4213,7 +4223,7 @@ static void csqc_walkmove (void)
 	rad = yaw * (M_PI / 180.0);
 	VectorCopy (org, start);
 	end[0] = org[0] + cos (rad) * dist;
-	end[1] = org[1] - sin (rad) * dist;	// QW: yaw 0 = +x, растёт по часовой
+	end[1] = org[1] + sin (rad) * dist;	// QW/FTE: yaw 0 = +x, yaw 90 = +y
 	end[2] = org[2];
 	tr = csqc_world_trace (start, NULL, NULL, end);
 	if (tr.fraction < 1)
@@ -4248,7 +4258,7 @@ static void csqc_droptofloor (void)
 		return;
 	}
 	VectorCopy (org, start);
-	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 4096;
+	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 512;	// FTE CSQC pr_csqc.c:5262
 	tr = csqc_world_trace (start, NULL, NULL, end);
 	if (tr.fraction >= 1 || tr.fraction <= 0)
 	{
@@ -4256,6 +4266,16 @@ static void csqc_droptofloor (void)
 		return;
 	}
 	org[0] = tr.endpos[0]; org[1] = tr.endpos[1]; org[2] = tr.endpos[2];
+	// FTE pr_csqc.c:5273-5274 — посадка на землю помечается FL_ONGROUND и
+	// groundentity (мир = world(0); мир-трасса ezq сущностей не бьёт — подмножество).
+	{
+		float *ff = csqc_ent_field (vm, entnum, "flags");
+		float *gf = csqc_ent_field (vm, entnum, "groundentity");
+		if (ff)
+			*ff = (float)((int)*ff | CSQC_FL_ONGROUND);
+		if (gf)
+			*(int *)gf = (tr.e.entnum > 0) ? tr.e.entnum * vm->edict_size : 0;
+	}
 	vm->globals[OFS_RETURN] = 1;
 }
 
