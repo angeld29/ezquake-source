@@ -2544,21 +2544,22 @@ void CL_SetSolidPlayers (int playernum)
 	}
 }
 
-// Builds the visedicts array for cl.time
-// Made up of: clients, packet_entities, nails, and tents
-void CL_EmitEntities (void) 
+static qbool CL_EmitEntitiesReady (void)
 {
 	if (cls.state != ca_active)
-		return;
+		return false;
 
 	if (cls.demoseeking)
-		return;
+		return false;
 
 	if (!cl.validsequence && !cls.nqdemoplayback)
-		return;
+		return false;
 
-	CL_ClearScene ();
+	return true;
+}
 
+static void CL_LinkEntityList (void)
+{
 	if (cls.nqdemoplayback) {
 		NQD_LinkEntities();
 	}
@@ -2569,6 +2570,30 @@ void CL_EmitEntities (void)
 	}
 
 	CL_UpdateTEnts();
+}
+
+// Builds the visedicts array for cl.time
+// Made up of: clients, packet_entities, nails, and tents
+void CL_EmitEntities (void) 
+{
+	if (!CL_EmitEntitiesReady())
+		return;
+
+	CL_ClearScene ();
+	CL_LinkEntityList ();
+}
+
+// CSQC #301 addentities(mask&1): merge engine entities into the existing list
+// without clearing it (FTE PF_R_AddEntityMask, pr_csqc.c:1391-1479, never clears).
+// In the takeover path clearing is the module's job via #300 clearscene; the
+// implicit CL_ClearScene in CL_EmitEntities would discard entities already added
+// with #302 addentity in the same frame (R4 / FTE-parity).
+void CL_EmitEntitiesKeepScene (void)
+{
+	if (!CL_EmitEntitiesReady())
+		return;
+
+	CL_LinkEntityList ();
 }
 
 int	mvd_fixangle;

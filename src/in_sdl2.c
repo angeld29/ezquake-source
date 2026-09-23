@@ -140,7 +140,11 @@ void IN_MouseMove (usercmd_t *cmd)
 		if (key_dest == key_game && CSQC_Client_HasInputEvent ()
 			&& !CSQC_Client_CSQCCursor ())
 		{
-			if (CSQC_Client_InputEvent (IE_MOUSEDELTA, mx, my, 0))
+			float dx = mx, dy = my;
+			// B14 (FTE-паритет pr_csqc.c:9070): дельты — в vid.conwidth-единицах,
+			// а mx/my — в render-2D.
+			CSQC_Client_ScaleCursorDelta (&dx, &dy);
+			if (CSQC_Client_InputEvent (IE_MOUSEDELTA, dx, dy, 0))
 			{
 				mouse_x = 0;
 				mouse_y = 0;

@@ -73,6 +73,10 @@ void CSQC_Client_GetListener (float *origin, float *forward, float *right, float
 qbool CSQC_Client_SetViewProperty (int prop, int argc, const float *args);
 void CSQC_Client_ApplyViewProps (void);
 void CSQC_Client_ResetViewProps (void);	// #300 clearscene: сброс view-свойств (FTE)
+// B22: гейт движкового sbar/HUD (#303 VF_DRAWENGINESBAR) и прицела (VF_DRAWCROSSHAIR)
+// под takeover; дефолты clearscene — оба false (FTE pr_csqc.c:2078-2079).
+qbool CSQC_Client_DrawEngineSbar (void);
+qbool CSQC_Client_DrawCrosshairFlag (void);
 // `#310 project` / `#311 unproject`.
 qbool CSQC_Client_Project (const float *world, float *sx, float *sy, float *sz);
 qbool CSQC_Client_Unproject (float sx, float sy, float sz, float *world);
@@ -166,6 +170,7 @@ void CSQC_Client_SetCursorMode (qbool usecursor, const char *image,
 qbool CSQC_Client_CSQCCursor (void);		// usecursor=1 && модуль загружен && в игре
 void CSQC_Client_DrawCursor (void);			// отрисовка курсора модуля (SCR_DrawCursor)
 void CSQC_Client_GetCursorPos (float *x, float *y);	// позиция указателя (#344, A3.2)
+void CSQC_Client_ScaleCursorDelta (float *x, float *y);	// B14: render-2D -> vid.conwidth (дельта мыши)
 void CSQC_Client_SetSensitivityScale (float scale);	// #346 setsensitivityscaler (C1.1)
 float CSQC_Client_SensitivityScale (void);	// множитель чувствительности (неактивен → 1)
 

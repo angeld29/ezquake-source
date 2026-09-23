@@ -326,7 +326,6 @@ void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int
 	extern cvar_t scr_coloredText;
 	static char buf[4096];
 	float saved;
-	(void)alpha;
 	if (!text)
 		return;
 	// Слой D шаг 2: масштаб шрифта из size.x (scale=size.x/8; 0 => 1). Цвет
@@ -337,7 +336,10 @@ void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int
 	// Цвет &cRGB — 3 hex-разряда (канал×16), а не &cRRGGBB.
 	snprintf (buf, sizeof (buf), "&c%X%X%X%s",
 		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, text);
-	Draw_SColoredStringBasic (x, y, buf, 0, (scale > 0) ? scale : 1, true);
+	// B15 (FTE-паритет drawcolouredstring, pr_menu.c:565): alpha применяется
+	// (R2D_ImageColours(...,alpha)); color=NULL -> цвет берётся из &c-кодов.
+	Draw_SColoredAlphaString (x, y, buf, NULL, 0, 0, (scale > 0) ? scale : 1,
+		bound (0, alpha, 1), true);
 	Cvar_SetValue (&scr_coloredText, saved);
 }
 
@@ -492,7 +494,9 @@ void CSQC_Client_DrawCharacter (float x, float y, int ch, int r, int g, int b, f
 	Cvar_SetValue (&scr_coloredText, 1);
 	snprintf (buf, sizeof (buf), "&c%X%X%X%c",
 		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, c);
-	Draw_SColoredStringBasic (x, y, buf, 0, (scale > 0) ? scale : 1, true);
+	// B15: alpha как FTE drawcharacter (pr_menu.c:1009).
+	Draw_SColoredAlphaString (x, y, buf, NULL, 0, 0, (scale > 0) ? scale : 1,
+		bound (0, alpha, 1), true);
 	Cvar_SetValue (&scr_coloredText, saved);
 }
 
@@ -535,15 +539,22 @@ qbool CSQC_Client_PicSize (const char *name, float *w, float *h)
 {
 	mpic_t *pic;
 	const char *ext;
+	char path[MAX_QPATH];
 	if (!name || !name[0])
 		return false;
 	// #318 FTE-паритет (PF_CL_drawgetimagesize, pr_menu.c:1093): R2D_SafeCachePic +
-	// R_GetShaderSizes резолвят ТОЧНОЕ имя, без auto-extension: "gfx/x.lmp" -> размер,
-	// "gfx/x" (без расширения) -> 0. ezq Draw_CachePicSafe strip/append'ит .lmp и на
-	// .lmp-пути отдаёт чужой размер -> читаем .lmp-заголовок напрямую (qpic_t: int w,h).
+	// R_GetShaderSizes. FTE резолвит имя через Image_GetTexture extension-fallback
+	// (r_imageextensions + COM_DefaultExtension(".lmp")) — bare-имя тоже резолвится
+	// (parity-audit 2026-09-22, задача A). ".lmp" читаем из заголовка напрямую
+	// (ezq Draw_CachePicSafe на .lmp-пути отдаёт чужой размер).
 	ext = COM_FileExtension (name);
 	if (!ext || !ext[0])
-		return false;
+	{
+		strlcpy (path, name, sizeof (path));
+		COM_DefaultExtension (path, ".lmp", sizeof (path));
+		name = path;
+		ext = COM_FileExtension (name);
+	}
 	if (!strcasecmp (ext, "lmp"))
 	{
 		// Заголовок .lmp (qpic_t): два int LE (см. SwapPic/LittleLong). wad.h не
@@ -575,18 +586,18 @@ void CSQC_Client_DrawRawText (float x, float y, const char *text, int r, int g, 
 	char one[2];
 	const char *p;
 	float xx;
-	(void)alpha;
 	if (!text)
 		return;
 	// «Сырой» вывод: каждый символ рисуется одиночным цветным глифом — внутри
 	// одной строки нет места для сборки &cRGB, поэтому & в тексте модуля
-	// выводится литерально (как FTE drawrawstring). Цвет применяется.
+	// выводится литерально (как FTE drawrawstring). Цвет и alpha применяются
+	// (FTE drawrawstring, pr_menu.c:1039).
 	xx = x;
 	for (p = text; *p; p++)
 	{
 		one[0] = *p;
 		one[1] = 0;
-		CSQC_Client_DrawCharacter (xx, y, (int)(unsigned char)*p, r, g, b, 1, scale);
+		CSQC_Client_DrawCharacter (xx, y, (int)(unsigned char)*p, r, g, b, alpha, scale);
 		xx += Draw_StringLength (one, 1, (scale > 0) ? scale : 1, true);
 	}
 }
@@ -633,13 +644,38 @@ qbool CSQC_Client_CSQCCursor (void)
 		&& key_dest == key_game;
 }
 
+// B14 (FTE-паритет): позиция/дельта мыши выдаются в vid.conwidth-единицах (как
+// Draw_* и контракт IE_MOUSEABS), тогда как cursor_x/y и mx/my — в render-2D
+// (VID_RenderWidth2D). FTE масштабирует *vid.width/vid.pixelwidth
+// (pr_csqc.c:9053 MOUSEABS, :9070 MOUSEDELTA). Эталон конверсии — SCR_UpdateCursor
+// (cl_screen.c:668-673).
+static float CSQC_Client_CursorScaleX (void)
+{
+	int rw = VID_RenderWidth2D ();
+	return (rw > 0) ? (float)vid.conwidth / (float)rw : 1.0f;
+}
+
+static float CSQC_Client_CursorScaleY (void)
+{
+	int rh = VID_RenderHeight2D ();
+	return (rh > 0) ? (float)vid.conheight / (float)rh : 1.0f;
+}
+
+void CSQC_Client_ScaleCursorDelta (float *x, float *y)
+{
+	if (x)
+		*x *= CSQC_Client_CursorScaleX ();
+	if (y)
+		*y *= CSQC_Client_CursorScaleY ();
+}
+
 void CSQC_Client_GetCursorPos (float *x, float *y)
 {
-	extern double cursor_x, cursor_y;	// cl_screen.c:161 (сырые координаты указателя)
+	extern double cursor_x, cursor_y;	// cl_screen.c:164 (render-2D координаты указателя)
 	if (x)
-		*x = (float)cursor_x;
+		*x = (float)cursor_x * CSQC_Client_CursorScaleX ();
 	if (y)
-		*y = (float)cursor_y;
+		*y = (float)cursor_y * CSQC_Client_CursorScaleY ();
 }
 
 void CSQC_Client_SetSensitivityScale (float scale)
@@ -666,9 +702,11 @@ void CSQC_Client_DrawCursor (void)
 		return;
 	// FTE: scale <= 0 -> 1; hotspot — «остриё» курсора в пикселях картинки
 	// (умножается на масштаб), т.е. позиция указывает на точку клика.
+	// B14: позиция курсора — в vid.conwidth-единицах (как Draw_*), а cursor_x/y —
+	// в render-2D; hotspot остаётся пиксельным (FTE in_generic.c).
 	scale = (s_cursormode.scale > 0) ? s_cursormode.scale : 1;
-	x = (float)cursor_x - s_cursormode.hotspot[0] * scale;
-	y = (float)cursor_y - s_cursormode.hotspot[1] * scale;
+	x = (float)cursor_x * CSQC_Client_CursorScaleX () - s_cursormode.hotspot[0] * scale;
+	y = (float)cursor_y * CSQC_Client_CursorScaleY () - s_cursormode.hotspot[1] * scale;
 
 	if (s_cursormode.cursorimage[0])
 	{
@@ -1772,6 +1810,13 @@ C5-E Ф1 (no-op revision): view/listener/view_angles + project/unproject.
 #define CSQC_VFP_ANGLES_X	16
 #define CSQC_VFP_ANGLES_Y	17
 #define CSQC_VFP_ANGLES_Z	18
+// B22: set-флаги (FTE pr_common.h:809-824, csdefs.qc:395-402). Значения — как
+// в FTE; VF_PERSPECTIVE распознаётся (return 1), но визуально не реализован
+// (accept+doc) — изометрия в ezq-рендере отсутствует.
+#define CSQC_VFP_DRAWWORLD	19
+#define CSQC_VFP_DRAWENGINESBAR	20
+#define CSQC_VFP_DRAWCROSSHAIR	21
+#define CSQC_VFP_PERSPECTIVE	200
 
 static qbool s_listener_on;
 static vec3_t s_listener_org, s_listener_fwd, s_listener_rht, s_listener_up;
@@ -1781,12 +1826,18 @@ static qbool s_vp_origin_set, s_vp_angles_set, s_vp_vrect_set, s_vp_fovx_set, s_
 static vec3_t s_vp_origin, s_vp_angles;
 static int s_vp_x, s_vp_y, s_vp_w, s_vp_h;
 static float s_vp_fovx, s_vp_fovy;
+// B22: set-флаги (FTE-дефолты clearscene, pr_csqc.c:2078-2079).
+static qbool s_vp_drawsbar = false;
+static qbool s_vp_drawcrosshair = false;
 
 static void CSQC_Client_ViewPropsReset (void)
 {
 	s_vp_on = false;
 	s_vp_origin_set = s_vp_angles_set = s_vp_vrect_set = false;
 	s_vp_fovx_set = s_vp_fovy_set = false;
+	// FTE clearscene: sbar/crosshair off (pr_csqc.c:2078-2079).
+	s_vp_drawsbar = false;
+	s_vp_drawcrosshair = false;
 }
 
 static void CSQC_Client_ViewReset (void)
@@ -1874,8 +1925,22 @@ qbool CSQC_Client_SetViewProperty (int prop, int argc, const float *args)
 		break;
 	case CSQC_VFP_FOVX: s_vp_fovx = args[0]; s_vp_fovx_set = true; break;
 	case CSQC_VFP_FOVY: s_vp_fovy = args[0]; s_vp_fovy_set = true; break;
+	case CSQC_VFP_DRAWWORLD:
+		// accept+doc: распознан (return 1); мир под takeover всегда рисует
+		// R_RenderView (r_rmain.c:939), аналога RDF_NOWORLDMODEL нет.
+		break;
+	case CSQC_VFP_DRAWENGINESBAR:
+		if (argc >= 1) s_vp_drawsbar = (args[0] != 0);
+		break;
+	case CSQC_VFP_DRAWCROSSHAIR:
+		if (argc >= 1) s_vp_drawcrosshair = (args[0] != 0);
+		break;
+	case CSQC_VFP_PERSPECTIVE:
+		// accept+doc: флаг распознан (return 1), изометрия в ezq-рендере не
+		// реализована (нет аналога r_refdef.useperspective).
+		break;
 	default:
-		handled = false;	// set-флаги/без аналога — FTE default возвращает 0
+		handled = false;	// без аналога — FTE default возвращает 0
 		break;
 	}
 	s_vp_on = s_vp_origin_set || s_vp_angles_set || s_vp_vrect_set || s_vp_fovx_set || s_vp_fovy_set;
@@ -1905,6 +1970,25 @@ void CSQC_Client_ApplyViewProps (void)
 		r_refdef.fov_x = s_vp_fovx;
 	if (s_vp_fovy_set)
 		r_refdef.fov_y = s_vp_fovy;
+}
+
+/*
+=================
+B22 (FTE-паритет): гейт движкового sbar/HUD и crosshair. FTE clearscene ставит
+r_refdef.drawsbar/drawcrosshair = false (pr_csqc.c:2078-2079), модуль возвращает их
+через #303 setproperty(VF_DRAWENGINESBAR/VF_DRAWCROSSHAIR, 1). Под takeover
+(CSQC_Client_SceneActive) cl_screen.c спрашивает эти аксессоры; вне takeover гейт
+не применяется (движковый HUD/прицел — как раньше).
+=================
+*/
+qbool CSQC_Client_DrawEngineSbar (void)
+{
+	return s_vp_drawsbar;
+}
+
+qbool CSQC_Client_DrawCrosshairFlag (void)
+{
+	return s_vp_drawcrosshair;
 }
 
 // C5-E: публикация глобала view_angles (перед CSQC_UpdateView).

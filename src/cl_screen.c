@@ -801,7 +801,10 @@ static void SCR_DrawElements(void)
 					SCR_VoiceMeter();
 				}
 
-				if ((key_dest != key_menu) && (scr_showcrosshair.integer || (!sb_showscores && !sb_showteamscores)))
+				// B22 (FTE-паритет): под takeover прицел рисуется только если модуль
+				// вернул VF_DRAWCROSSHAIR=1 (clearscene по умолчанию его гасит).
+				if ((key_dest != key_menu) && (scr_showcrosshair.integer || (!sb_showscores && !sb_showteamscores))
+					&& (!CSQC_Client_SceneActive () || CSQC_Client_DrawCrosshairFlag ()))
 				{
 					Draw_Crosshair ();
 				}
@@ -833,8 +836,13 @@ static void SCR_DrawElements(void)
 				if (CL_MultiviewEnabled())
 					SCR_DrawMultiviewOverviewElements ();
 
-				Sbar_Draw();
-				HUD_Draw();
+				// B22 (FTE-паритет): под takeover модуль владеет sbar/HUD; движковые
+				// рисуются только если модуль вернул VF_DRAWENGINESBAR=1.
+				if (!CSQC_Client_SceneActive () || CSQC_Client_DrawEngineSbar ())
+				{
+					Sbar_Draw();
+					HUD_Draw();
+				}
 				HUD_Editor_Draw();
 
 				DemoControls_Draw();

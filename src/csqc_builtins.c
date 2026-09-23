@@ -628,7 +628,7 @@ static void csqc_addentities (void)
 		return;
 	mask = (int)vm->globals[OFS_PARM0];
 	if (mask & 1)
-		CL_EmitEntities ();
+		CL_EmitEntitiesKeepScene ();	// B19: merge без CL_ClearScene (FTE PF_R_AddEntityMask)
 	if (mask & 2)
 		CSQC_Client_LinkViewModel ();
 	for (e = 1; e < vm->num_edicts; e++)
