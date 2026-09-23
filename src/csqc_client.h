@@ -218,8 +218,11 @@ qbool CSQC_Client_ParseAllowed (void);
 qbool CSQC_Client_MayRead (void);
 // Парсинг svc_fte_csqcentities(76) (S1; sized-92 — E3).
 void CSQC_Client_ParseEntities (qbool sized);
-// Парсинг svc_fte_cgamepacket(83) (E1): модуль сам читает имя + payload.
-void CSQC_Client_ParseEvent (void);
+// Парсинг svc_fte_cgamepacket(83)/sized(90) (E1): модуль сам читает имя + payload.
+// sized=true — caller (cl_parse.c case 90) сам дрейнит остаток по длине; sized=false
+// (case 83) длины нет — без живого модуля/колбэка это протокольная ошибка (B5,
+// FTE Host_EndGame pr_csqc.c:9240-9247).
+void CSQC_Client_ParseEvent (qbool sized);
 
 // Register the builtin table of the client instance (implemented in csqc_builtins.c).
 void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);

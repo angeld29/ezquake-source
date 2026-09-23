@@ -93,6 +93,13 @@ struct pr1vm_s
 	// VM-type condition.
 	char *(*get_string)(pr1vm_t *vm, int num);
 
+	// B21 (FTE stateop, qclib/execloop.h:972): per-instance OP_STATE handler.
+	// NULL = default fixed classic layout (server/trusted instances — byte-for-byte
+	// the previous behaviour); the client CSQC VM installs one that resolves the
+	// module's own field/global offsets. Keeps the shared core free of any
+	// VM-type condition.
+	void (*stateop)(pr1vm_t *vm, float frame, func_t func);
+
 	// Abort-stack (ADR 0019, A1/A2): when abortbuf_valid is set (client VM),
 	// PR_RunError unwinds here instead of continuing the faulting statement.
 	// abortbuf points at the *outermost* active frame's stack-local jmp_buf

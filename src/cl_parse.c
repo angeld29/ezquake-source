@@ -4260,7 +4260,7 @@ void CL_ParseServerMessage (void)
 					extern cvar_t cl_pext_csqc;
 					if (cl_pext_csqc.value && (cls.fteprotocolextensions & FTE_PEXT_CSQC))
 					{
-						CSQC_Client_ParseEvent ();
+						CSQC_Client_ParseEvent (false);
 						break;
 					}
 #endif
@@ -4278,7 +4278,7 @@ void CL_ParseServerMessage (void)
 #if defined(FTE_PEXT_CSQC) && !defined(CLIENTONLY)
 					extern cvar_t cl_pext_csqc;
 					if (cl_pext_csqc.value && (cls.fteprotocolextensions & FTE_PEXT_CSQC))
-						CSQC_Client_ParseEvent ();
+						CSQC_Client_ParseEvent (true);
 #endif
 					// skip-защита: дочитать невычитанный остаток payload
 					{

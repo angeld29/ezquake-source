@@ -1224,7 +1224,10 @@ static void csqc_sendevent (void)
 
 	if (!vm)
 		return;
-	if (cls.state != ca_active)
+	// B8 (FTE pr_csqc.c:3801): sendevent требует лишь активного соединения, не ca_active.
+	// CSQC_Client_ConnectCheck зовёт CSQC_Init из CL_MakeActive до cls.state = ca_active
+	// (cl_main.c:437-440) — события из CSQC_Init обязаны уходить на сервер.
+	if (!cls.state)
 		return;
 	if (!cl_pext_csqc.value)
 		return;

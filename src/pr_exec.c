@@ -1000,6 +1000,15 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			break;
 
 		case OP_STATE:
+			// B21 (FTE qclib/execloop.h:972 -> externs->stateop): per-instance
+			// handler. The client CSQC VM resolves the module's own field/global
+			// offsets; NULL (server PR1/NQ/trusted) keeps the classic fixed layout
+			// byte-for-byte.
+			if (vm->stateop)
+			{
+				vm->stateop (vm, a->_float, b->function);
+				break;
+			}
 			ed = PR1VM_ProgToEdict(vm, vm->global_struct->self);
 			ed->v->nextthink = vm->global_struct->time + 0.1;
 			if (a->_float != ed->v->frame)

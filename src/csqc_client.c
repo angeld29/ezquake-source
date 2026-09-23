@@ -107,6 +107,9 @@ typedef struct csqc_client_state_s
 	// #1 makevectors (C6.1): глобалы v_forward/v_right/v_up модуля (или -1).
 	int			g_vfwd, g_vright, g_vup;
 	int			g_view_angles;	// C5-E: глобал view_angles (или -1)
+	// B4: симулированные глобалы уровня FTE (или -1): frametime/cltime/maxclients/
+	// player_localnum/intermission (pr_csqc.c:8818-8838).
+	int			g_frametime, g_cltime, g_maxclients, g_player_localnum, g_intermission;
 	// Скачивание csprogs (локально нет валидного файла): качаем *csprogsname с
 	// сервера и сохраняем в csprogsvers/<crc>.dat (как FTE); загружаем после
 	// появления валидного файла (см. CSQC_Client_Update).
@@ -851,11 +854,51 @@ char *CSQC_Client_GetString (pr1vm_t *vm, int num)
 Внутренние помощники
 =================
 */
+// B4: map-uptime клиента и предыдущий cl.time для frametime (FTE
+// pr_csqc.c:8818-8838: frametime = bound(0, cl.time - cl.lasttime, 0.1),
+// cltime = realtime - cl.mapstarttime).
+static double s_mapstarttime;
+static double s_prev_cltime;
+
+// B4: симулированное серверное время модуля. FTE: *csqcg.time = cl.servertime
+// (pr_csqc.c:8839-8840); если сервер не шлёт STAT_TIME/svc_time — клиентский
+// map-uptime (тот же часовой домен, что cltime).
+static double CSQC_Client_TimeNow (void)
+{
+	if (cl.servertime_works)
+		return cl.servertime;
+	return cls.realtime - s_mapstarttime;
+}
+
 static void CSQC_Client_SetTime (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 	if (s_csqc.global_time >= 0)
-		vm->globals[s_csqc.global_time] = (float)Sys_DoubleTime ();
+		vm->globals[s_csqc.global_time] = (float)CSQC_Client_TimeNow ();
+}
+
+// B21 (FTE CSQC_StateOp pr_csqc.c:7868-7875): OP_STATE клиентского модуля — по
+// его собственным field/global-офсетам (не по фикс. entvars_t/globalvars_t).
+// self — арена-слот (движок пишет raw = slot*edict_size); поля — через резолв
+// модуля (f_nextthink/f_frame/f_think), time — через global_time.
+static void CSQC_Client_StateOp (pr1vm_t *vm, float frame, func_t func)
+{
+	float *v;
+	int slot = 0;
+
+	if (s_csqc.global_self >= 0)
+		slot = *(int *)&vm->globals[s_csqc.global_self] / vm->edict_size;
+	if (slot < 0 || slot >= vm->max_edicts)
+		return;
+	v = (float *)((byte *)vm->game_edicts + (size_t)slot * vm->edict_size);
+
+	if (s_csqc.f_nextthink >= 0)
+		v[s_csqc.f_nextthink] = ((s_csqc.global_time >= 0)
+			? vm->globals[s_csqc.global_time] : 0.0f) + 0.1f;
+	if (s_csqc.f_frame >= 0 && frame != v[s_csqc.f_frame])
+		v[s_csqc.f_frame] = frame;
+	if (s_csqc.f_think >= 0)
+		*(int *)&v[s_csqc.f_think] = (int)func;
 }
 
 static qbool CSQC_Client_Exec (int fidx)
@@ -2852,6 +2895,8 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
+	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
+	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
 	s_last_seq = 0;
 	s_ccframe = 0;
 
@@ -2860,6 +2905,7 @@ static qbool CSQC_Client_Load (const char *path)
 	vm->host_print = CSQC_Client_HostPrint;
 	vm->abortbuf_valid = true;	// A1: client VM unwinds via the abort-stack
 	vm->get_string = CSQC_Client_GetString;	// option 2: bounded untrusted csprogs strings
+	vm->stateop = CSQC_Client_StateOp;	// B21: OP_STATE по field/global модуля
 
 	if (!PR1VM_LoadClientV6 (vm, data, filesize))
 	{
@@ -2972,6 +3018,12 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_vup = PR1VM_FindGlobal (vm, "v_up");
 	// C5-E Ф1: глобал view_angles (публикуется каждый кадр).
 	s_csqc.g_view_angles = PR1VM_FindGlobal (vm, "view_angles");
+	// B4: симулированные глобалы (FTE pr_csqc.c:8818-8838).
+	s_csqc.g_frametime = PR1VM_FindGlobal (vm, "frametime");
+	s_csqc.g_cltime = PR1VM_FindGlobal (vm, "cltime");
+	s_csqc.g_maxclients = PR1VM_FindGlobal (vm, "maxclients");
+	s_csqc.g_player_localnum = PR1VM_FindGlobal (vm, "player_localnum");
+	s_csqc.g_intermission = PR1VM_FindGlobal (vm, "intermission");
 
 	s_csqc.loaded = true;
 
@@ -3046,6 +3098,11 @@ void CSQC_Client_ConnectCheck (void)
 	char path[MAX_QPATH];
 	char *crcend;
 	qbool anycsqc;
+
+	// B4: клиентский map-uptime (FTE cltime = realtime-cl.mapstarttime) и база
+	// frametime (cl.time - prev). Ставится на каждый вход в мир.
+	s_mapstarttime = cls.realtime;
+	s_prev_cltime = cl.time;
 
 	// Мастер-выключатель (аналог FTE cl_nocsqc): 0 — весь CSQC отключён,
 	// модуль не грузится, клиент ведёт себя как раньше.
@@ -3524,6 +3581,38 @@ int CSQC_Client_QCToKeynum (int code)
 
 /*
 =================
+CSQC_Client_PublishSimGlobals
+
+B4 (FTE pr_csqc.c:8818-8838): симулированные глобалы модуля — frametime, cltime,
+maxclients, player_localnum, intermission. Публикуются каждый кадр до
+CSQC_UpdateView. frametime — дельта клиентского времени (FTE cl.time-cl.lasttime);
+cltime — клиентский map-uptime; maxclients — serverinfo (QW-ключ).
+=================
+*/
+static void CSQC_Client_PublishSimGlobals (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (s_csqc.g_frametime >= 0)
+		vm->globals[s_csqc.g_frametime] = cl.paused
+			? 0 : (float)bound (0, cl.time - s_prev_cltime, 0.1);
+	if (s_csqc.g_cltime >= 0)
+		vm->globals[s_csqc.g_cltime] = (float)(cls.realtime - s_mapstarttime);
+	if (s_csqc.g_maxclients >= 0)
+	{
+		const char *mc = Info_ValueForKey (cl.serverinfo, "maxclients");
+		vm->globals[s_csqc.g_maxclients] = (float)((mc && mc[0]) ? atoi (mc) : 0);
+	}
+	if (s_csqc.g_player_localnum >= 0)
+		vm->globals[s_csqc.g_player_localnum] = (cl.viewplayernum >= 0) ? cl.viewplayernum : 0;
+	if (s_csqc.g_intermission >= 0)
+		vm->globals[s_csqc.g_intermission] = cl.intermission ? 1 : 0;
+
+	s_prev_cltime = cl.time;
+}
+
+/*
+=================
 CSQC_Client_Update
 
 Вызывается каждый 2D-кадр (HUD-фаза, cl_screen.c). WorldLoaded — один раз
@@ -3607,6 +3696,8 @@ void CSQC_Client_Update (void)
 	// cl.gamespeed → 1; на серверной паузе 0 (как FTE).
 	if (s_csqc.global_gamespeed >= 0)
 		s_csqc.vm.globals[s_csqc.global_gamespeed] = (cl.paused & PAUSED_SERVER) ? 0 : 1;
+	// B4: frametime/cltime/maxclients/player_localnum/intermission (FTE).
+	CSQC_Client_PublishSimGlobals ();
 
 	// E1a/E1b #371 deltalisten: мост player_state/entity_state → arena-edict
 	// каждый кадр (FTE-модель: CL_LinkPlayers/CL_LinkPacketEntities per-frame).
@@ -3838,8 +3929,24 @@ void CSQC_Client_ParseEntities (qbool sized)
 		s_csqc.mayread = true;	// R7/T1.4a: read*-контекст модуля (паритет FTE csqc_mayread)
 		CSQC_Client_Exec (s_csqc.func_entupdate);
 		s_csqc.mayread = false;
+
 		if (s_csqc.errored)
-			return;
+		{
+			// B5: модуль упал mid-message — нельзя выходить, оставив остаток списка
+			// (он будет разобран как svc-опкоды). Non-sized (76) длины payload не
+			// знает → ресинк невозможен, фатально (FTE Host_EndGame). Sized (92):
+			// дочитываем текущий payload и далее идём в drain-режим по остатку.
+			if (!sized)
+				Host_Error ("CSQC_Client_ParseEntities: update module error\n");
+			if (payload_len >= 0)
+			{
+				int used = msg_readcount - payload_start;
+				if (used < payload_len)
+					MSG_ReadSkip (payload_len - used);
+			}
+			ready = false;
+			continue;
+		}
 
 		// Q-E (FTE pr_csqc.c:9693-9694): Spawn-модуль может сменить self в Update —
 		// переносим номер→слот на новый валидный слот (0 = снят/мир).
@@ -3864,15 +3971,30 @@ CSQC_Client_ParseEvent
 ParseEntities — без модуля чужой CSQC-multicast (echo) не роняет клиент.
 =================
 */
-void CSQC_Client_ParseEvent (void)
+void CSQC_Client_ParseEvent (qbool sized)
 {
-	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+	qbool ready = CSQC_Client_ParseAllowed ()
+		&& s_csqc.loaded && s_csqc.inited && !s_csqc.errored
+		&& s_csqc.func_parseevent > 0;
+
+	// B5 (FTE CSQC_ParseGamePacket pr_csqc.c:9212-9255): sized-поток caller
+	// (cl_parse.c case 90) дрейнит по длине сам — здесь достаточно вернуться;
+	// non-sized (case 83) длины не имеет, поэтому без модуля/колбэка это
+	// протокольная ошибка (FTE Host_EndGame) — иначе остаток payload разберётся
+	// как svc-опкоды и даст misparse.
+	if (!ready)
+	{
+		if (!sized)
+			Host_Error ("CSQC_Client_ParseEvent: cgamepacket without CSQC\n");
 		return;
-	if (s_csqc.func_parseevent <= 0)
-		return;
+	}
 	s_csqc.mayread = true;	// R7/T1.4a: read*-контекст модуля (паритет FTE csqc_mayread)
 	CSQC_Client_Exec (s_csqc.func_parseevent);
 	s_csqc.mayread = false;
+	// B5: модуль мог упасть на середине payload. Sized — caller дрейнит по длине;
+	// non-sized длину не знает → фатально (как FTE Host_EndGame).
+	if (s_csqc.errored && !sized)
+		Host_Error ("CSQC_Client_ParseEvent: cgamepacket module error\n");
 }
 
 /*
@@ -4634,6 +4756,8 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.p_org = s_csqc.p_vel = s_csqc.p_onground = -1;
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
+	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
+	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
 	s_last_seq = 0;
 	s_ccframe = 0;
 }
