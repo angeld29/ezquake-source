@@ -334,10 +334,85 @@ void CSQC_Client_GetScreenSize (int *w, int *h)
 		*h = vid.height;
 }
 
+// T4 ^-разметка FTE -> &cRGB-раны (colour/state-подмножество, план
+// .opencode/plans/csqc-pr1vm-engine-strcolor-render.md, контракт docs/adr/0030-csqc-strcolor-markup.md).
+// Вход: ^0-9 (q3), ^xRGB (3 hex), ^d (reset), ^^ (литерал); &c/&r копируются. Extended
+// (^&XX/^b/^h/^m/^a/^s/^r/links/charset/^U/^{) — вне scope. Палитра ^0-9 — FTE consolecolours
+// (fteqw/engine/common/common.c:3621, маппинг q3codemasks :3642), квантование 16 уровней/канал
+// (&c-ниббл); ^8 (half-alpha white) рисуется белым — alpha-отклонение (doc). out==NULL — подсчёт длины.
+static const char *csqc_q3_nibbles[10] = {
+	"000", "F55", "5F5", "FF5", "55F", "5FF", "F5F", "FFF", "FFF", "BBB"
+};
+
+static int csqc_hexval (int c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	return -1;
+}
+
+static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsize)
+{
+	size_t n = 0;
+	if (!in)
+		in = "";
+	// PUT: копирует байт, безопасно для out==NULL (только длина) и переполнения.
+#define PUT(ch) do { if (out && outsize && n + 1 < outsize) out[n] = (char)(ch); n++; } while (0)
+	for (; *in; in++)
+	{
+		if (in[0] == '^' && in[1] >= '0' && in[1] <= '9')
+		{
+			const char *p = csqc_q3_nibbles[in[1] - '0'];
+			PUT ('&'); PUT ('c'); PUT (p[0]); PUT (p[1]); PUT (p[2]);
+			in += 1;
+			continue;
+		}
+		if (in[0] == '^' && in[1] == 'x')
+		{
+			if (csqc_hexval (in[2]) >= 0 && csqc_hexval (in[3]) >= 0 && csqc_hexval (in[4]) >= 0)
+			{
+				PUT ('&'); PUT ('c'); PUT (in[2]); PUT (in[3]); PUT (in[4]);
+				in += 4;
+			}
+			else
+			{
+				// невалидный hex: скипаем "^x" целиком (FTE str+=2, common.c:4413;
+				// паритет со стрипом #476/#477, ADR 0030) — 'x' не рисуется.
+				in += 1;
+			}
+			continue;
+		}
+		if (in[0] == '^' && in[1] == 'd')
+		{
+			PUT ('&'); PUT ('r');
+			in += 1;
+			continue;
+		}
+		if (in[0] == '^' && in[1] == '^')
+		{
+			PUT ('^');
+			in += 1;
+			continue;
+		}
+		// неизвестный/висячий '^' — литерал (FTE messedup, common.c:4523): '^' в out,
+		// следующий символ обрабатывается на след. итерации.
+		PUT (*in);
+	}
+	if (out && outsize)
+		out[(n < outsize) ? n : outsize - 1] = 0;
+	return (int)n;
+#undef PUT
+}
+
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale)
 {
 	extern cvar_t scr_coloredText;
-	static char buf[4096];
+	static char buf[16384];
+	int prefix;
 	float saved;
 	if (!text)
 		return;
@@ -347,8 +422,12 @@ void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int
 	saved = scr_coloredText.value;
 	Cvar_SetValue (&scr_coloredText, 1);
 	// Цвет &cRGB — 3 hex-разряда (канал×16), а не &cRRGGBB.
-	snprintf (buf, sizeof (buf), "&c%X%X%X%s",
-		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16, text);
+	prefix = snprintf (buf, sizeof (buf), "&c%X%X%X",
+		(bound (0, r, 255)) / 16, (bound (0, g, 255)) / 16, (bound (0, b, 255)) / 16);
+	if (prefix < 0)
+		prefix = 0;
+	// T4: ^-разметка модуля -> &cRGB-раны после базового цвета (см. транслятор выше).
+	CSQC_Client_TranslateMarkup (text, buf + prefix, sizeof (buf) - prefix);
 	// B15 (FTE-паритет drawcolouredstring, pr_menu.c:565): alpha применяется
 	// (R2D_ImageColours(...,alpha)); color=NULL -> цвет берётся из &c-кодов.
 	Draw_SColoredAlphaString (x, y, buf, NULL, 0, 0, (scale > 0) ? scale : 1,
@@ -522,14 +601,22 @@ void CSQC_Client_DrawLine (float x1, float y1, float x2, float y2, float width, 
 
 float CSQC_Client_StringWidth (const char *text, qbool usecolours, float fontsize_x)
 {
+	static char wbuf[16384];
 	float scale;
 	if (!text)
 		return 0;
 	// Масштаб из size.x (как DrawText; 0 => 1) — та же метрика, что рисует
 	// drawstring: r_draw_charset.c Draw_StringLength/Colors.
 	scale = (fontsize_x > 0) ? fontsize_x / 8.0f : 1;
-	return usecolours ? Draw_StringLengthColors (text, -1, scale, true)
-		: Draw_StringLength (text, -1, scale, true);
+	if (usecolours)
+	{
+		// T4: ^-коды не считаются символами ширины (FTE #327 со снятым markup) —
+		// та же трансляция, что в DrawText, затем Draw_StringLengthColors пропускает &c/&r.
+		CSQC_Client_TranslateMarkup (text, wbuf, sizeof (wbuf));
+		return Draw_StringLengthColors (wbuf, -1, scale, true);
+	}
+	// usecolours=0: FTE #327 держит markup (keepmarkup) и считает его символы — оригинал.
+	return Draw_StringLength (text, -1, scale, true);
 }
 
 qbool CSQC_Client_PrecachePic (const char *name)
