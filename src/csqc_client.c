@@ -334,14 +334,26 @@ void CSQC_Client_GetScreenSize (int *w, int *h)
 		*h = vid.height;
 }
 
-// T4 ^-разметка FTE -> &cRGB-раны (colour/state-подмножество, план
-// .opencode/plans/csqc-pr1vm-engine-strcolor-render.md, контракт docs/adr/0030-csqc-strcolor-markup.md).
-// Вход: ^0-9 (q3), ^xRGB (3 hex), ^d (reset), ^^ (литерал); &c/&r копируются. Extended
-// (^&XX/^b/^h/^m/^a/^s/^r/links/charset/^U/^{) — вне scope. Палитра ^0-9 — FTE consolecolours
-// (fteqw/engine/common/common.c:3621, маппинг q3codemasks :3642), квантование 16 уровней/канал
-// (&c-ниббл); ^8 (half-alpha white) рисуется белым — alpha-отклонение (doc). out==NULL — подсчёт длины.
+// T4 ^-разметка FTE -> &cRGB-раны. Контракт docs/adr/0030-csqc-strcolor-markup.md,
+// ход — .opencode/plans/csqc-pr1vm-engine-strcolor-render.md (Этапы 2/3).
+// Реализовано: ^0-9 (q3), ^xRGB (3 hex), ^&XY extended FG (палитра consolecolours[16];
+// BG не выразим в draw-пути — doc), ^d (reset), ^s/^r (стек цвета, глубина 4 как FTE
+// extstack), consume ^b/^h/^m/^a (флаги не рисуются — doc), ^^ (литерал); неизвестный/
+// висячий ^ — литерал (FTE messedup, common.c:4523); &c/&r копируются.
+// Вне scope (accept+doc, ADR 0030): links ^[..^], charset `u8:`/`k8:`, ^Uxxxx/^{xxxx},
+// ezquakemess, визуальные эффекты blink/halfalpha/2nd charset и BG.
+// Палитры — FTE consolecolours (fteqw/engine/common/common.c:3621), квантование 16
+// уровней/канал (&c-ниббл); q3codemasks :3642; ^8 (half-alpha white) рисуется белым —
+// alpha-отклонение. out==NULL — только подсчёт длины.
 static const char *csqc_q3_nibbles[10] = {
 	"000", "F55", "5F5", "FF5", "55F", "5FF", "F5F", "FFF", "FFF", "BBB"
+};
+
+// ^&XY extended FG: X/Y — индекс consolecolours[16] (fteqw/engine/common/console.h:66-81),
+// квантование 4 бит/канал (как q3-таблица выше).
+static const char *csqc_console_nibbles[16] = {
+	"000", "00B", "0B0", "0BB", "B00", "B0B", "B50", "BBB",
+	"555", "55F", "5F5", "5FF", "F55", "F5F", "FF5", "FFF"
 };
 
 static int csqc_hexval (int c)
@@ -355,19 +367,39 @@ static int csqc_hexval (int c)
 	return -1;
 }
 
+// ^&XY код-символ: 0-9, A-F (FTE isextendedcode; зеркало CSQCVM_IsExtCode,
+// csqc_builtins.c:3000). Возврат — индекс consolecolours 0-15 или -1 ('-'/невалид).
+static int csqc_ext_index (int c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
 static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsize)
 {
 	size_t n = 0;
+	char curfg[3];		// текущий FG (&c-нибблы)
+	int have_col = 0;	// 0 = default/white (=&r), 1 = цветной
+	char stackfg[4][3];	// стек ^s/^r (FTE extstack, глубина 4)
+	int stackcol[4];
+	int sp = 0;
+
 	if (!in)
 		in = "";
 	// PUT: копирует байт, безопасно для out==NULL (только длина) и переполнения.
 #define PUT(ch) do { if (out && outsize && n + 1 < outsize) out[n] = (char)(ch); n++; } while (0)
+	// SETFG: запомнить текущий FG (для ^s/^r).
+#define SETFG(p) do { curfg[0] = (p)[0]; curfg[1] = (p)[1]; curfg[2] = (p)[2]; have_col = 1; } while (0)
 	for (; *in; in++)
 	{
 		if (in[0] == '^' && in[1] >= '0' && in[1] <= '9')
 		{
 			const char *p = csqc_q3_nibbles[in[1] - '0'];
 			PUT ('&'); PUT ('c'); PUT (p[0]); PUT (p[1]); PUT (p[2]);
+			SETFG (p);
 			in += 1;
 			continue;
 		}
@@ -376,6 +408,7 @@ static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsiz
 			if (csqc_hexval (in[2]) >= 0 && csqc_hexval (in[3]) >= 0 && csqc_hexval (in[4]) >= 0)
 			{
 				PUT ('&'); PUT ('c'); PUT (in[2]); PUT (in[3]); PUT (in[4]);
+				SETFG (in + 2);
 				in += 4;
 			}
 			else
@@ -386,9 +419,80 @@ static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsiz
 			}
 			continue;
 		}
+		if (in[0] == '^' && in[1] == '&')
+		{
+			// ^&XY extended FG/BG (FTE common.c:4177-4207): реализуем FG (BG не выразим
+			// в draw-пути — отклонение, ADR 0030); Y игнорируется.
+			if ((csqc_ext_index (in[2]) >= 0 || in[2] == '-') &&
+				(csqc_ext_index (in[3]) >= 0 || in[3] == '-'))
+			{
+				if (in[2] == '-')
+				{
+					// default FG = white (FTE COLOR_WHITE, common.c:4186)
+					PUT ('&'); PUT ('r');
+					have_col = 0;
+				}
+				else
+				{
+					const char *p = csqc_console_nibbles[csqc_ext_index (in[2])];
+					PUT ('&'); PUT ('c'); PUT (p[0]); PUT (p[1]); PUT (p[2]);
+					SETFG (p);
+				}
+				in += 3;
+			}
+			else
+			{
+				// невалид: '^' литерал, '&' на след. итерации (FTE messedup)
+				PUT (*in);
+			}
+			continue;
+		}
 		if (in[0] == '^' && in[1] == 'd')
 		{
 			PUT ('&'); PUT ('r');
+			have_col = 0;
+			in += 1;
+			continue;
+		}
+		if (in[0] == '^' && (in[1] == 'b' || in[1] == 'h' || in[1] == 'm' || in[1] == 'a'))
+		{
+			// FTE toggle blink/halfalpha/2nd charset (common.c:4290-4304); флаги не
+			// выразимы в draw-пути — код потребляем (паритет ширины), эффект — doc.
+			in += 1;
+			continue;
+		}
+		if (in[0] == '^' && in[1] == 's')
+		{
+			// push стека (FTE extstack, common.c:4305-4312); храним только цвет.
+			if (sp < (int)(sizeof (stackcol) / sizeof (stackcol[0])))
+			{
+				stackfg[sp][0] = curfg[0];
+				stackfg[sp][1] = curfg[1];
+				stackfg[sp][2] = curfg[2];
+				stackcol[sp] = have_col;
+				sp++;
+			}
+			in += 1;
+			continue;
+		}
+		if (in[0] == '^' && in[1] == 'r')
+		{
+			// pop стека (FTE common.c:4313-4320): восстановить цвет.
+			if (sp > 0)
+			{
+				sp--;
+				if (stackcol[sp])
+				{
+					const char *p = stackfg[sp];
+					PUT ('&'); PUT ('c'); PUT (p[0]); PUT (p[1]); PUT (p[2]);
+					SETFG (p);
+				}
+				else
+				{
+					PUT ('&'); PUT ('r');
+					have_col = 0;
+				}
+			}
 			in += 1;
 			continue;
 		}
@@ -406,6 +510,7 @@ static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsiz
 		out[(n < outsize) ? n : outsize - 1] = 0;
 	return (int)n;
 #undef PUT
+#undef SETFG
 }
 
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale)
