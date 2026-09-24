@@ -290,6 +290,11 @@ void V_ParseDamage (void)
 
 	cl.faceanimtime = cl.time + 0.2;		// put sbar face into pain frame
 
+	// Э2: сетевой колбэк урона; return != 0 => модуль подавляет цветосдвиг/view-kick
+	// (FTE view.c:512-515). Проверяем после faceanim (как FTE), до hurtblur/cshift.
+	if (CSQC_Client_ParseDamage (armor, blood, from))
+		return;
+
 	cl.hurtblur = cl.time + count / 24;		// use hurt motion blur.
 
 	cl.cshifts[CSHIFT_DAMAGE].percent += 3*count;

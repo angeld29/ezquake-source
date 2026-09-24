@@ -275,6 +275,10 @@ void CSQC_Client_ParseEvent (qbool sized);
 qbool CSQC_Client_ParsePrint (const char *msg, int level);
 qbool CSQC_Client_ParseCenterPrint (const char *msg);
 
+// Э2: сетевой колбэк урона. true, если модуль вернул != 0 (подавить цветосдвиг/
+// view-kick движка, FTE pr_csqc.c:9287, view.c:513).
+qbool CSQC_Client_ParseDamage (float save, float take, const vec3_t source);
+
 // Register the builtin table of the client instance (implemented in csqc_builtins.c).
 void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
 

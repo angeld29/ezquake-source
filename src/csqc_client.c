@@ -78,6 +78,7 @@ typedef struct csqc_client_state_s
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
 	int			func_parseprint, func_parsecp;	// Э1: CSQC_Parse_Print / CSQC_Parse_CenterPrint
+	int			func_parsedamage;	// Э2: CSQC_Parse_Damage (или -1)
 	int			func_entspawn;	// CSQC_Ent_Spawn (или -1; R7/T1.3a, FTE-паритет)
 	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
@@ -3185,6 +3186,7 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_parseprint = s_csqc.func_parsecp = -1;
+	s_csqc.func_parsedamage = -1;
 	s_csqc.func_entspawn = -1;
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
@@ -3274,6 +3276,10 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_Parse_CenterPrint");
 	if (f)
 		s_csqc.func_parsecp = (int)(f - vm->functions);
+	// Э2: сетевой колбэк урона (FTE pr_common.h:1090).
+	f = PR1VM_FindFunction (vm, "CSQC_Parse_Damage");
+	if (f)
+		s_csqc.func_parsedamage = (int)(f - vm->functions);
 	f = PR1VM_FindFunction (vm, "CSQC_Input_Frame");
 	if (f)
 		s_csqc.func_input = (int)(f - vm->functions);
@@ -4168,6 +4174,33 @@ qbool CSQC_Client_ParseCenterPrint (const char *msg)
 
 	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)(msg ? msg : ""));
 	CSQC_Client_ExecRet (s_csqc.func_parsecp, &ret);
+	return ret != 0;
+}
+
+/*
+=================
+CSQC_Client_ParseDamage
+
+Э2: CSQC_Parse_Damage(float save, float take, vector inflictororg) — разбор svc_damage
+(V_ParseDamage). FTE pr_csqc.c:9287-9304: PARM0=save(dmg_save), PARM1=take(dmg_take),
+PARM2=вектор источника; return≠0 ⇒ полностью подавить цветосдвиг/view-kick (view.c:513).
+Возврат — подавлять ли движковые эффекты урона.
+=================
+*/
+qbool CSQC_Client_ParseDamage (float save, float take, const vec3_t source)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	float ret = 0;
+
+	if (!s_csqc.loaded || s_csqc.errored || s_csqc.func_parsedamage <= 0)
+		return false;
+
+	vm->globals[OFS_PARM0] = save;
+	vm->globals[OFS_PARM1] = take;
+	vm->globals[OFS_PARM2 + 0] = source[0];
+	vm->globals[OFS_PARM2 + 1] = source[1];
+	vm->globals[OFS_PARM2 + 2] = source[2];
+	CSQC_Client_ExecRet (s_csqc.func_parsedamage, &ret);
 	return ret != 0;
 }
 
@@ -5130,6 +5163,7 @@ void CSQC_Client_Disconnect (void)
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
 	s_csqc.func_parseprint = s_csqc.func_parsecp = -1;
+	s_csqc.func_parsedamage = -1;
 	s_csqc.func_entspawn = -1;
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
