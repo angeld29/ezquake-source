@@ -269,6 +269,12 @@ void CSQC_Client_ParseEntities (qbool sized);
 // FTE Host_EndGame pr_csqc.c:9240-9247).
 void CSQC_Client_ParseEvent (qbool sized);
 
+// Э1: сетевые печатные колбэки. ParsePrint — true, если модуль обработал (движок
+// подавляет свой print, FTE pr_csqc.c:9306); ParseCenterPrint — true, если модуль
+// вернул != 0 (подавить centerprint, FTE pr_csqc.c:9385).
+qbool CSQC_Client_ParsePrint (const char *msg, int level);
+qbool CSQC_Client_ParseCenterPrint (const char *msg);
+
 // Register the builtin table of the client instance (implemented in csqc_builtins.c).
 void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
 

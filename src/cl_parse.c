@@ -3216,6 +3216,11 @@ void CL_ParsePrint (void)
 		return;
 	}
 
+	// Э1: CSQC_Parse_Print — перехват сетевого print (FTE cl_parse.c:6731/6900).
+	// Наличие колбэка => движок свой print не печатает (модуль форвардит сам).
+	if (!cls.demoseeking && CSQC_Client_ParsePrint (s0, level))
+		return;
+
 	CL_ProcessPrint (level, s0);
 }
 
@@ -3835,6 +3840,9 @@ void CL_ParseServerMessage (void)
 
 					if (!cls.demoseeking)
 					{
+						// Э1: CSQC_Parse_CenterPrint — перехват (FTE cl_screen.c:448).
+						if (CSQC_Client_ParseCenterPrint(s))
+							break;
 						if (!CL_SearchForReTriggers(s, RE_PRINT_CENTER))
 							SCR_CenterPrint(s);
 						Print_flags[Print_current] = 0;
@@ -4065,11 +4073,16 @@ void CL_ParseServerMessage (void)
 				}
 			case svc_finale:
 				{
+					char *finstr;
+
 					cl.intermission = 2;
 					cl.completed_time = cls.demoplayback ? cls.demotime : cls.realtime;
 					cl.solo_completed_time = cl.servertime;
 					vid.recalc_refdef = true;	// go to full screen
-					SCR_CenterPrint(MSG_ReadString ());
+					finstr = MSG_ReadString ();
+					// Э1: CSQC_Parse_CenterPrint — перехват (FTE cl_screen.c:448).
+					if (!CSQC_Client_ParseCenterPrint(finstr))
+						SCR_CenterPrint(finstr);
 					break;
 				}
 			case svc_sellscreen:

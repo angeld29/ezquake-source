@@ -77,6 +77,7 @@ typedef struct csqc_client_state_s
 	qbool		seen[CSQC_MAX_NUM];	// известные CSQC-сущности (isnew для Ent_Update)
 	int			func_init, func_world, func_update, func_console, func_shutdown;
 	int			func_entupdate, func_entremove, func_parseevent;
+	int			func_parseprint, func_parsecp;	// Э1: CSQC_Parse_Print / CSQC_Parse_CenterPrint
 	int			func_entspawn;	// CSQC_Ent_Spawn (или -1; R7/T1.3a, FTE-паритет)
 	int			func_input;		// CSQC_Input_Frame (или -1)
 	int			func_inputevent;	// CSQC_InputEvent (или -1; C1.2)
@@ -3183,6 +3184,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_parseprint = s_csqc.func_parsecp = -1;
 	s_csqc.func_entspawn = -1;
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
@@ -3265,6 +3267,13 @@ static qbool CSQC_Client_Load (const char *path)
 	f = PR1VM_FindFunction (vm, "CSQC_Parse_Event");
 	if (f)
 		s_csqc.func_parseevent = (int)(f - vm->functions);
+	// Э1: сетевые печатные колбэки (FTE pr_common.h:1087-1088).
+	f = PR1VM_FindFunction (vm, "CSQC_Parse_Print");
+	if (f)
+		s_csqc.func_parseprint = (int)(f - vm->functions);
+	f = PR1VM_FindFunction (vm, "CSQC_Parse_CenterPrint");
+	if (f)
+		s_csqc.func_parsecp = (int)(f - vm->functions);
 	f = PR1VM_FindFunction (vm, "CSQC_Input_Frame");
 	if (f)
 		s_csqc.func_input = (int)(f - vm->functions);
@@ -4116,6 +4125,50 @@ CSQC_Abort, pr_csqc.c:7489-7505).
 qbool CSQC_Client_MayRead (void)
 {
 	return s_csqc.mayread;
+}
+
+/*
+=================
+CSQC_Client_ParsePrint
+
+Э1: CSQC_Parse_Print(string, float) — перехват сетевого svc_print (chat и обычный).
+FTE pr_csqc.c:9306-9362: наличие колбэка => движок свой print не печатает (модуль
+сам решает, форвардить ли в #339 print). Возврат — был ли колбэк вызван.
+=================
+*/
+qbool CSQC_Client_ParsePrint (const char *msg, int level)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (!s_csqc.loaded || s_csqc.errored || s_csqc.func_parseprint <= 0)
+		return false;
+
+	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)(msg ? msg : ""));
+	vm->globals[OFS_PARM1] = level;
+	CSQC_Client_Exec (s_csqc.func_parseprint);
+	return true;
+}
+
+/*
+=================
+CSQC_Client_ParseCenterPrint
+
+Э1: CSQC_Parse_CenterPrint(string) — перехват svc_centerprint/svc_finale.
+FTE pr_csqc.c:9385-9398: возврат модуля != 0 => движок centerprint игнорирует.
+Возврат — подавлять ли движковый вывод.
+=================
+*/
+qbool CSQC_Client_ParseCenterPrint (const char *msg)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+	float ret = 0;
+
+	if (!s_csqc.loaded || s_csqc.errored || s_csqc.func_parsecp <= 0)
+		return false;
+
+	PR1VM_ClientSetString (vm, (string_t *)&vm->globals[OFS_PARM0], (char *)(msg ? msg : ""));
+	CSQC_Client_ExecRet (s_csqc.func_parsecp, &ret);
+	return ret != 0;
 }
 
 /*
@@ -5076,6 +5129,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.func_init = s_csqc.func_world = s_csqc.func_update =
 		s_csqc.func_console = s_csqc.func_shutdown = -1;
 	s_csqc.func_entupdate = s_csqc.func_entremove = s_csqc.func_parseevent = -1;
+	s_csqc.func_parseprint = s_csqc.func_parsecp = -1;
 	s_csqc.func_entspawn = -1;
 	s_csqc.mayread = false;
 	s_csqc.func_input = -1;
