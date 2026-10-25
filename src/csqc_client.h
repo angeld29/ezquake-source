@@ -353,6 +353,8 @@ void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
 #define CSQC_BUILTIN_CHECKBUILTIN	1023
 // `argc` (FTE exposes it only as a `#0` name, not as a numbered slot).
 #define CSQC_BUILTIN_ARGC			1021
+// `serverkeyfloat` is also exposed by FTE only as a `#0` name.
+#define CSQC_BUILTIN_SERVERKEYFLOAT	1020
 // Aborting stub for an unknown `#0` name: calling it fails the module like FTE's
 // slot 0 (PF_Fixme); checkbuiltin still reports 0.
 #define CSQC_BUILTIN_NAMED_UNKNOWN	1022
