@@ -375,6 +375,9 @@ void PR1VM_ClientSetString (struct pr1vm_s *vm, int *address, char *s);
 // a slot (soft no-op on a bad/repeated argument); FreeStringPool releases every slot
 // (called before the state memset on load/disconnect).
 qbool CSQC_Client_ZoneStore (struct pr1vm_s *vm, int *address, char *buf);
+// Sensitive-cvar read guard (rcon/password class), shared by the cvar builtins
+// and the autocvar_* globals.
+qbool CSQC_CvarReadDenied (const char *name);
 void CSQC_Client_UnzoneString (struct pr1vm_s *vm, int num);
 void CSQC_Client_FreeStringPool (void);
 

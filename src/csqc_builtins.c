@@ -214,7 +214,7 @@ static const char *s_secret_classes[] = {
  cvars (cl_timeout, cl_pext*, allow_scripts, ...) stay readable, unlike the
  CVAR_NOTFROMSERVER write-guard (which covers a wider set).
 */
-static qbool CSQC_CvarReadDenied (const char *name)
+qbool CSQC_CvarReadDenied (const char *name)
 {
 	static const char *denied[] = {
 		"rcon_password", "rcon_address", "password", "pq_password",
@@ -1985,8 +1985,8 @@ static void csqc_setsensitivityscaler (void)
  Fills the input_* globals from the sent usercmd history. seq is a mirror of
  cls.netchan.outgoing_sequence; valid range (servercommandframe, clientcommandframe]
  (the engine does not check the range), with a paused guard. Returns 0 if seq is
- outside the history ring (64) or paused. clientcommandframe is the last sent seq,
- so #345(clientcommandframe) returns the live pending frame outside CSQC_Input_Frame.
+ outside the sent-history ring (64) or paused. The frame equal to
+ clientcommandframe is still pending and may not have a history entry yet.
 */
 static void csqc_getinputstate (void)
 {

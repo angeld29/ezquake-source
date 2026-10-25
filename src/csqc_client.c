@@ -126,6 +126,7 @@ typedef struct csqc_client_state_s
 	// Simulated FTE-level globals (or -1): frametime/cltime/maxclients/
 	// player_localnum/intermission.
 	int			g_frametime, g_cltime, g_maxclients, g_player_localnum, g_intermission;
+	int			g_servertime, g_serverprevtime, g_serverdeltatime;
 	// csprogs download (no valid local file): download csprogs.dat from the
 	// server into csprogsvers/<crc>.dat; load once a valid file
 	// appears (see CSQC_Client_Update).
@@ -347,12 +348,8 @@ void CSQC_Client_FreeStringPool (void)
 typedef struct { unsigned int seq; usercmd_t cmd; } csqc_inrec_t;
 static csqc_inrec_t s_inhist[CSQC_INHIST];
 static unsigned int s_last_seq;	// seq of the last write (0 = none yet)
-// The "live" clientcommandframe = seq of the last built cmd (FTE cl.movesequence;
-// cl_input.c sets it at build). NOT the next outgoing_sequence: Netchan_Transmit
-// increments after sending, so in the render phase outgoing_sequence is already
-// N+1 while FTE ccframe stays N ("movesequence+1 ... still pending"). Updated in
-// CSQC_Client_InputFrame.
-static unsigned int s_ccframe;	// 0 = no cmd built yet
+// FTE's clientcommandframe includes the command currently being assembled.
+// Between sends, ezQuake's outgoing_sequence is that pending command number.
 
 // #460-469: string-buffer pool (DP). Strings are deep-copied (survive frames).
 #define CSQC_MAX_BUFS	64
@@ -1537,6 +1534,145 @@ char *CSQC_Client_GetString (pr1vm_t *vm, int num)
 // bound(0, cl.time - cl.lasttime, 0.1), cltime = realtime - cl.mapstarttime).
 static double s_mapstarttime;
 static double s_prev_cltime;
+// Last two distinct server timestamps, for the FTE servertime/serverprevtime
+// globals (FTE: current/previous packet-entities servertime).
+static double s_svtime, s_prev_svtime;
+static double s_svtime_mark;	// cls.realtime when s_svtime last changed
+
+/*
+ autocvar_<name> globals (FTE PR_FoundAutoCvarGlobal/PR_AutoCvarApply): on load the
+ cvar is looked up (created with the module's initial value when missing) and the
+ global mirrors it; afterwards the global follows cvar changes. Polled once per
+ frame against the last applied string instead of FTE's change callback.
+ Sensitive cvars (CSQC_CvarReadDenied) are never mirrored.
+*/
+#define CSQC_MAX_AUTOCVARS	256
+#define CSQC_EV_INTEGER		8	// FTE etype_t ev_integer (v7 int globals)
+typedef struct
+{
+	char	*name;		// cvar name (heap copy)
+	char	*last;		// last applied cvar string (heap copy)
+	int		ofs;		// global offset
+	int		type;		// ev_float / ev_vector / ev_string / CSQC_EV_INTEGER
+} csqc_autocvar_t;
+static csqc_autocvar_t s_autocvars[CSQC_MAX_AUTOCVARS];
+static int s_numautocvars;
+
+static void CSQC_Client_AutoCvarsClear (void)
+{
+	int i;
+
+	for (i = 0; i < s_numautocvars; i++)
+	{
+		Q_free (s_autocvars[i].name);
+		Q_free (s_autocvars[i].last);
+	}
+	s_numautocvars = 0;
+}
+
+static void CSQC_Client_AutoCvarApply (pr1vm_t *vm, csqc_autocvar_t *ac, cvar_t *var)
+{
+	float *g = &vm->globals[ac->ofs];
+
+	switch (ac->type)
+	{
+	case ev_float:
+		*g = var->value;
+		break;
+	case CSQC_EV_INTEGER:
+		*(int *)g = Q_atoi (var->string);
+		break;
+	case ev_vector:
+		g[0] = g[1] = g[2] = 0;
+		sscanf (var->string, "%f %f %f", &g[0], &g[1], &g[2]);
+		break;
+	case ev_string:
+		// zone'd copy, replacing the previous one we stored (FTE non-QCGC)
+		if (*(int *)g <= -MAX_PRSTR)
+			CSQC_Client_UnzoneString (vm, *(int *)g);
+		*(int *)g = 0;
+		if (var->string[0])
+			CSQC_Client_ZoneStore (vm, (int *)g, Q_strdup (var->string));
+		break;
+	}
+	Q_free (ac->last);
+	ac->last = Q_strdup (var->string);
+}
+
+static void CSQC_Client_AutoCvarsInit (pr1vm_t *vm)
+{
+	int i;
+
+	CSQC_Client_AutoCvarsClear ();
+	for (i = 0; i < vm->progs->numglobaldefs && s_numautocvars < CSQC_MAX_AUTOCVARS; i++)
+	{
+		ddef_t *d = &vm->globaldefs[i];
+		int type = d->type & ~DEF_SAVEGLOBAL;
+		const char *gname = CSQC_Client_GetString (vm, d->s_name);
+		const char *name;
+		char vals[128];
+		float *g = &vm->globals[d->ofs];
+		cvar_t *var;
+		size_t len;
+
+		if (!gname || strncmp (gname, "autocvar_", 9) || !gname[9])
+			continue;
+		name = gname + 9;
+		len = strlen (name);
+		switch (type)
+		{
+		case ev_float:
+			// vector components (_x/_y/_z) follow the vector def itself
+			if (len >= 2 && name[len - 2] == '_' && strchr ("xyz", name[len - 1]))
+				continue;
+			snprintf (vals, sizeof (vals), "%g", *g);
+			break;
+		case CSQC_EV_INTEGER:
+			snprintf (vals, sizeof (vals), "%i", *(int *)g);
+			break;
+		case ev_vector:
+			snprintf (vals, sizeof (vals), "%g %g %g", g[0], g[1], g[2]);
+			break;
+		case ev_string:
+			{
+				const char *s = CSQC_Client_GetString (vm, *(int *)g);
+				strlcpy (vals, s ? s : "", sizeof (vals));
+			}
+			break;
+		default:
+			continue;
+		}
+		if (CSQC_CvarReadDenied (name))
+			continue;
+		var = Cvar_Find (name);
+		if (!var)
+			var = Cvar_Create (name, vals, 0);
+		if (!var)
+			continue;
+
+		s_autocvars[s_numautocvars].name = Q_strdup (name);
+		s_autocvars[s_numautocvars].last = NULL;
+		s_autocvars[s_numautocvars].ofs = d->ofs;
+		s_autocvars[s_numautocvars].type = type;
+		if (type == ev_string)
+			*(int *)g = 0;	// literal default, not one of our zone'd strings
+		CSQC_Client_AutoCvarApply (vm, &s_autocvars[s_numautocvars], var);
+		s_numautocvars++;
+	}
+}
+
+static void CSQC_Client_AutoCvarsSync (pr1vm_t *vm)
+{
+	int i;
+
+	for (i = 0; i < s_numautocvars; i++)
+	{
+		cvar_t *var = Cvar_Find (s_autocvars[i].name);
+
+		if (var && (!s_autocvars[i].last || strcmp (var->string, s_autocvars[i].last)))
+			CSQC_Client_AutoCvarApply (vm, &s_autocvars[i], var);
+	}
+}
 
 // Simulated server time of the module. FTE: *csqcg.time = cl.servertime; if the
 // server does not send STAT_TIME/svc_time - client map-uptime (same time domain as
@@ -1548,11 +1684,44 @@ static double CSQC_Client_TimeNow (void)
 	return cls.realtime - s_mapstarttime;
 }
 
+// Track the last two distinct server timestamps and when the newest arrived.
+static void CSQC_Client_TrackServerTime (void)
+{
+	double t = CSQC_Client_TimeNow ();
+
+	if (t != s_svtime)
+	{
+		s_prev_svtime = s_svtime;
+		s_svtime = t;
+		s_svtime_mark = cls.realtime;
+	}
+}
+
+// Module `time`: FTE CL_CalcClientTime (cl_pred.c, live QW "no drift" path)
+// interpolates between the previous and the latest server timestamp by the local
+// clock, so `time` advances every frame instead of jumping once per packet; the
+// raw timestamp goes to `servertime`. Without STAT_TIME the fallback is already
+// the local clock.
+static double CSQC_Client_SmoothTime (void)
+{
+	double gap, f;
+
+	if (!cl.servertime_works)
+		return CSQC_Client_TimeNow ();
+	gap = min (s_svtime - s_prev_svtime, 0.1);
+	if (gap <= 0)
+		return s_svtime;
+	f = bound (0, (cls.realtime - s_svtime_mark) / gap, 1);
+	return s_prev_svtime + f * (s_svtime - s_prev_svtime);
+}
+
 static void CSQC_Client_SetTime (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
+
+	CSQC_Client_TrackServerTime ();
 	if (s_csqc.global_time >= 0)
-		vm->globals[s_csqc.global_time] = (float)CSQC_Client_TimeNow ();
+		vm->globals[s_csqc.global_time] = (float)CSQC_Client_SmoothTime ();
 }
 
 // FTE CSQC_StateOp parity: the client module's OP_STATE uses its own field/global
@@ -4595,6 +4764,7 @@ static qbool CSQC_Client_Load (const char *path)
 	CSQC_Client_DeltaReset ();
 	CSQC_Client_ViewReset ();
 	CSQC_Client_ModelReset ();	// CSQC model registry cleared on load
+	CSQC_Client_AutoCvarsClear ();	// autocvar_* bookkeeping (its zone strings go with the pool)
 	CSQC_Client_FreeStringPool ();	// #118: free strzone'd strings before memset
 	CSQC_Client_DrawFontScaleReset ();	// re-resolve drawfontscale for the new module
 
@@ -4803,6 +4973,9 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_view_angles = CSQC_Client_FindGlobalVec (vm, "view_angles");
 	s_csqc.g_frametime = PR1VM_FindGlobal (vm, "frametime");
 	s_csqc.g_cltime = PR1VM_FindGlobal (vm, "cltime");
+	s_csqc.g_servertime = PR1VM_FindGlobal (vm, "servertime");
+	s_csqc.g_serverprevtime = PR1VM_FindGlobal (vm, "serverprevtime");
+	s_csqc.g_serverdeltatime = PR1VM_FindGlobal (vm, "serverdeltatime");
 	s_csqc.g_maxclients = PR1VM_FindGlobal (vm, "maxclients");
 	s_csqc.g_player_localnum = PR1VM_FindGlobal (vm, "player_localnum");
 	s_csqc.g_intermission = PR1VM_FindGlobal (vm, "intermission");
@@ -4814,6 +4987,7 @@ static qbool CSQC_Client_Load (const char *path)
 		s_csqc.func_parsetempent = (int)(f - vm->functions);
 
 	CSQC_Client_OffsetCacheResolve (vm);
+	CSQC_Client_AutoCvarsInit (vm);	// before CSQC_Init, like FTE
 
 	s_csqc.loaded = true;
 
@@ -4896,6 +5070,8 @@ void CSQC_Client_ConnectCheck (void)
 	// (cl.time - prev). Set on each world entry.
 	s_mapstarttime = cls.realtime;
 	s_prev_cltime = cl.time;
+	s_svtime = s_prev_svtime = CSQC_Client_TimeNow ();
+	s_svtime_mark = cls.realtime;
 
 	// Master switch (analog of FTE cl_nocsqc): the module is loaded only when the
 	// session negotiated CSQC (the cvar is sampled when the declare mask is built on
@@ -5007,11 +5183,8 @@ void CSQC_Client_ConnectCheck (void)
 EXT_CSQC_1 prediction window - the module globals clientcommandframe /
 servercommandframe.
 
-- clientcommandframe = the "live" (last built) client frame = s_ccframe (FTE
-  cl.movesequence). Set in CSQC_Client_InputFrame at cmd build and NOT recomputed
-  after sending: Netchan_Transmit increments outgoing_sequence, but clientcommandframe
-  stays the built cmd's number. This is what #345(clientcommandframe) asks for - the
-  live pending frame; the next one does not exist yet.
+- clientcommandframe = the live pending client frame = cls.netchan.outgoing_sequence
+  (FTE cl.movesequence). The equal frame may still change before it is sent.
 - servercommandframe = the last server-acked client frame = cl.parsecount (analog of
   FTE QW ackedmovesequence).
 - Prediction unavailable (0): demo/MVD, not ca_active, before the first accepted
@@ -5026,10 +5199,7 @@ static float CSQC_Client_ClientCmdFrame (void)
 		return 0;
 	if (cls.state != ca_active || cls.demoplayback || cls.mvdplayback)
 		return 0;
-	// The last built frame (FTE cl.movesequence), not the next outgoing_sequence -
-	// otherwise in the render phase #345(clientcommandframe) would ask for a
-	// not-yet-built seq and get 0 (see s_ccframe).
-	return (float)s_ccframe;
+	return (float)cls.netchan.outgoing_sequence;
 }
 
 static float CSQC_Client_ServerCmdFrame (void)
@@ -5434,6 +5604,21 @@ static void CSQC_Client_PublishSimGlobals (void)
 	}
 	if (s_csqc.g_intermission >= 0)
 		vm->globals[s_csqc.g_intermission] = cl.intermission ? 1 : 0;
+
+	// FTE servertime/serverprevtime/serverdeltatime: the server clock of the
+	// latest/previous update. Modules extrapolate networked projectiles from it
+	// (origin + velocity * (servertime - sent_time)); left at 0 they draw far away.
+	{
+		CSQC_Client_TrackServerTime ();
+		if (s_csqc.g_servertime >= 0)
+			vm->globals[s_csqc.g_servertime] = (float)s_svtime;
+		if (s_csqc.g_serverprevtime >= 0)
+			vm->globals[s_csqc.g_serverprevtime] = (float)s_prev_svtime;
+		if (s_csqc.g_serverdeltatime >= 0)
+			vm->globals[s_csqc.g_serverdeltatime] = (float)(s_svtime - s_prev_svtime);
+	}
+
+	CSQC_Client_AutoCvarsSync (vm);
 
 	s_prev_cltime = cl.time;
 }
@@ -6467,12 +6652,6 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 {
 	pr1vm_t *vm = &s_csqc.vm;
 
-	// live clientcommandframe = seq of the current built cmd (FTE cl.movesequence).
-	// Set before the guard - track even without a module; the render phase
-	// (PatchFrames) then returns this same value, not the incremented
-	// outgoing_sequence.
-	s_ccframe = (unsigned int)cls.netchan.outgoing_sequence;
-
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored || s_csqc.func_input <= 0)
 		return;
 
@@ -6551,9 +6730,8 @@ time; Netchan_Transmit increments after writing the header). This is the number 
 server acknowledges (servercommandframe = incoming_acknowledged = cl.parsecount) -
 the window (servercommandframe, clientcommandframe] is consistent in one numbering.
 Difference from FTE: here a ring history (64) + records only the live CL_SendCmd
-path (demos/MVD are not recorded). clientcommandframe = s_ccframe = the last
-recorded seq, so #345(clientcommandframe) hits the ring (the live pending frame is
-available outside CSQC_Input_Frame, as FTE movesequence). The NQ ackedmovesequence
+path (demos/MVD are not recorded). clientcommandframe is the live pending frame;
+sent frames below it hit the ring. The NQ ackedmovesequence
 mechanism (PEXT2_PREDINFO) is unreachable (not for QW).
 =================
 */
@@ -7342,6 +7520,7 @@ void CSQC_Client_Disconnect (void)
 	// Engine-transfer bookkeeping is connection-scoped: a stale pending csprogs
 	// request would otherwise fire its no-progress timeout on the next server.
 	memset (&s_dl, 0, sizeof (s_dl));
+	CSQC_Client_AutoCvarsClear ();	// autocvar_* bookkeeping (its zone strings go with the pool)
 	CSQC_Client_FreeStringPool ();	// #118: free strzone'd strings before memset
 	CSQC_Client_DrawFontScaleReset ();	// invalidate drawfontscale offset cache
 	memset (&s_csqc, 0, sizeof (s_csqc));
@@ -7400,10 +7579,10 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
+	s_csqc.g_servertime = s_csqc.g_serverprevtime = s_csqc.g_serverdeltatime = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
 	CSQC_Client_OffsetCacheReset ();
 	s_last_seq = 0;
-	s_ccframe = 0;
 	s_console_executing = false;	// a longjmp'd console call must not wedge the guard
 }
 
