@@ -2220,6 +2220,23 @@ static const csqc_peffect_t s_peffects[] = {
 };
 #define CSQC_NPEFFECTS	((int)(sizeof (s_peffects) / sizeof (s_peffects[0])))
 
+// Standard Quake trail effects (FTE/DP TR_* names), drawn through the engine's
+// own R_ParticleTrail so classic/QMB particle settings apply. Handles follow the
+// colour effects: CSQC_NPEFFECTS + 1 + index.
+typedef struct { const char *name; trail_type_t type; } csqc_ptrail_t;
+static const csqc_ptrail_t s_ptrails[] = {
+	{ "TR_ROCKET",		ROCKET_TRAIL },
+	{ "TR_GRENADE",		GRENADE_TRAIL },
+	{ "TR_ALTROCKET",	ALT_ROCKET_TRAIL },
+	{ "TR_BLOOD",		BLOOD_TRAIL },
+	{ "TR_SLIGHTBLOOD",	BIG_BLOOD_TRAIL },	// same slot order as r_rockettrail 4/5
+	{ "TR_WIZSPIKE",	TRACER1_TRAIL },
+	{ "TR_KNIGHTSPIKE",	TRACER2_TRAIL },
+	{ "TR_VORESPIKE",	VOOR_TRAIL },
+	{ "TE_RAILTRAIL",	RAIL_TRAIL },
+};
+#define CSQC_NPTRAILS	((int)(sizeof (s_ptrails) / sizeof (s_ptrails[0])))
+
 // float(string effectname) particleeffectnum = #335
 static void csqc_particleeffectnum (void)
 {
@@ -2233,6 +2250,12 @@ static void csqc_particleeffectnum (void)
 		if (!strcmp (name, s_peffects[i].name))
 		{
 			vm->globals[OFS_RETURN] = i + 1;
+			return;
+		}
+	for (i = 0; name && i < CSQC_NPTRAILS; i++)
+		if (!strcasecmp (name, s_ptrails[i].name))
+		{
+			vm->globals[OFS_RETURN] = CSQC_NPEFFECTS + 1 + i;
 			return;
 		}
 	// FTE PF_cs_particleeffectnum (pr_csqc.c:3762-3775) returns -i for a client-only/
@@ -2259,6 +2282,15 @@ static void csqc_trailparticles (void)
 	if (!vm)
 		return;
 	g = vm->globals;
+	i = (int)g[OFS_PARM0] - (CSQC_NPEFFECTS + 1);
+	if (i >= 0 && i < CSQC_NPTRAILS)
+	{
+		vec3_t start, end;
+		VectorCopy (&g[OFS_PARM0 + 6], start);
+		VectorCopy (&g[OFS_PARM0 + 9], end);
+		R_ParticleTrail (start, end, s_ptrails[i].type);
+		return;
+	}
 	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
 	if (!e)
 		return;
@@ -4026,24 +4058,47 @@ static void csqc_breakpoint (void)
 
 /*
  void(entity e, float chan, string samp, float vol, float atten) sound = #8
- Deviation: no positional sound at the entity (no origin field without the arena);
- precache + local playback like #177 (volume vol).
+ Played on the entity's channel through S_StartSound, so a new sound replaces
+ the previous one on that channel like engine sounds do. A networked entity uses
+ its .entnum; a csqc-only one (e.g. a predicted view model) uses the local
+ player, at the view origin - its channels then match the engine's own weapon
+ sounds.
 */
 static void csqc_sound (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *n = CSQCVM_Str (OFS_PARM2);
-	float vol = 1;
-	if (!vm)
+	int e, chan, num = 0;
+	float vol = 1, atten = 1, *f;	// 1 = ATTN_NORM
+	sfx_t *sfx;
+	vec3_t org;
+
+	if (!vm || !n || !n[0])
 		return;
 	if (vm->argc > 3)
-		vol = vm->globals[OFS_PARM0 + 9];
-	if (n && n[0])
+		vol = vm->globals[OFS_PARM3];
+	if (vm->argc > 4)
+		atten = vm->globals[OFS_PARM4];
+	if (vol <= 0 || !(sfx = S_PrecacheSound (n)))
+		return;
+	chan = (int)vm->globals[OFS_PARM1];
+	e = csqc_ent_of (vm, OFS_PARM0);
+	if (e > 0 && (f = csqc_ent_field (vm, e, "entnum")))
+		num = (int)f[0];
+	if (num > 0)
 	{
-		S_PrecacheSound (n);
-		if (vol > 0)
-			S_LocalSoundWithVol (n, vol);
+		f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
+		if (f)
+			VectorCopy (f, org);
+		else
+			VectorCopy (r_refdef.vieworg, org);
 	}
+	else
+	{
+		num = cl.playernum + 1;
+		VectorCopy (r_refdef.vieworg, org);
+	}
+	S_StartSound (num, chan, sfx, org, bound (0, vol, 1), atten);
 }
 
 /*
@@ -4259,6 +4314,7 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	model_t *model;
 	int ofs;
 	int playernum = -1;	// network player index (colormap 1..MAX_CLIENTS)
+	qbool viewmodel = false;	// CSQCRF_VIEWMODEL: view-relative, never culled
 
 	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
 		return;
@@ -4347,6 +4403,17 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 			ent.framelerp = -1;
 		}
 	}
+	else if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_LERPFRAC))) && f[0] > 0)
+	{
+		// FTE .frame2/.lerpfrac: lerpfrac is the weight of frame2, ezq framelerp
+		// the progress from oldframe to frame.
+		float *f2 = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_FRAME2));
+		if (f2)
+		{
+			ent.oldframe = (int)f2[0];
+			ent.framelerp = 1 - bound (0, f[0], 1);
+		}
+	}
 	// cl_deadbodyFilter for CSQC-owned players. The engine player filter
 	// (CL_LinkPlayers) is skipped for owned players, so apply the same semantics
 	// here. TF exception for mode 3 (!cl.teamfortress) mirrors the engine.
@@ -4382,7 +4449,33 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	{
 		int rflags = (int)f[0];
 		if (rflags & 1)		// CSQCRF_VIEWMODEL
+		{
+			// FTE draws it relative to the view (x forward, y left, z up). Place it
+			// from the engine's own gun pose, which already carries bob,
+			// r_viewmodeloffset and the fov fudge (V_AddViewWeapon).
+			centity_t *gun = CL_WeaponModelForView ();
+			vec3_t fwd, right, up, o, base;
+
+			VectorCopy (ent.origin, o);
+			AngleVectors (r_refdef.viewangles, fwd, right, up);
+			if (gun && gun->current.modelindex)
+			{
+				VectorCopy (gun->current.origin, base);
+				VectorAdd (ent.angles, gun->current.angles, ent.angles);
+			}
+			else
+			{
+				VectorCopy (r_refdef.vieworg, base);
+				ent.angles[PITCH] -= r_refdef.viewangles[PITCH];
+				ent.angles[YAW] += r_refdef.viewangles[YAW];
+				ent.angles[ROLL] += r_refdef.viewangles[ROLL];
+			}
+			VectorMA (base, o[0], fwd, ent.origin);
+			VectorMA (ent.origin, -o[1], right, ent.origin);
+			VectorMA (ent.origin, o[2], up, ent.origin);
 			ent.renderfx |= RF_WEAPONMODEL;
+			viewmodel = true;
+		}
 		if (rflags & 32)	// CSQCRF_NOSHADOW
 			ent.renderfx |= RF_NOSHADOW;
 		if (rflags & 8)		// CSQCRF_ADDITIVE
@@ -4391,8 +4484,9 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 
 	// PVS/leaf + bbox culling, FTE EdictInFatPVS parity.
 	// R_CSQC_BeginCull marks the leaves/frustum for this frame (once per frame).
+	// A view model is always visible (FTE pvscache.num_leafs = -1).
 	R_CSQC_BeginCull ();
-	if (!R_CSQC_EntityVisible (&ent))
+	if (!viewmodel && !R_CSQC_EntityVisible (&ent))
 		return;
 
 	CL_AddEntity (&ent);

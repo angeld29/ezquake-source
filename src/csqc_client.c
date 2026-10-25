@@ -2657,7 +2657,7 @@ static const char *s_fieldcache_names[CSQC_FLD_COUNT] =
 	"predraw", "modelindex", "model", "colormap", "origin", "angles",
 	"frame", "skin", "effects", "alpha", "scale", "renderflags",
 	"size", "mins", "maxs", "modelflags", "chain", "solid", "flags",
-	"owner", "drawmask"
+	"owner", "drawmask", "frame2", "lerpfrac"
 };
 
 static int s_traceg[CSQC_TRACEG_COUNT];
