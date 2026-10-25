@@ -20,6 +20,12 @@ client instance; its loader/wiring lives in the client CSQC module.
 #define PR1VM_MAX_STACK	32
 #define PR1VM_LOCALSTACK	2048
 
+// Client VM pointer tag: a QC pointer with this bit set is a byte offset into
+// the instance globals (OP_GLOBALADDRESS, csprogs v7 arrays); without it, a
+// byte offset into the edict block (OP_ADDRESS). The edict block stays far
+// below this, so the two ranges never overlap.
+#define PR1VM_GLOBALPTR	0x40000000
+
 // Compile-time gate for ezquake-only PR1VM debug/test surface (the client
 // console commands csqc_smoke/csqc_progscheck/pr1vm_test_error and the
 // bound-predicate unit tests). Off in release builds; uncomment to enable.

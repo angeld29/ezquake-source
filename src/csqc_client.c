@@ -3790,12 +3790,13 @@ file size and the operand/field ranges the interpreter indexes
 PR1VM_LoadData byte-swaps and walks the lumps.
 =================
 */
-static qbool PR1VM_LumpFits (int ofs, int num, int elemsize, int filesize, const char *name)
+static qbool PR1VM_LumpFits (int ofs, int num, int elemsize, int filesize, int hdrsize, const char *name)
 {
 	// Bound by division (num <= (filesize - ofs) / elemsize) instead of the
 	// product ofs + num*elemsize, which wraps on a 32-bit size_t (i686) and would
-	// let a crafted num slip past. Same result on 32/64-bit.
-	if (ofs < (int)sizeof (dprograms_t) || ofs > filesize || num < 0 || elemsize <= 0 ||
+	// let a crafted num slip past. Same result on 32/64-bit. hdrsize is the v6
+	// or v7 header size: no lump may overlap the header.
+	if (ofs < hdrsize || ofs > filesize || num < 0 || elemsize <= 0 ||
 		num > (filesize - ofs) / elemsize)
 	{
 		Con_Printf ("CSQC: csprogs.dat rejected: bad %s lump (ofs=%d num=%d)\n",
@@ -3839,8 +3840,55 @@ static int PR1VM_StmtWords (int op, int which)
 		// a is the vector source (OPA->_vector[0..2]); b is the edict pointer
 		// (runtime-bounded), c unused. Matches pr_exec.c OP_STOREP_V.
 		return which == 0 ? 3 : 1;
+	case OP_CALL1H: case OP_CALL2H: case OP_CALL3H: case OP_CALL4H:
+	case OP_CALL5H: case OP_CALL6H: case OP_CALL7H: case OP_CALL8H:
+		// b/c are copied as vectors into OFS_PARM0/OFS_PARM1
+		return (which == 1 || which == 2) ? 3 : 1;
+	case OP_ADDSTOREP_V:
+		// a is the vector addend, b the pointer, c receives the vector result
+		return (which == 0 || which == 2) ? 3 : 1;
+	case OP_LOADA_V:
+		// a is the array base (index bounded at run time), c the vector result
+		return which == 2 ? 3 : 1;
+	case OP_LOADP_V:
+		// a is the pointer, b the word index (both runtime-bounded), c the result
+		return which == 2 ? 3 : 1;
 	default:
 		return 1;
+	}
+}
+
+// csprogs v7 (FTE format): the extended opcodes pr_exec.c implements. Anything
+// else from the FTE set is rejected at load time.
+static qbool PR1VM_IsClientExtOp (int op)
+{
+	switch (op)
+	{
+	case OP_MULSTOREP_F: case OP_ADDSTOREP_F: case OP_ADDSTOREP_V:
+	case OP_SUBSTOREP_F: case OP_BITSETSTOREP_F:
+	case OP_CALL1H: case OP_CALL2H: case OP_CALL3H: case OP_CALL4H:
+	case OP_CALL5H: case OP_CALL6H: case OP_CALL7H: case OP_CALL8H:
+	case OP_STORE_I: case OP_STOREP_I:
+	case OP_ADD_I: case OP_SUB_I: case OP_MUL_I: case OP_ADD_IF: case OP_SUB_IF:
+	case OP_CONV_ITOF: case OP_CONV_FTOI:
+	case OP_BITAND_I: case OP_BITOR_I: case OP_BITAND_IF: case OP_BITOR_IF:
+	case OP_BITAND_FI: case OP_LSHIFT_I: case OP_RSHIFT_I: case OP_NOT_I:
+	case OP_EQ_I: case OP_NE_I: case OP_LE_I: case OP_GE_I: case OP_LT_I: case OP_GT_I:
+	case OP_EQ_IF: case OP_EQ_FI: case OP_NE_IF:
+	case OP_LE_IF: case OP_GE_IF: case OP_LT_IF: case OP_GT_IF:
+	case OP_AND_I: case OP_OR_I: case OP_AND_IF: case OP_OR_IF:
+	case OP_AND_FI: case OP_OR_FI:
+	case OP_IF_F: case OP_IFNOT_F: case OP_BOUNDCHECK:
+	case OP_LOADA_F: case OP_LOADA_V: case OP_LOADA_S: case OP_LOADA_ENT:
+	case OP_LOADA_FLD: case OP_LOADA_FNC: case OP_LOADA_I:
+	case OP_GLOBALADDRESS:
+	case OP_LOADP_F: case OP_LOADP_V: case OP_LOADP_S: case OP_LOADP_ENT:
+	case OP_LOADP_FLD: case OP_LOADP_FNC: case OP_LOADP_I:
+	case OP_LE_FI: case OP_GE_FI: case OP_LT_FI: case OP_GT_FI:
+	case OP_SWITCH_F: case OP_CASE: case OP_CASERANGE:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -3851,6 +3899,7 @@ static qbool PR1VM_ValidateClientV6 (const byte *data, int filesize)
 	const dfunction_t *fn;
 	const ddef_t *dd;
 	int i, j;
+	int hdrsize = (int)sizeof (dprograms_t);
 
 	if (!data || filesize < (int)sizeof (h))
 	{
@@ -3862,18 +3911,40 @@ static qbool PR1VM_ValidateClientV6 (const byte *data, int filesize)
 	for (i = 0; i < (int)(sizeof (h) / sizeof (int)); i++)
 		((int *) &h)[i] = LittleLong (((int *) &h)[i]);
 
-	if (h.version != PROG_VERSION)
+	if (h.version == PROG_EXTENDEDVERSION)
 	{
-		Con_Printf ("PR1VM_LoadClientV6: not a QW v6 progs (version=%d)\n", h.version);
+		// FTE v7: same lumps as v6 plus a header tail. Only the 16-bit
+		// statement, uncompressed variant shares the v6 lump layout.
+		dprograms_v7_t h7;
+
+		if (filesize < (int)sizeof (h7))
+		{
+			Con_Printf ("PR1VM_LoadClientV6: file too small (%d bytes)\n", filesize);
+			return false;
+		}
+		memcpy (&h7, data, sizeof (h7));
+		if (LittleLong (h7.secondaryversion) != PROG_SECONDARYVERSION16 ||
+			LittleLong (h7.blockscompressed) != 0)
+		{
+			Con_Printf ("CSQC: csprogs.dat rejected: unsupported v7 variant "
+				"(secondaryversion=0x%08x blockscompressed=%d)\n",
+				LittleLong (h7.secondaryversion), LittleLong (h7.blockscompressed));
+			return false;
+		}
+		hdrsize = (int)sizeof (h7);
+	}
+	else if (h.version != PROG_VERSION)
+	{
+		Con_Printf ("PR1VM_LoadClientV6: not a QW v6/v7 progs (version=%d)\n", h.version);
 		return false;
 	}
 
-	if (!PR1VM_LumpFits (h.ofs_statements, h.numstatements, sizeof (dstatement_t), filesize, "statements") ||
-		!PR1VM_LumpFits (h.ofs_globaldefs, h.numglobaldefs, sizeof (ddef_t), filesize, "globaldefs") ||
-		!PR1VM_LumpFits (h.ofs_fielddefs, h.numfielddefs, sizeof (ddef_t), filesize, "fielddefs") ||
-		!PR1VM_LumpFits (h.ofs_functions, h.numfunctions, sizeof (dfunction_t), filesize, "functions") ||
-		!PR1VM_LumpFits (h.ofs_strings, h.numstrings, 1, filesize, "strings") ||
-		!PR1VM_LumpFits (h.ofs_globals, h.numglobals, sizeof (float), filesize, "globals"))
+	if (!PR1VM_LumpFits (h.ofs_statements, h.numstatements, sizeof (dstatement_t), filesize, hdrsize, "statements") ||
+		!PR1VM_LumpFits (h.ofs_globaldefs, h.numglobaldefs, sizeof (ddef_t), filesize, hdrsize, "globaldefs") ||
+		!PR1VM_LumpFits (h.ofs_fielddefs, h.numfielddefs, sizeof (ddef_t), filesize, hdrsize, "fielddefs") ||
+		!PR1VM_LumpFits (h.ofs_functions, h.numfunctions, sizeof (dfunction_t), filesize, hdrsize, "functions") ||
+		!PR1VM_LumpFits (h.ofs_strings, h.numstrings, 1, filesize, hdrsize, "strings") ||
+		!PR1VM_LumpFits (h.ofs_globals, h.numglobals, sizeof (float), filesize, hdrsize, "globals"))
 		return false;
 
 	if (h.numstatements < 1 || h.numfunctions < 1 || h.numstrings < 1 ||
@@ -3933,7 +4004,7 @@ static qbool PR1VM_ValidateClientV6 (const byte *data, int filesize)
 		int op = (int)(unsigned short) LittleShort ((short) st[i].op);
 		int ops[3];
 
-		if (op > OP_BITOR)
+		if (op > OP_BITOR && !(h.version == PROG_EXTENDEDVERSION && PR1VM_IsClientExtOp (op)))
 		{
 			Con_Printf ("CSQC: csprogs.dat rejected: bad opcode %d at statement %d\n", op, i);
 			return false;
@@ -3949,7 +4020,14 @@ static qbool PR1VM_ValidateClientV6 (const byte *data, int filesize)
 		{
 			int words;
 
-			if ((op == OP_GOTO && j == 0) || ((op == OP_IF || op == OP_IFNOT) && j == 1))
+			if ((op == OP_GOTO && j == 0) ||
+				((op == OP_IF || op == OP_IFNOT || op == OP_IF_F || op == OP_IFNOT_F) && j == 1))
+				continue;
+			// OP_BOUNDCHECK b/c are immediate bounds, not globals
+			if (op == OP_BOUNDCHECK && j > 0)
+				continue;
+			// switch/case branch deltas: SWITCH_F b, CASE b, CASERANGE c
+			if (((op == OP_SWITCH_F || op == OP_CASE) && j == 1) || (op == OP_CASERANGE && j == 2))
 				continue;
 			// OP_RETURN/OP_DONE read a..a+2, but the client VM owns a copy of the
 			// globals padded by two words (FTE qclib/pr_edict.c:3040-3042), so
@@ -4562,10 +4640,10 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_vfwd = s_csqc.g_vright = s_csqc.g_vup = -1;
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
+	s_csqc.g_servertime = s_csqc.g_serverprevtime = s_csqc.g_serverdeltatime = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
 	CSQC_Client_OffsetCacheReset ();	// hot-path offsets, before resolve
 	s_last_seq = 0;
-	s_ccframe = 0;
 	s_console_executing = false;
 
 	vm = &s_csqc.vm;

@@ -492,6 +492,57 @@ static qbool PR1VM_ClientBadPtr (pr1vm_t *vm, unsigned off, unsigned width)
 	return (off == 0 || off > size - width);
 }
 
+// Resolve a QC pointer for a write of `width` bytes (OP_STOREP_* and the v7
+// read-modify-write ops). Client VM: a PR1VM_GLOBALPTR pointer must stay word
+// aligned inside the globals; an edict pointer keeps the existing bounds and the
+// world-write phase gate. Raises on anything else.
+static eval_t *PR1VM_PtrWrite (pr1vm_t *vm, int p, unsigned width)
+{
+	unsigned off = (unsigned) p;
+
+	if (vm->abortbuf_valid && (off & PR1VM_GLOBALPTR))
+	{
+		off &= ~PR1VM_GLOBALPTR;
+		if ((off & 3) || off > (unsigned) vm->progs->numglobals * sizeof (float) - width)
+			PR_RunError ("bad pointer write (offset %d)", p);
+		return (eval_t *)((byte *)vm->globals + off);
+	}
+	if (PR1VM_ClientBadPtr (vm, off, width))
+		PR_RunError ("bad pointer write (offset %d)", p);
+	// Pointer writes bypass OP_ADDRESS: the world block is the first
+	// edict_size bytes of game_edicts, so apply the same phase gate.
+	if (vm->abortbuf_valid && !vm->world_writable && off < (unsigned)vm->edict_size)
+		PR_RunError ("assignment to world entity");
+	return (eval_t *)((byte *)vm->game_edicts + off);
+}
+
+// Resolve a QC pointer for a read of `width` bytes (OP_LOADP_*, client VM only):
+// same ranges as PR1VM_PtrWrite, without the world-write gate (reads are fine).
+static eval_t *PR1VM_PtrRead (pr1vm_t *vm, unsigned off, unsigned width)
+{
+	if (!vm->abortbuf_valid)
+		PR_RunError ("bad pointer read (offset %d)", (int)off);
+	if (off & PR1VM_GLOBALPTR)
+	{
+		off &= ~PR1VM_GLOBALPTR;
+		if ((off & 3) || off > (unsigned) vm->progs->numglobals * sizeof (float) - width)
+			PR_RunError ("bad pointer read (offset %d)", (int)off);
+		return (eval_t *)((byte *)vm->globals + off);
+	}
+	if (PR1VM_ClientBadPtr (vm, off, width))
+		PR_RunError ("bad pointer read (offset %d)", (int)off);
+	return (eval_t *)((byte *)vm->game_edicts + off);
+}
+
+// float -> int as x86 cvttss2si does (FTE OP_CONV_FTOI relies on it), without
+// the C undefined behaviour for NaN/out-of-range values.
+static int PR1VM_FloatToInt (float f)
+{
+	if (f != f || f >= 2147483648.0f || f < -2147483648.0f)
+		return INT_MIN;
+	return (int) f;
+}
+
 static qbool PR1VM_ClientBadField (pr1vm_t *vm, int ofs, int width)
 {
 	if (!vm->abortbuf_valid)
@@ -743,6 +794,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 	volatile qbool saved_context;	// this frame saved the classic context
 	jmp_buf frame_abort;		// stack-local unwind target for this frame
 	eval_t *ptr;
+	eval_t *switchref = NULL;	// OP_SWITCH_F operand for the following OP_CASE*
 
 	// Attach the executing VM -- for the duration of the loop the classic mirrors
 	// (pr_globals), which builtins read/write through the G_* macros, point at
@@ -828,9 +880,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			PR_RunError ("bad statement index %d", s);
 
 		st = &vm->statements[s];
-		a = (eval_t *)&vm->globals[st->a];
-		b = (eval_t *)&vm->globals[st->b];
-		c = (eval_t *)&vm->globals[st->c];
+		a = (eval_t *)&vm->globals[(unsigned short)st->a];
+		b = (eval_t *)&vm->globals[(unsigned short)st->b];
+		c = (eval_t *)&vm->globals[(unsigned short)st->c];
 
 		if (--runaway == 0)
 			PR_RunError ("runaway loop error");
@@ -986,23 +1038,12 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_STOREP_FLD:		// integers
 		case OP_STOREP_S:
 		case OP_STOREP_FNC:		// pointers
-			if (PR1VM_ClientBadPtr (vm, (unsigned)b->_int, sizeof (int)))
-				PR_RunError ("bad pointer write (offset %d)", b->_int);
-			// Pointer writes bypass OP_ADDRESS: the world block is the first
-			// edict_size bytes of game_edicts, so apply the same phase gate.
-			if (vm->abortbuf_valid && !vm->world_writable &&
-				(unsigned)b->_int < (unsigned)vm->edict_size)
-				PR_RunError ("assignment to world entity");
-			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
+		case OP_STOREP_I:
+			ptr = PR1VM_PtrWrite (vm, b->_int, sizeof (int));
 			ptr->_int = a->_int;
 			break;
 		case OP_STOREP_V:
-			if (PR1VM_ClientBadPtr (vm, (unsigned)b->_int, 3 * sizeof (int)))
-				PR_RunError ("bad pointer write (offset %d)", b->_int);
-			if (vm->abortbuf_valid && !vm->world_writable &&
-				(unsigned)b->_int < (unsigned)vm->edict_size)
-				PR_RunError ("assignment to world entity");
-			ptr = (eval_t *)((byte *)vm->game_edicts + b->_int);
+			ptr = PR1VM_PtrWrite (vm, b->_int, 3 * sizeof (int));
 			ptr->vector[0] = a->vector[0];
 			ptr->vector[1] = a->vector[1];
 			ptr->vector[2] = a->vector[2];
@@ -1092,6 +1133,15 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			}
 			break;
 
+		// CALLnH pass the first two args in operands b/c (FTE execloop.h);
+		// memmove: an operand may already be the parm slot.
+		case OP_CALL2H: case OP_CALL3H: case OP_CALL4H: case OP_CALL5H:
+		case OP_CALL6H: case OP_CALL7H: case OP_CALL8H:
+			memmove (&vm->globals[OFS_PARM1], c, 3 * sizeof (float));
+			// fall through
+		case OP_CALL1H:
+			memmove (&vm->globals[OFS_PARM0], b, 3 * sizeof (float));
+			// fall through
 		case OP_CALL0:
 		case OP_CALL1:
 		case OP_CALL2:
@@ -1101,7 +1151,7 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		case OP_CALL6:
 		case OP_CALL7:
 		case OP_CALL8:
-			vm->argc = st->op - OP_CALL0;
+			vm->argc = (st->op >= OP_CALL1H) ? st->op - OP_CALL1H + 1 : st->op - OP_CALL0;
 			if (!a->function)
 				PR_RunError ("NULL function");
 			if (vm->abortbuf_valid && (a->function < 0 || a->function >= vm->progs->numfunctions))
@@ -1124,9 +1174,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 
 		case OP_DONE:
 		case OP_RETURN:
-			vm->globals[OFS_RETURN] = vm->globals[st->a];
-			vm->globals[OFS_RETURN+1] = vm->globals[st->a+1];
-			vm->globals[OFS_RETURN+2] = vm->globals[st->a+2];
+			vm->globals[OFS_RETURN] = vm->globals[(unsigned short)st->a];
+			vm->globals[OFS_RETURN+1] = vm->globals[(unsigned short)st->a+1];
+			vm->globals[OFS_RETURN+2] = vm->globals[(unsigned short)st->a+2];
 
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
@@ -1163,6 +1213,236 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 				ed->v->frame = a->_float;
 			}
 			ed->v->think = b->function;
+			break;
+
+		// FTE extended opcodes (client csprogs v7, see pr_comp.h). Semantics
+		// follow fteqw qclib/execloop.h; integer arithmetic goes through
+		// unsigned to avoid signed-overflow UB, shift counts are masked.
+		case OP_STORE_I:
+			b->_int = a->_int;
+			break;
+		case OP_ADD_I:
+			c->_int = (int)((unsigned)a->_int + (unsigned)b->_int);
+			break;
+		case OP_SUB_I:
+			c->_int = (int)((unsigned)a->_int - (unsigned)b->_int);
+			break;
+		case OP_MUL_I:
+			c->_int = (int)((unsigned)a->_int * (unsigned)b->_int);
+			break;
+		case OP_ADD_IF:
+			c->_float = (float)a->_int + b->_float;
+			break;
+		case OP_SUB_IF:
+			c->_float = (float)a->_int - b->_float;
+			break;
+		case OP_CONV_ITOF:
+			c->_float = (float)a->_int;
+			break;
+		case OP_CONV_FTOI:
+			c->_int = PR1VM_FloatToInt (a->_float);
+			break;
+		case OP_BITAND_I:
+			c->_int = a->_int & b->_int;
+			break;
+		case OP_BITOR_I:
+			c->_int = a->_int | b->_int;
+			break;
+		case OP_BITAND_IF:
+			c->_int = a->_int & PR1VM_FloatToInt (b->_float);
+			break;
+		case OP_BITOR_IF:
+			c->_int = a->_int | PR1VM_FloatToInt (b->_float);
+			break;
+		case OP_BITAND_FI:
+			c->_int = PR1VM_FloatToInt (a->_float) & b->_int;
+			break;
+		case OP_LSHIFT_I:
+			c->_int = (int)((unsigned)a->_int << (b->_int & 31));
+			break;
+		case OP_RSHIFT_I:	// arithmetic shift, as FTE A_RSHIFT_I
+			c->_int = (a->_int < 0) ? ~(~a->_int >> (b->_int & 31)) : (a->_int >> (b->_int & 31));
+			break;
+		case OP_NOT_I:
+			c->_int = !a->_int;
+			break;
+		case OP_EQ_I:
+			c->_int = a->_int == b->_int;
+			break;
+		case OP_NE_I:
+			c->_int = a->_int != b->_int;
+			break;
+		case OP_LE_I:
+			c->_int = a->_int <= b->_int;
+			break;
+		case OP_GE_I:
+			c->_int = a->_int >= b->_int;
+			break;
+		case OP_LT_I:
+			c->_int = a->_int < b->_int;
+			break;
+		case OP_GT_I:
+			c->_int = a->_int > b->_int;
+			break;
+		case OP_EQ_IF:
+			c->_int = a->_int == b->_float;
+			break;
+		case OP_EQ_FI:
+			c->_int = a->_float == b->_int;
+			break;
+		case OP_NE_IF:
+			c->_int = a->_int != b->_float;
+			break;
+		case OP_LE_IF:
+			c->_int = a->_int <= b->_float;
+			break;
+		case OP_GE_IF:
+			c->_int = a->_int >= b->_float;
+			break;
+		case OP_LT_IF:
+			c->_int = a->_int < b->_float;
+			break;
+		case OP_GT_IF:
+			c->_int = a->_int > b->_float;
+			break;
+		case OP_LE_FI:
+			c->_int = a->_float <= b->_int;
+			break;
+		case OP_GE_FI:
+			c->_int = a->_float >= b->_int;
+			break;
+		case OP_LT_FI:
+			c->_int = a->_float < b->_int;
+			break;
+		case OP_GT_FI:
+			c->_int = a->_float > b->_int;
+			break;
+
+		case OP_LOADP_F:
+		case OP_LOADP_S:
+		case OP_LOADP_ENT:
+		case OP_LOADP_FLD:
+		case OP_LOADP_FNC:
+		case OP_LOADP_I:
+			// pointer a + b words (FTE execloop.h)
+			ptr = PR1VM_PtrRead (vm, (unsigned)a->_int + (unsigned)b->_int * 4u, sizeof (int));
+			c->_int = ptr->_int;
+			break;
+		case OP_LOADP_V:
+			ptr = PR1VM_PtrRead (vm, (unsigned)a->_int + (unsigned)b->_int * 4u, 3 * sizeof (int));
+			memmove (c, ptr, 3 * sizeof (float));
+			break;
+
+		// switch (float): SWITCH_F remembers its operand and jumps (b) to the
+		// case table; CASE/CASERANGE jump (b / c) back into the matching block.
+		case OP_SWITCH_F:
+			switchref = a;
+			{
+				int t = s + st->b;	// target after the loop's s++
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
+			break;
+		case OP_CASE:
+		case OP_CASERANGE:
+			if (!switchref)
+				PR_RunError ("case without switch");
+			if (st->op == OP_CASE ? switchref->_float == a->_float
+				: (switchref->_float >= a->_float && switchref->_float <= b->_float))
+			{
+				int t = s + (st->op == OP_CASE ? st->b : st->c);
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
+			break;
+		case OP_AND_I:
+			c->_int = a->_int && b->_int;
+			break;
+		case OP_OR_I:
+			c->_int = a->_int || b->_int;
+			break;
+		case OP_AND_IF:
+			c->_int = a->_int && b->_float;
+			break;
+		case OP_OR_IF:
+			c->_int = a->_int || b->_float;
+			break;
+		case OP_AND_FI:
+			c->_int = a->_float && b->_int;
+			break;
+		case OP_OR_FI:
+			c->_int = a->_float || b->_int;
+			break;
+
+		case OP_IFNOT_F:
+		case OP_IF_F:
+			// float truth with the sign bit masked: -0 is false (FTE EVAL_FLOATISTRUE)
+			if (((a->_int & 0x7fffffff) != 0) == (st->op == OP_IF_F))
+			{
+				int t = s + st->b;	// target after the loop's s++
+				if (vm->abortbuf_valid && (t < 0 || t >= vm->progs->numstatements))
+					PR_RunError ("bad branch target %d", t);
+				s = t - 1;			// offset the s++
+			}
+			break;
+
+		case OP_BOUNDCHECK:
+			// b/c are immediate bounds, not globals: c <= a < b
+			if ((unsigned)a->_int < (unsigned short)st->c || (unsigned)a->_int >= (unsigned short)st->b)
+				PR_RunError ("Progs boundcheck failed. Value is %i. Must be %u<=value<%u",
+					a->_int, (unsigned short)st->c, (unsigned short)st->b);
+			break;
+
+		case OP_LOADA_F:
+		case OP_LOADA_S:
+		case OP_LOADA_ENT:
+		case OP_LOADA_FLD:
+		case OP_LOADA_FNC:
+		case OP_LOADA_I:
+			// array read: global a indexed by b (in words)
+			i = (unsigned short)st->a + b->_int;
+			if ((unsigned)i >= (unsigned)vm->progs->numglobals)
+				PR_RunError ("bad array read (index %d)", b->_int);
+			c->_int = ((eval_t *)&vm->globals[i])->_int;
+			break;
+		case OP_LOADA_V:
+			i = (unsigned short)st->a + b->_int;
+			if ((unsigned)i >= (unsigned)vm->progs->numglobals - 2u)
+				PR_RunError ("bad array read (index %d)", b->_int);
+			memmove (c, &vm->globals[i], 3 * sizeof (float));
+			break;
+
+		case OP_GLOBALADDRESS:
+			// pointer to global a + b words; only the client VM decodes the tag
+			i = (unsigned short)st->a + b->_int;
+			if (!vm->abortbuf_valid || (unsigned)i >= (unsigned)vm->progs->numglobals)
+				PR_RunError ("bad global address (index %d)", b->_int);
+			c->_int = PR1VM_GLOBALPTR | (i * (int)sizeof (float));
+			break;
+
+		case OP_ADDSTOREP_F:
+			ptr = PR1VM_PtrWrite (vm, b->_int, sizeof (float));
+			c->_float = ptr->_float += a->_float;
+			break;
+		case OP_SUBSTOREP_F:
+			ptr = PR1VM_PtrWrite (vm, b->_int, sizeof (float));
+			c->_float = ptr->_float -= a->_float;
+			break;
+		case OP_MULSTOREP_F:
+			ptr = PR1VM_PtrWrite (vm, b->_int, sizeof (float));
+			c->_float = ptr->_float *= a->_float;
+			break;
+		case OP_ADDSTOREP_V:
+			ptr = PR1VM_PtrWrite (vm, b->_int, 3 * sizeof (float));
+			c->vector[0] = ptr->vector[0] += a->vector[0];
+			c->vector[1] = ptr->vector[1] += a->vector[1];
+			c->vector[2] = ptr->vector[2] += a->vector[2];
+			break;
+		case OP_BITSETSTOREP_F:
+			ptr = PR1VM_PtrWrite (vm, b->_int, sizeof (float));
+			ptr->_float = (int)ptr->_float | (int)a->_float;
 			break;
 
 		default:
