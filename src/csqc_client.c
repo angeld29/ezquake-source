@@ -2114,16 +2114,18 @@ static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
 			char dest[MAX_OSPATH], dir[MAX_OSPATH];
 			char *slash;
 			FILE *f;
-			snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
-				cls.gamedir, crc);
+			// A truncated path would write the cache under a different name.
+			if (snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
+				cls.gamedir, crc) >= (int)sizeof (dest))
+				dest[0] = 0;
 			strlcpy (dir, dest, sizeof (dir));
 			slash = strrchr (dir, '/');
-			if (slash && slash != dir)
+			if (dest[0] && slash && slash != dir)
 			{
 				*slash = 0;
 				Sys_mkdir (dir);
 			}
-			f = fopen (dest, "wb");
+			f = dest[0] ? fopen (dest, "wb") : NULL;
 			if (f)
 			{
 				fwrite (data, 1, len, f);
