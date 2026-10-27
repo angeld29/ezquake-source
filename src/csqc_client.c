@@ -7274,6 +7274,10 @@ void CSQC_Client_Disconnect (void)
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
 	memset (s_csqc_cl_statsf, 0, sizeof (s_csqc_cl_statsf));
 	memset (s_csqc_cl_statsf_valid, 0, sizeof (s_csqc_cl_statsf_valid));
+	// Sent-command history: outgoing_sequence restarts on reconnect, so stale
+	// entries would match new sequence numbers in getinputstate/CL_RotateMoves (S55).
+	memset (s_inhist, 0, sizeof (s_inhist));
+	s_last_seq = 0;
 	// Stat wire 78/79: string stats are deep copies (Q_strdup).
 	for (i = 0; i < MAX_EXTENDED_CL_STATS; i++)
 	{
