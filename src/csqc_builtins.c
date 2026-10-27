@@ -2843,10 +2843,16 @@ static void csqc_bitshift (void)
 		return;
 	mask = (int)vm->globals[OFS_PARM0];
 	shift = (int)vm->globals[OFS_PARM1];
-	if (shift < 0)
+	// Shifts of 32 or more, and a left shift of a negative int, are UB in C; shift
+	// as unsigned and give 0 past the width (an arithmetic right shift keeps the sign).
+	if (shift <= -32)
+		mask = (mask < 0) ? -1 : 0;
+	else if (shift < 0)
 		mask >>= -shift;
+	else if (shift >= 32)
+		mask = 0;
 	else
-		mask <<= shift;
+		mask = (int)((unsigned int)mask << shift);
 	vm->globals[OFS_RETURN] = mask;
 }
 
@@ -3201,7 +3207,7 @@ static void csqc_strncmp (void)
 		aofs = alen;
 	if (bofs < 0 || (bofs && bofs > blen))
 		bofs = blen;
-	vm->globals[OFS_RETURN] = strncmp (a + aofs, b, len);
+	vm->globals[OFS_RETURN] = strncmp (a + aofs, b + bofs, len);
 }
 
 /*
@@ -5993,7 +5999,7 @@ static void csqc_bsp_nop_vec (void)
 }
 
 /*
- Introspection/console. Implemented: #294 checkcommand (cmd->1, cvar->3, no alias->0),
+ Introspection/console. Implemented: #294 checkcommand (cmd->1, alias->2, cvar->3),
  #295 argescape (own quoting), #607 isfunction. No-op: #391/#392/#393/#394 (FTE
  multi-console has no ezq analog), #605 callfunction (reentrant exec from a builtin
  is unsupported).
@@ -6008,6 +6014,8 @@ static void csqc_checkcommand (void)
 		return;
 	if (name && name[0] && Cmd_Exists (name))
 		vm->globals[OFS_RETURN] = 1;
+	else if (name && name[0] && Cmd_FindAlias (name))
+		vm->globals[OFS_RETURN] = 2;	// FTE PF_checkcommand: command 1, alias 2, cvar 3
 	else if (name && name[0] && Cvar_Find (name))
 		vm->globals[OFS_RETURN] = 3;
 	else
