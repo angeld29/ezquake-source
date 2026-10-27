@@ -719,7 +719,7 @@ static int csqc_ext_index (int c)
 static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsize)
 {
 	size_t n = 0;
-	char curfg[3];		// current FG (&c nibbles)
+	char curfg[3] = { 0 };	// current FG (&c nibbles)
 	int have_col = 0;	// 0 = default/white (=&r), 1 = colored
 	char stackfg[4][3];	// ^s/^r stack (FTE extstack, depth 4)
 	int stackcol[4];
