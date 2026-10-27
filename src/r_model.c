@@ -167,9 +167,11 @@ model_t *Mod_FindName(const char *name)
 		Sys_Error("Mod_ForName: NULL name");
 	}
 
+	// mod->name is truncated on insert, so compare only that many characters:
+	// a longer name would otherwise never match and take a new slot every call.
 	// search the currently loaded models
 	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++) {
-		if (!strcmp(mod->name, name)) {
+		if (!strncmp(mod->name, name, sizeof(mod->name) - 1)) {
 			break;
 		}
 	}
