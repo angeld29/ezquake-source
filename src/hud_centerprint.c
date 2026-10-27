@@ -67,7 +67,7 @@ void SCR_CenterPrint(const char *str)
 
 	// count the number of lines for centering
 	scr_center_lines = 0;
-	while (*str) {
+	while (*str && scr_center_lines < (int)(sizeof(scr_centerstring_lines) / sizeof(scr_centerstring_lines[0]))) {
 		const char* endl = strchr(str, '\n');
 		if (!endl) {
 			strlcpy(scr_centerstring_lines[scr_center_lines], str, sizeof(scr_centerstring_lines[scr_center_lines]));
