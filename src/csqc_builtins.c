@@ -17,6 +17,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 #ifndef _WIN32
 #include <strings.h>
 #endif
@@ -257,7 +259,9 @@ static void csqc_cvar (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *name = CSQCVM_Str (OFS_PARM0);
 	// #45 read-guard: a denied (rcon/password) name yields 0, like FTE CVAR_NOUNSAFEEXPAND.
-	vm->globals[OFS_RETURN] = (vm && name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
 }
 
 /*
@@ -1410,6 +1414,18 @@ static char *csqc_sprintf_put_int (char *f, int v)
 	return f;
 }
 
+// Float -> int64 without UB: NaN -> 0, out-of-range values saturate.
+static int64_t csqc_sprintf_ftoi64 (float v)
+{
+	if (v != v)
+		return 0;
+	if (v >= 9.2233720368547758e18f)
+		return INT64_MAX;
+	if (v <= -9.2233720368547758e18f)
+		return INT64_MIN;
+	return (int64_t)v;
+}
+
 static void csqc_sprintf (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1575,31 +1591,53 @@ static void csqc_sprintf (void)
 			{
 			case 'd':
 			case 'i':
-				*f++ = 'd';
-				*f = 0;
+				// FTE formats float-domain integers as int64; (int) would be UB out of range.
 				if (isfloat)
-					snprintf (tmp, sizeof (tmp), formatbuf, (int)fv);
+				{
+					strcpy (f, PRId64);
+					snprintf (tmp, sizeof (tmp), formatbuf, csqc_sprintf_ftoi64 (fv));
+				}
 				else
+				{
+					*f++ = 'd';
+					*f = 0;
 					snprintf (tmp, sizeof (tmp), formatbuf, iv);
+				}
 				pn++;
 				break;
 			case 'u':
-				*f++ = 'u';
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, PRIu64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = 'u';
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'x':
 			case 'X':
-				*f++ = conv;
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, conv == 'x' ? PRIx64 : PRIX64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = conv;
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'c':
 				*f++ = 'c';
 				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)fv : iv);
+				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)csqc_sprintf_ftoi64 (fv) : iv);
 				pn++;
 				break;
 			case 'f':
@@ -2388,7 +2426,7 @@ static void csqc_te_bloodshower (void)
 	vel[1] = 0;
 	vel[2] = -g[OFS_PARM0 + 6];	// FTE parity (pr_csqc.c:5069-5077): explosionspeed (PARM2), not a fixed -100
 	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], vel,
-		bound (1, (int)g[OFS_PARM0 + 7], 4096), 73);
+		bound (1, (int)g[OFS_PARM0 + 9], 4096), 73);
 }
 // #407 te_explosionrgb
 static void csqc_te_explosionrgb (void)
