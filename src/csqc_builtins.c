@@ -4495,9 +4495,15 @@ static void csqc_addentity (void)
 static void csqc_spawn (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
 	if (!vm)
 		return;
-	csqc_ret_entity (vm, CSQC_Client_EntAlloc (vm));
+	slot = CSQC_Client_EntAlloc (vm);
+	// FTE ED_Alloc errors when the pool is full. Returning world would make the
+	// module write its new entity's fields into edict 0 (S82).
+	if (!slot)
+		PR_RunError ("spawn: no free edicts");
+	csqc_ret_entity (vm, slot);
 }
 
 /* void(entity e) remove = #15 */
@@ -5528,18 +5534,58 @@ static void csqc_strftime (void)
 		return;
 	t = time (NULL);
 	tm = (vm->globals[OFS_PARM0] != 0) ? localtime (&t) : gmtime (&t);
+	if (!tm)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	// Copy the format with only the C89 conversions, which every CRT accepts: an
+	// unknown one (or a trailing '%') reaches the MSVC invalid-parameter handler
+	// and aborts the process. %R/%F/%T/%D are expanded (FTE does %R/%F the same
+	// way for msvc); anything else is escaped so it prints literally.
 	for (i = 1; i < vm->argc && o < (int)sizeof (buf) - 1; i++)
 	{
 		p = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (!p)
 			continue;
-		// msvc compatibility (like FTE): %R/%F
-		if (!strcmp (p, "%R"))
-			p = "%H:%M";
-		else if (!strcmp (p, "%F"))
-			p = "%Y-%m-%d";
-		o += snprintf (buf + o, sizeof (buf) - o, "%s", p);
+		for (; *p && o < (int)sizeof (buf) - 1; p++)
+		{
+			const char *rep = NULL;
+			char conv[4];
+
+			if (*p != '%')
+			{
+				buf[o++] = *p;
+				continue;
+			}
+			p++;
+			if (*p == 'R')
+				rep = "%H:%M";
+			else if (*p == 'F')
+				rep = "%Y-%m-%d";
+			else if (*p == 'T')
+				rep = "%H:%M:%S";
+			else if (*p == 'D')
+				rep = "%m/%d/%y";
+			else if (*p && strchr ("aAbBcdHIjmMpSUwWxXyYZ%", *p))
+			{
+				conv[0] = '%';
+				conv[1] = *p;
+				conv[2] = 0;
+				rep = conv;
+			}
+			else
+			{
+				rep = "%%";
+				p--;	// re-read the next character (or the terminator) as text
+			}
+			if (o + (int)strlen (rep) >= (int)sizeof (buf))
+				break;
+			strcpy (buf + o, rep);
+			o += (int)strlen (rep);
+		}
 	}
+	buf[o] = 0;
 	if (!o)
 	{
 		CSQCVM_SetRetStr ("");
@@ -5550,7 +5596,7 @@ static void csqc_strftime (void)
 		if (strftime (out, sizeof (out), buf, tm))
 			CSQCVM_SetRetStr (out);
 		else
-			CSQCVM_SetRetStr (buf);	// invalid format - return as is
+			CSQCVM_SetRetStr ("");
 	}
 }
 

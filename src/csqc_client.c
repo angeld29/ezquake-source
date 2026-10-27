@@ -308,14 +308,14 @@ void CSQC_Client_UnzoneString (pr1vm_t *vm, int num)
 	// Valid offsets are -(i + MAX_PRSTR), i in [0, MAX_PRSTR).
 	if (num > -MAX_PRSTR || num <= -(MAX_PRSTR * 2))
 	{
-		Con_Printf ("strunzone: not a dynamic string\n");
+		Con_DPrintf ("strunzone: not a dynamic string\n");
 		return;
 	}
 
 	i = -num - MAX_PRSTR;
 	if (!pool->newstrtbl[i])
 	{
-		Con_Printf ("strunzone: string already freed\n");
+		Con_DPrintf ("strunzone: string already freed\n");
 		return;
 	}
 
