@@ -48,6 +48,7 @@ void CSQC_Client_ClearModuleCvars (void);
 void CSQC_Client_GetScreenSize (int *w, int *h);	// vid.width/height (VF_SCREENVSIZE)
 void CSQC_Client_DrawText (float x, float y, const char *text, int r, int g, int b, float alpha, float scale);
 void CSQC_Client_RegisterCommand (const char *cmd);	// registercommand -> console binding
+qbool CSQC_Client_IsModuleCommand (const char *cmd);
 qbool CSQC_Client_ConsoleCommand (const char *line);	// #5: run CSQC_ConsoleCommand(line); true = handled
 void CSQC_Client_Abort (const char *msg);			// fatal: disconnects the client (FTE CSQC_Abort)
 // Bounded string reads for the client VM (untrusted csprogs): a positive offset
@@ -170,6 +171,7 @@ int CSQC_Client_Active (void);			// module loaded and not in error
 void CSQC_Client_ConnectCheck (void);	// after full serverinfo: load + CSQC_Init
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + unload + command removal
 void CSQC_Client_Update (void);			// every 2D frame: WorldLoaded-once + UpdateView
+void CSQC_Client_PollDownload (void);		// every client frame: deferred csprogs load + module download queue
 
 // Renderscene takeover: when a CSQC module is active it owns the 3D scene as in
 // FTE -- CSQC_UpdateView runs in the 3D phase, #300/#301 build cl_visents, and

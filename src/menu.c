@@ -115,7 +115,7 @@ int        menuheight = 240;
 
 cvar_t     scr_centerMenu = {"scr_centerMenu","1"};
 cvar_t     menu_ingame = {"menu_ingame", "1"};
-cvar_t     menu_botmatch_gamedir = { "menu_botmatch_gamedir", "fbca" };
+cvar_t     menu_botmatch_gamedir = { "menu_botmatch_gamedir", "fbca", CVAR_NOTFROMSERVER }; // value goes into `gamedir "%s"` (menu_multiplayer.c)
 cvar_t     menu_botmatch_mod_old = { "menu_botmatch_mod_old", "1" };
 int        m_yofs = 0;
 
