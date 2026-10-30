@@ -5380,6 +5380,95 @@ static int s_update_screencount = -1;
 
 /*
 =================
+CSQC_Client_PollDownload
+
+Called once per client frame (cl_main.c), independent of rendering: a deferred
+csprogs load and the module download queue must not wait for the HUD phase,
+which is skipped with the menu open (cl_onload menu), r_drawhud 0 or during
+intermission.
+=================
+*/
+void CSQC_Client_PollDownload (void)
+{
+	char path[MAX_QPATH];
+
+	// Queue flushing must also run before ca_active: CSQC_Init precaches land in
+	// ConnectCheck (inside CL_MakeActive). One request per frame (single slot).
+	if (cls.state >= ca_connected)
+		CSQC_Client_FlushDownloadQueue ();
+
+	if (cls.state != ca_active || !s_dl.csprogs_dl_pending)
+		return;
+
+	// Waiting for a downloaded csprogs (a valid file appeared -> load).
+	if (CSQC_Client_ValidateFile (s_csqc.csprogs_dl_path,
+		s_csqc.csprogs_size, s_csqc.csprogs_crc))
+	{
+		strlcpy (path, s_csqc.csprogs_dl_path, sizeof (path));
+		s_dl.csprogs_dl_pending = false;
+		if (!CSQC_Client_Load (path))
+		{
+			CSQC_Client_NotifyCSQC (false);
+			return;
+		}
+		if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
+		{
+			CSQC_Client_NotifyCSQC (false);
+			return;
+		}
+		memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
+		s_csqc.world_done = false;
+		s_csqc.enable_sent = false;
+	}
+	else
+	{
+		// Timeout by absence of progress (FTE has no limit of its own - it
+		// relies on the general download machine; a flat 20 s from start gave up
+		// on slow links even though the download was running).
+		double now = Sys_DoubleTime ();
+		qbool ours = cls.download
+			&& !strcmp (cls.downloadname, s_dl.csprogs_dl_localname);
+
+		if (ours)
+		{
+			int pct = (int)cls.downloadpercent;
+
+			if (pct > s_dl.csprogs_dl_percent)
+			{
+				s_dl.csprogs_dl_percent = pct;
+				s_dl.csprogs_dl_lastprogress = now;
+			}
+			s_dl.csprogs_dl_started = true;
+		}
+		else if (s_dl.csprogs_dl_started)
+		{
+			// our download finished without a valid file (failure/cancel)
+			s_dl.csprogs_dl_pending = false;
+			Con_Printf ("CSQC: csprogs download failed\n");
+			CSQC_Client_NotifyCSQC (false);
+		}
+		else if (!s_dl.csprogs_dl_requested)
+		{
+			// The request is not out yet: the download slot was busy with
+			// another transfer when we connected. Retry once it is free and
+			// keep the no-progress window from expiring while we defer.
+			if (!cls.download)
+				s_dl.csprogs_dl_requested = CSQC_Client_StartDownload ("csprogs.dat", s_csqc.csprogs_dl_path);
+			s_dl.csprogs_dl_lastprogress = now;
+		}
+		else if (now - s_dl.csprogs_dl_lastprogress > 20)
+		{
+			s_dl.csprogs_dl_pending = false;
+			cls.downloadrequested = false;
+			Con_Printf ("CSQC: csprogs download timed out (no progress)\n");
+			CSQC_Client_NotifyCSQC (false);
+		}
+		return;
+	}
+}
+
+/*
+=================
 CSQC_Client_Update
 
 Called each 2D frame (HUD phase, cl_screen.c). WorldLoaded - once after entering the
@@ -5395,11 +5484,6 @@ void CSQC_Client_Update (void)
 	// No callback from a previous frame may leave the phase flag set.
 	vm->world_writable = false;
 
-	// Queue flushing must also run before ca_active: CSQC_Init precaches land in
-	// ConnectCheck (inside CL_MakeActive). One request per frame (single slot).
-	if (cls.state >= ca_connected)
-		CSQC_Client_FlushDownloadQueue ();
-
 	if (cls.state != ca_active)
 		return;
 
@@ -5409,76 +5493,9 @@ void CSQC_Client_Update (void)
 
 	s_clip_on = false;
 
-	// Waiting for a downloaded csprogs (a valid file appeared -> load).
+	// A pending csprogs download is loaded by CSQC_Client_PollDownload.
 	if (s_dl.csprogs_dl_pending)
-	{
-		char path[MAX_QPATH];
-
-		if (CSQC_Client_ValidateFile (s_csqc.csprogs_dl_path,
-			s_csqc.csprogs_size, s_csqc.csprogs_crc))
-		{
-			strlcpy (path, s_csqc.csprogs_dl_path, sizeof (path));
-			s_dl.csprogs_dl_pending = false;
-			if (!CSQC_Client_Load (path))
-			{
-				CSQC_Client_NotifyCSQC (false);
-				return;
-			}
-			if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
-			{
-				CSQC_Client_NotifyCSQC (false);
-				return;
-			}
-			memset (s_csqc.seen, 0, sizeof (s_csqc.seen));
-			s_csqc.world_done = false;
-			s_csqc.enable_sent = false;
-		}
-		else
-		{
-			// Timeout by absence of progress (FTE has no limit of its own - it
-			// relies on the general download machine; a flat 20 s from start gave up
-			// on slow links even though the download was running).
-			double now = Sys_DoubleTime ();
-			qbool ours = cls.download
-				&& !strcmp (cls.downloadname, s_dl.csprogs_dl_localname);
-
-			if (ours)
-			{
-				int pct = (int)cls.downloadpercent;
-
-				if (pct > s_dl.csprogs_dl_percent)
-				{
-					s_dl.csprogs_dl_percent = pct;
-					s_dl.csprogs_dl_lastprogress = now;
-				}
-				s_dl.csprogs_dl_started = true;
-			}
-			else if (s_dl.csprogs_dl_started)
-			{
-				// our download finished without a valid file (failure/cancel)
-				s_dl.csprogs_dl_pending = false;
-				Con_Printf ("CSQC: csprogs download failed\n");
-				CSQC_Client_NotifyCSQC (false);
-			}
-			else if (!s_dl.csprogs_dl_requested)
-			{
-				// The request is not out yet: the download slot was busy with
-				// another transfer when we connected. Retry once it is free and
-				// keep the no-progress window from expiring while we defer.
-				if (!cls.download)
-					s_dl.csprogs_dl_requested = CSQC_Client_StartDownload ("csprogs.dat", s_csqc.csprogs_dl_path);
-				s_dl.csprogs_dl_lastprogress = now;
-			}
-			else if (now - s_dl.csprogs_dl_lastprogress > 20)
-			{
-				s_dl.csprogs_dl_pending = false;
-				cls.downloadrequested = false;
-				Con_Printf ("CSQC: csprogs download timed out (no progress)\n");
-				CSQC_Client_NotifyCSQC (false);
-			}
-			return;
-		}
-	}
+		return;
 
 	if (!s_csqc.loaded || !s_csqc.inited || s_csqc.errored)
 		return;
