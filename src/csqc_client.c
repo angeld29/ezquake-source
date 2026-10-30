@@ -15,6 +15,7 @@ PR1VM_UnLoad and removal of the commands.
 #include "pr1vm.h"
 #include "csqc_client.h"
 #include "pmove.h"
+#include "qsound.h"
 #include "common_draw.h"
 #include "r_texture.h"
 #include "r_matrix.h"
@@ -307,14 +308,14 @@ void CSQC_Client_UnzoneString (pr1vm_t *vm, int num)
 	// Valid offsets are -(i + MAX_PRSTR), i in [0, MAX_PRSTR).
 	if (num > -MAX_PRSTR || num <= -(MAX_PRSTR * 2))
 	{
-		Con_Printf ("strunzone: not a dynamic string\n");
+		Con_DPrintf ("strunzone: not a dynamic string\n");
 		return;
 	}
 
 	i = -num - MAX_PRSTR;
 	if (!pool->newstrtbl[i])
 	{
-		Con_Printf ("strunzone: string already freed\n");
+		Con_DPrintf ("strunzone: string already freed\n");
 		return;
 	}
 
@@ -718,7 +719,7 @@ static int csqc_ext_index (int c)
 static int CSQC_Client_TranslateMarkup (const char *in, char *out, size_t outsize)
 {
 	size_t n = 0;
-	char curfg[3];		// current FG (&c nibbles)
+	char curfg[3] = { 0 };	// current FG (&c nibbles)
 	int have_col = 0;	// 0 = default/white (=&r), 1 = colored
 	char stackfg[4][3];	// ^s/^r stack (FTE extstack, depth 4)
 	int stackcol[4];
@@ -2113,16 +2114,18 @@ static qbool CSQC_Client_FindMainProgs (char *pathbuf, size_t bufsz,
 			char dest[MAX_OSPATH], dir[MAX_OSPATH];
 			char *slash;
 			FILE *f;
-			snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
-				cls.gamedir, crc);
+			// A truncated path would write the cache under a different name.
+			if (snprintf (dest, sizeof (dest), "%s/csprogsvers/%x.dat",
+				cls.gamedir, crc) >= (int)sizeof (dest))
+				dest[0] = 0;
 			strlcpy (dir, dest, sizeof (dir));
 			slash = strrchr (dir, '/');
-			if (slash && slash != dir)
+			if (dest[0] && slash && slash != dir)
 			{
 				*slash = 0;
 				Sys_mkdir (dir);
 			}
-			f = fopen (dest, "wb");
+			f = dest[0] ? fopen (dest, "wb") : NULL;
 			if (f)
 			{
 				fwrite (data, 1, len, f);
@@ -5849,7 +5852,7 @@ void CSQC_Client_ParsePrecacheMsg (void)
 		if (pidx >= 1 && pidx < MAX_SOUNDS && CSQC_Client_AllowModuleSound (name))
 		{
 			strlcpy (cl.sound_name[pidx], name, sizeof (cl.sound_name[pidx]));
-			cl.sound_precache[pidx] = S_PrecacheSound (name);
+			cl.sound_precache[pidx] = S_PrecacheSound ((char *) name);
 		}
 	}
 }
@@ -6436,12 +6439,13 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 	// input_* globals -> cmd (every declared field is written back).
 	if (s_csqc.in_timelength >= 0)
 	{
-		int msec = (int)(vm->globals[s_csqc.in_timelength] * 1000.0f);
-		if (msec < 1)
-			msec = 1;
-		else if (msec > 255)
-			msec = 255;
-		cmd->msec = (byte)msec;
+		// Clamp as float before the int cast: NaN or a huge module value is UB as int.
+		float ms = vm->globals[s_csqc.in_timelength] * 1000.0f;
+		if (!(ms >= 1.0f))
+			ms = 1.0f;
+		else if (ms > 255.0f)
+			ms = 255.0f;
+		cmd->msec = (byte)(int)ms;
 	}
 	if (s_csqc.in_angles >= 0)
 	{
@@ -7272,6 +7276,10 @@ void CSQC_Client_Disconnect (void)
 	memset (s_csqc_statsf, 0, sizeof (s_csqc_statsf));
 	memset (s_csqc_cl_statsf, 0, sizeof (s_csqc_cl_statsf));
 	memset (s_csqc_cl_statsf_valid, 0, sizeof (s_csqc_cl_statsf_valid));
+	// Sent-command history: outgoing_sequence restarts on reconnect, so stale
+	// entries would match new sequence numbers in getinputstate/CL_RotateMoves (S55).
+	memset (s_inhist, 0, sizeof (s_inhist));
+	s_last_seq = 0;
 	// Stat wire 78/79: string stats are deep copies (Q_strdup).
 	for (i = 0; i < MAX_EXTENDED_CL_STATS; i++)
 	{

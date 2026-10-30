@@ -17,6 +17,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 #ifndef _WIN32
 #include <strings.h>
 #endif
@@ -257,7 +259,9 @@ static void csqc_cvar (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *name = CSQCVM_Str (OFS_PARM0);
 	// #45 read-guard: a denied (rcon/password) name yields 0, like FTE CVAR_NOUNSAFEEXPAND.
-	vm->globals[OFS_RETURN] = (vm && name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
 }
 
 /*
@@ -1410,6 +1414,18 @@ static char *csqc_sprintf_put_int (char *f, int v)
 	return f;
 }
 
+// Float -> int64 without UB: NaN -> 0, out-of-range values saturate.
+static int64_t csqc_sprintf_ftoi64 (float v)
+{
+	if (v != v)
+		return 0;
+	if (v >= 9.2233720368547758e18f)
+		return INT64_MAX;
+	if (v <= -9.2233720368547758e18f)
+		return INT64_MIN;
+	return (int64_t)v;
+}
+
 static void csqc_sprintf (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1575,31 +1591,53 @@ static void csqc_sprintf (void)
 			{
 			case 'd':
 			case 'i':
-				*f++ = 'd';
-				*f = 0;
+				// FTE formats float-domain integers as int64; (int) would be UB out of range.
 				if (isfloat)
-					snprintf (tmp, sizeof (tmp), formatbuf, (int)fv);
+				{
+					strcpy (f, PRId64);
+					snprintf (tmp, sizeof (tmp), formatbuf, csqc_sprintf_ftoi64 (fv));
+				}
 				else
+				{
+					*f++ = 'd';
+					*f = 0;
 					snprintf (tmp, sizeof (tmp), formatbuf, iv);
+				}
 				pn++;
 				break;
 			case 'u':
-				*f++ = 'u';
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, PRIu64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = 'u';
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'x':
 			case 'X':
-				*f++ = conv;
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, conv == 'x' ? PRIx64 : PRIX64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = conv;
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'c':
 				*f++ = 'c';
 				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)fv : iv);
+				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)csqc_sprintf_ftoi64 (fv) : iv);
 				pn++;
 				break;
 			case 'f':
@@ -2388,7 +2426,7 @@ static void csqc_te_bloodshower (void)
 	vel[1] = 0;
 	vel[2] = -g[OFS_PARM0 + 6];	// FTE parity (pr_csqc.c:5069-5077): explosionspeed (PARM2), not a fixed -100
 	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], vel,
-		bound (1, (int)g[OFS_PARM0 + 7], 4096), 73);
+		bound (1, (int)g[OFS_PARM0 + 9], 4096), 73);
 }
 // #407 te_explosionrgb
 static void csqc_te_explosionrgb (void)
@@ -2805,10 +2843,16 @@ static void csqc_bitshift (void)
 		return;
 	mask = (int)vm->globals[OFS_PARM0];
 	shift = (int)vm->globals[OFS_PARM1];
-	if (shift < 0)
+	// Shifts of 32 or more, and a left shift of a negative int, are UB in C; shift
+	// as unsigned and give 0 past the width (an arithmetic right shift keeps the sign).
+	if (shift <= -32)
+		mask = (mask < 0) ? -1 : 0;
+	else if (shift < 0)
 		mask >>= -shift;
+	else if (shift >= 32)
+		mask = 0;
 	else
-		mask <<= shift;
+		mask = (int)((unsigned int)mask << shift);
 	vm->globals[OFS_RETURN] = mask;
 }
 
@@ -3163,7 +3207,7 @@ static void csqc_strncmp (void)
 		aofs = alen;
 	if (bofs < 0 || (bofs && bofs > blen))
 		bofs = blen;
-	vm->globals[OFS_RETURN] = strncmp (a + aofs, b, len);
+	vm->globals[OFS_RETURN] = strncmp (a + aofs, b + bofs, len);
 }
 
 /*
@@ -3387,7 +3431,7 @@ static void csqc_strreplace (void)
 	replacelen = strlen (replace);
 	if (searchlen)
 	{
-		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		while (*sub && (size_t)(result - buf) + replacelen + 2 < sizeof (buf))
 		{
 			if (!strncmp (sub, search, searchlen))
 			{
@@ -3419,7 +3463,7 @@ static void csqc_strireplace (void)
 	replacelen = strlen (replace);
 	if (searchlen)
 	{
-		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		while (*sub && (size_t)(result - buf) + replacelen + 2 < sizeof (buf))
 		{
 			if (!strncasecmp (sub, search, searchlen))
 			{
@@ -4457,9 +4501,15 @@ static void csqc_addentity (void)
 static void csqc_spawn (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
 	if (!vm)
 		return;
-	csqc_ret_entity (vm, CSQC_Client_EntAlloc (vm));
+	slot = CSQC_Client_EntAlloc (vm);
+	// FTE ED_Alloc errors when the pool is full. Returning world would make the
+	// module write its new entity's fields into edict 0 (S82).
+	if (!slot)
+		PR_RunError ("spawn: no free edicts");
+	csqc_ret_entity (vm, slot);
 }
 
 /* void(entity e) remove = #15 */
@@ -5490,18 +5540,58 @@ static void csqc_strftime (void)
 		return;
 	t = time (NULL);
 	tm = (vm->globals[OFS_PARM0] != 0) ? localtime (&t) : gmtime (&t);
+	if (!tm)
+	{
+		CSQCVM_SetRetStr ("");
+		return;
+	}
+	// Copy the format with only the C89 conversions, which every CRT accepts: an
+	// unknown one (or a trailing '%') reaches the MSVC invalid-parameter handler
+	// and aborts the process. %R/%F/%T/%D are expanded (FTE does %R/%F the same
+	// way for msvc); anything else is escaped so it prints literally.
 	for (i = 1; i < vm->argc && o < (int)sizeof (buf) - 1; i++)
 	{
 		p = CSQC_Client_GetString (vm, *(int *)&vm->globals[OFS_PARM0 + i * 3]);
 		if (!p)
 			continue;
-		// msvc compatibility (like FTE): %R/%F
-		if (!strcmp (p, "%R"))
-			p = "%H:%M";
-		else if (!strcmp (p, "%F"))
-			p = "%Y-%m-%d";
-		o += snprintf (buf + o, sizeof (buf) - o, "%s", p);
+		for (; *p && o < (int)sizeof (buf) - 1; p++)
+		{
+			const char *rep = NULL;
+			char conv[4];
+
+			if (*p != '%')
+			{
+				buf[o++] = *p;
+				continue;
+			}
+			p++;
+			if (*p == 'R')
+				rep = "%H:%M";
+			else if (*p == 'F')
+				rep = "%Y-%m-%d";
+			else if (*p == 'T')
+				rep = "%H:%M:%S";
+			else if (*p == 'D')
+				rep = "%m/%d/%y";
+			else if (*p && strchr ("aAbBcdHIjmMpSUwWxXyYZ%", *p))
+			{
+				conv[0] = '%';
+				conv[1] = *p;
+				conv[2] = 0;
+				rep = conv;
+			}
+			else
+			{
+				rep = "%%";
+				p--;	// re-read the next character (or the terminator) as text
+			}
+			if (o + (int)strlen (rep) >= (int)sizeof (buf))
+				break;
+			strcpy (buf + o, rep);
+			o += (int)strlen (rep);
+		}
 	}
+	buf[o] = 0;
 	if (!o)
 	{
 		CSQCVM_SetRetStr ("");
@@ -5512,7 +5602,7 @@ static void csqc_strftime (void)
 		if (strftime (out, sizeof (out), buf, tm))
 			CSQCVM_SetRetStr (out);
 		else
-			CSQCVM_SetRetStr (buf);	// invalid format - return as is
+			CSQCVM_SetRetStr ("");
 	}
 }
 
@@ -5909,7 +5999,7 @@ static void csqc_bsp_nop_vec (void)
 }
 
 /*
- Introspection/console. Implemented: #294 checkcommand (cmd->1, cvar->3, no alias->0),
+ Introspection/console. Implemented: #294 checkcommand (cmd->1, alias->2, cvar->3),
  #295 argescape (own quoting), #607 isfunction. No-op: #391/#392/#393/#394 (FTE
  multi-console has no ezq analog), #605 callfunction (reentrant exec from a builtin
  is unsupported).
@@ -5924,6 +6014,8 @@ static void csqc_checkcommand (void)
 		return;
 	if (name && name[0] && Cmd_Exists (name))
 		vm->globals[OFS_RETURN] = 1;
+	else if (name && name[0] && Cmd_FindAlias (name))
+		vm->globals[OFS_RETURN] = 2;	// FTE PF_checkcommand: command 1, alias 2, cvar 3
 	else if (name && name[0] && Cvar_Find (name))
 		vm->globals[OFS_RETURN] = 3;
 	else
