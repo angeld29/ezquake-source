@@ -602,6 +602,16 @@ void Cmd_Exec_f (void)
 	}
 
 	strlcpy (name, Cmd_Argv(1), sizeof(name) - 4);
+	if (cbuf_current == &cbuf_svc) {
+		// A remote exec runs the file in cbuf_main: only config scripts, or a
+		// text file with attacker-controlled lines (qconsole.log) becomes code.
+		if (!strchr (COM_SkipPath (name), '.'))
+			strlcat (name, ".cfg", sizeof (name));
+		if (strstr (name, "..") || strcasecmp (COM_FileExtension (name), "cfg")) {
+			Com_Printf ("Blocked remote exec of %s: only .cfg files\n", Cmd_Argv(1));
+			return;
+		}
+	}
 	if (!(f = (char *) FS_LoadHeapFile(name, NULL)))	{
 		const char *p;
 		p = COM_SkipPath (name);
