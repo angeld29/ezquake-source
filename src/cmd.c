@@ -1137,7 +1137,9 @@ static qbool Cmd_LegacyCommand (void)
 	}
 
 	recursive = true;
-	Cmd_ExecuteString(text);
+	// Keep the caller's buffer: a NULL context would drop cbuf_svc and let a
+	// stuffcmd/CSQC line reach the new name past Cmd_RemoteAllowed.
+	Cmd_ExecuteStringEx(cbuf_current, text);
 	recursive = false;
 
 	return true;
