@@ -1454,6 +1454,16 @@ void CSQC_Client_RegisterCommand (const char *cmd)
 	s_csqc.numcmds++;
 }
 
+qbool CSQC_Client_IsModuleCommand (const char *cmd)
+{
+	int i;
+
+	for (i = 0; cmd && i < s_csqc.numcmds; i++)
+		if (!strcmp (s_csqc.cmds[i], cmd))
+			return true;
+	return false;
+}
+
 /*
 =================
 CSQC_Client_RegisterCommands

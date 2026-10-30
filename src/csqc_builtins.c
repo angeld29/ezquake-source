@@ -5599,6 +5599,28 @@ static void csqc_getkeybind (void)
 
 /* void(float keynum, string binding, optional float bindmap) setkeybind = #630 (input is a QC code) */
 
+static qbool CSQC_BindAllowed (const char *binding)
+{
+	const char *p;
+
+	if (!binding || !binding[0])
+		return true;
+	// '$' is expanded at execution time (Cmd_ExpandString), so "say $rcon_password"
+	// would leak a read-guarded cvar; same rule as localcmd.
+	if (strpbrk (binding, ";\r\n$"))
+		return false;
+	for (p = binding; isspace ((unsigned char)*p); p++)
+		;
+	if (*p == '+' || *p == '-')
+		return true;
+	COM_Parse (p);
+	if (!com_token[0])
+		return false;
+	if (CSQC_Client_IsModuleCommand (com_token) || Cmd_RemoteAllowed (com_token))
+		return true;
+	return !Cmd_FindCommand (com_token) && !Cvar_Find (com_token) && !Cmd_FindAlias (com_token);
+}
+
 static void csqc_setkeybind (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -5608,7 +5630,7 @@ static void csqc_setkeybind (void)
 		return;
 	keynum = CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0]);
 	binding = CSQCVM_Str (OFS_PARM1);
-	if (keynum >= 0 && keynum < UNKNOWN + 256)
+	if (keynum >= 0 && keynum < UNKNOWN + 256 && CSQC_BindAllowed (binding))
 	{
 		// module binds are flagged so they are not saved.
 		Key_SetBindingModule (keynum, binding ? binding : "");
