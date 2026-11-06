@@ -5325,7 +5325,16 @@ static void csqc_pointcontents (void)
 	vm->globals[OFS_RETURN] = CM_HullPointContents (hull, hull->firstclipnode,
 		&vm->globals[OFS_PARM0]);
 }
-/* float(float yaw, float dist) walkmove = #32 (self, own trace) */
+/* World trace with the entity's own .mins/.maxs box (a point when unset). */
+static trace_t csqc_ent_box_trace (pr1vm_t *vm, int entnum, vec3_t start, vec3_t end)
+{
+	float *mn = csqc_ent_field (vm, entnum, "mins");
+	float *mx = csqc_ent_field (vm, entnum, "maxs");
+	return csqc_world_trace (start, mn, mx, end);
+}
+
+/* float(float yaw, float dist) walkmove = #32 (self, own trace; entity box like
+   FTE, but no step-up/drop or FL_ONGROUND precondition) */
 static void csqc_walkmove (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -5355,7 +5364,7 @@ static void csqc_walkmove (void)
 	end[0] = org[0] + cos (rad) * dist;
 	end[1] = org[1] + sin (rad) * dist;	// yaw 0 = +x, yaw 90 = +y
 	end[2] = org[2];
-	tr = csqc_world_trace (start, NULL, NULL, end);
+	tr = csqc_ent_box_trace (vm, entnum, start, end);
 	if (tr.fraction < 1)
 	{
 		vm->globals[OFS_RETURN] = 0;
@@ -5387,10 +5396,12 @@ static void csqc_droptofloor (void)
 		vm->globals[OFS_RETURN] = 0;
 		return;
 	}
+	// FTE PF_droptofloor: trace the entity box (.mins/.maxs) 256 units down; fail
+	// when nothing is hit or the box is stuck (allsolid).
 	VectorCopy (org, start);
-	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 512;
-	tr = csqc_world_trace (start, NULL, NULL, end);
-	if (tr.fraction >= 1 || tr.fraction <= 0)
+	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 256;
+	tr = csqc_ent_box_trace (vm, entnum, start, end);
+	if (tr.fraction >= 1 || tr.allsolid)
 	{
 		vm->globals[OFS_RETURN] = 0;
 		return;
