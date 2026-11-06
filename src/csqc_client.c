@@ -6985,14 +6985,29 @@ static csqc_buf_t *CSQC_Client_BufAt (int handle)
 	return &s_bufs[handle - 1];
 }
 
+// Total bytes held by all module string buffers. Without a cap a module could
+// fill 64 x 65536 entries of ~2 KB (~8 GB): Q_strdup/Q_realloc then end in
+// Sys_Error and the client exits (review S42). Over the cap a store fails like
+// any other bufstr failure, with one warning per session.
+#define CSQC_MAX_BUF_BYTES (16 * 1024 * 1024)
+static size_t s_buf_bytes;
+static qbool s_buf_full_warned;
+
+static void CSQC_Client_BufDrop (csqc_buf_t *b, int idx)
+{
+	if (b->str[idx])
+	{
+		s_buf_bytes -= strlen (b->str[idx]) + 1;
+		Q_free (b->str[idx]);
+		b->str[idx] = NULL;
+	}
+}
+
 static void CSQC_Client_BufClear (csqc_buf_t *b)
 {
 	int i;
 	for (i = 0; i < b->num; i++)
-	{
-		if (b->str[i])
-			Q_free (b->str[i]);
-	}
+		CSQC_Client_BufDrop (b, i);
 	Q_free (b->str);
 	b->str = NULL;
 	b->num = b->cap = 0;
@@ -7065,13 +7080,28 @@ static qbool CSQC_Client_BufReserve (csqc_buf_t *b, int idx)
 static int CSQC_Client_BufStore (csqc_buf_t *b, int idx, const char *s)
 {
 	char *c;
+	size_t len, old;
+	if (!s)
+		s = "";
+	len = strlen (s) + 1;
+	old = (idx >= 0 && idx < b->cap && b->str[idx]) ? strlen (b->str[idx]) + 1 : 0;
+	if (s_buf_bytes - old + len > CSQC_MAX_BUF_BYTES)
+	{
+		if (!s_buf_full_warned)
+		{
+			Con_Printf ("CSQC: string buffers full (%d bytes), bufstr store refused\n", CSQC_MAX_BUF_BYTES);
+			s_buf_full_warned = true;
+		}
+		return -1;
+	}
 	if (!CSQC_Client_BufReserve (b, idx))
 		return -1;
-	c = Q_strdup (s ? s : "");
+	c = Q_strdup (s);
 	if (!c)
 		return -1;
-	Q_free (b->str[idx]);
+	CSQC_Client_BufDrop (b, idx);
 	b->str[idx] = c;
+	s_buf_bytes += len;
 	if (idx >= b->num)
 		b->num = idx + 1;
 	return idx;
@@ -7113,8 +7143,7 @@ int CSQC_Client_BufFree (int handle, int idx)
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
 	if (!b || idx < 0 || idx >= b->num)
 		return 0;
-	Q_free (b->str[idx]);
-	b->str[idx] = NULL;	// leave a hole; later indices keep their numbers
+	CSQC_Client_BufDrop (b, idx);	// leave a hole; later indices keep their numbers
 	return 1;
 }
 
@@ -7129,9 +7158,9 @@ int CSQC_Client_BufCopy (int from, int to)
 	if (f->num && !CSQC_Client_BufReserve (t, f->num - 1))
 		return 0;
 	for (i = 0; i < f->num; i++)
-		if (f->str[i])
-			t->str[i] = Q_strdup (f->str[i]);	// holes stay holes
-	t->num = f->num;
+		if (f->str[i] && CSQC_Client_BufStore (t, i, f->str[i]) < 0)
+			break;	// over the byte cap: keep what was copied
+	t->num = f->num;	// holes (and anything not copied) stay holes
 	return 1;
 }
 
@@ -7219,6 +7248,8 @@ void CSQC_Client_BufReset (void)
 			s_bufs[i].inuse = false;
 		}
 	}
+	s_buf_bytes = 0;
+	s_buf_full_warned = false;
 }
 
 void CSQC_Client_Disconnect (void)
