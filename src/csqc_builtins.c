@@ -1998,6 +1998,23 @@ static void csqc_serverkey (void)
 }
 
 /*
+ float(string key, optional float assumevalue) serverkeyfloat = #0:serverkeyfloat
+ FTE's numeric counterpart to #354 serverkey. Keep the optional fallback so a
+ module cannot mistake a missing serverinfo key for a real zero value.
+*/
+static void csqc_serverkeyfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char *key = CSQCVM_Str (OFS_PARM0);
+	const char *value;
+	if (!vm)
+		return;
+	value = Info_ValueForKey (cl.serverinfo, key ? key : "");
+	vm->globals[OFS_RETURN] = *value ? (float)strtod (value, NULL) :
+		(vm->argc >= 2 ? vm->globals[OFS_PARM1] : 0);
+}
+
+/*
  string(float playernum, string keyname) getplayerkeyvalue = #348
  Player scoreboard/userinfo values (cl.players[pnum]). Numeric keys
  frags/ping/userid/spectator - via formatting; name/team/topcolor/bottomcolor and
@@ -2613,6 +2630,24 @@ static void csqc_getplayerkeyvalue (void)
 	else
 		v = Info_ValueForKey (pi->userinfo, key);	// team/topcolor/bottomcolor/...
 	CSQCVM_SetRetStr (v ? v : "");
+}
+
+/*
+ float(float playernum, string keyname, optional float assumevalue) getplayerkeyfloat = #0:getplayerkeyfloat
+ FTE's numeric counterpart to #348 getplayerkeyvalue: the same keys, parsed as a
+ number, or assumevalue when the key is missing or empty.
+*/
+static void csqc_getplayerkeyfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float assume;
+	const char *v;
+	if (!vm)
+		return;
+	assume = vm->argc >= 3 ? vm->globals[OFS_PARM2] : 0;
+	csqc_getplayerkeyvalue ();
+	v = CSQCVM_Str (OFS_RETURN);
+	vm->globals[OFS_RETURN] = (v && *v) ? (float)strtod (v, NULL) : assume;
 }
 
 /*
@@ -3786,6 +3821,8 @@ static const struct
 {
 	{ "checkbuiltin", CSQC_BUILTIN_CHECKBUILTIN },
 	{ "argc", CSQC_BUILTIN_ARGC },
+	{ "serverkeyfloat", CSQC_BUILTIN_SERVERKEYFLOAT },
+	{ "getplayerkeyfloat", CSQC_BUILTIN_GETPLAYERKEYFLOAT },
 	{ NULL, 0 }
 };
 
@@ -6782,6 +6819,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_CHECKBUILTIN, (builtin_t)csqc_checkbuiltin); // #0 checkbuiltin
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_NAMED_UNKNOWN, (builtin_t)csqc_named_unknown); // #0 unknown name: call aborts
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_ARGC, (builtin_t)csqc_argc); // #0 float() argc
+	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_SERVERKEYFLOAT, (builtin_t)csqc_serverkeyfloat); // #0 float(string key, optional float assumevalue) serverkeyfloat
+	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_GETPLAYERKEYFLOAT, (builtin_t)csqc_getplayerkeyfloat); // #0 float(float playernum, string keyname, optional float assumevalue) getplayerkeyfloat
 	PR1VM_MarkBuiltinStub (vm, CSQC_BUILTIN_NAMED_UNKNOWN);	// unresolved name -> checkbuiltin must be 0 (FTE parity)
 
 	// Mark no-op stubs so checkbuiltin/checkextension are honest.
