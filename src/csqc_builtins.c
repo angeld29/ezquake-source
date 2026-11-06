@@ -4104,9 +4104,11 @@ static void csqc_breakpoint (void)
  void(entity e, float chan, string samp, float vol, float atten) sound = #8
  Played on the entity's channel through S_StartSound, so a new sound replaces
  the previous one on that channel like engine sounds do. A networked entity uses
- its .entnum; a csqc-only one (e.g. a predicted view model) uses the local
- player, at the view origin - its channels then match the engine's own weapon
- sounds.
+ its .entnum. A csqc-only entity played with ATTN_NONE (e.g. a predicted view
+ model) uses the local player at the view origin, so its channels match the
+ engine's own weapon sounds. Any other csqc-only entity is positional like FTE
+ PF_cs_sound: its .origin, with its own (negative) sound entity -slot, so it
+ falls off with distance and replaces only its own channel.
 */
 static void csqc_sound (void)
 {
@@ -4136,6 +4138,12 @@ static void csqc_sound (void)
 			VectorCopy (f, org);
 		else
 			VectorCopy (r_refdef.vieworg, org);
+	}
+	else if (e > 0 && atten > 0
+		&& (f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN))))
+	{
+		num = -e;	// FTE: S_StartSound(-entity->entnum, ...); never a network number
+		VectorCopy (f, org);
 	}
 	else
 	{
