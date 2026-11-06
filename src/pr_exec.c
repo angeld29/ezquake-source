@@ -828,9 +828,13 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 			PR_RunError ("bad statement index %d", s);
 
 		st = &vm->statements[s];
-		a = (eval_t *)&vm->globals[st->a];
-		b = (eval_t *)&vm->globals[st->b];
-		c = (eval_t *)&vm->globals[st->c];
+		// Operands are unsigned global indices (FTE dstatement16_t; fteqcc emits 16-bit
+		// progs up to 65530 globals). The validator already reads them unsigned; a signed
+		// read here turned an accepted operand >= 0x8000 into a negative index. Branch
+		// deltas (OP_GOTO a, OP_IF/OP_IFNOT b) stay signed below.
+		a = (eval_t *)&vm->globals[(unsigned short)st->a];
+		b = (eval_t *)&vm->globals[(unsigned short)st->b];
+		c = (eval_t *)&vm->globals[(unsigned short)st->c];
 
 		if (--runaway == 0)
 			PR_RunError ("runaway loop error");
@@ -1124,9 +1128,9 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 
 		case OP_DONE:
 		case OP_RETURN:
-			vm->globals[OFS_RETURN] = vm->globals[st->a];
-			vm->globals[OFS_RETURN+1] = vm->globals[st->a+1];
-			vm->globals[OFS_RETURN+2] = vm->globals[st->a+2];
+			vm->globals[OFS_RETURN] = vm->globals[(unsigned short)st->a];
+			vm->globals[OFS_RETURN+1] = vm->globals[(unsigned short)st->a+1];
+			vm->globals[OFS_RETURN+2] = vm->globals[(unsigned short)st->a+2];
 
 			s = PR1VM_LeaveFunction (vm);
 			if (vm->depth == exitdepth)
