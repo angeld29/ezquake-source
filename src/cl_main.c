@@ -2790,6 +2790,7 @@ void CL_Frame(double time)
 
 		// fetch results from server
 		CL_ReadPackets();
+		CSQC_Client_PollDownload();
 
 		TP_UpdateSkins();
 
@@ -2835,6 +2836,7 @@ void CL_Frame(double time)
 
 			// Fetch results from server
 			CL_ReadPackets();
+			CSQC_Client_PollDownload();
 
 			TP_UpdateSkins();
 

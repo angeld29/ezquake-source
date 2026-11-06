@@ -25,7 +25,7 @@
 // Have set this to read-only to stop this accidentally on-purpose being set to another site by someone else's config
 static cvar_t cl_www_address = { "cl_www_address", "https://badplace.eu/", CVAR_ROM };
 #else
-static cvar_t sv_www_address = { "sv_www_address", "" };
+static cvar_t sv_www_address = { "sv_www_address", "", CVAR_NOTFROMSERVER }; // receives sv_www_authkey
 static cvar_t sv_www_authkey = { "sv_www_authkey", "", CVAR_NOTFROMSERVER };
 static cvar_t sv_www_checkin_period = { "sv_www_checkin_period", "60" };
 
