@@ -804,8 +804,10 @@ static void csqc_getproperty (void)
 	prop = vm->globals[OFS_PARM0];
 	r = &vm->globals[OFS_RETURN];
 	r[0] = r[1] = r[2] = 0;
-	if (cls.state != ca_active)
-		return;
+	// No connection-state gate (FTE PF_cs_getproperty has none): every property
+	// reads plain vid/glConfig/r_refdef/cl globals, and CSQC_Init runs before
+	// cls.state reaches ca_active, so a module caching VF_SCREENVSIZE there
+	// would otherwise get 0x0.
 
 	switch ((int)prop)
 	{
@@ -4906,8 +4908,56 @@ static void csqc_changeyaw (void)
 }
 
 /* void(entity e) makestatic = #69 - no-op (client does not track static ents) */
+extern entity_t cl_static_entities[MAX_STATIC_ENTITIES];
+
+/*
+ void(entity e) makestatic = #69 (review S28)
+ FTE PF_cs_makestatic: copy the entity into the engine's static list and remove
+ it. Same list and fill as svc_spawnstatic (CL_ParseStatic), so the renderer
+ draws it and a map change clears it. Removing frees the CSQC slot, which
+ otherwise leaked until spawn() ran out of slots.
+*/
+static float csqc_ent_float (pr1vm_t *vm, int e, int fld, float dflt)
+{
+	float *f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, fld));
+	return f ? f[0] : dflt;
+}
+
 static void csqc_makestatic (void)
 {
+	pr1vm_t *vm = CSQCVM_Active ();
+	struct model_s *model;
+	entity_t *ent;
+	float *v, scale, alpha;
+	int e;
+
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	if (e <= 0)
+		return;
+	model = CSQC_Client_ModelForIndex ((int)csqc_ent_float (vm, e, CSQC_FLD_MODELINDEX, 0));
+	if (model && cl.num_statics < MAX_STATIC_ENTITIES)
+	{
+		ent = &cl_static_entities[cl.num_statics++];
+		memset (ent, 0, sizeof (*ent));
+		ent->entity_id = cl.num_statics;
+		ent->model = model;
+		ent->frame = (int)csqc_ent_float (vm, e, CSQC_FLD_FRAME, 0);
+		ent->colormap = vid.colormap;
+		ent->skinnum = (int)csqc_ent_float (vm, e, CSQC_FLD_SKIN, 0);
+		// QC .scale/.alpha: 0 means "unset" (1.0 / opaque), like the entity_t fields.
+		scale = csqc_ent_float (vm, e, CSQC_FLD_SCALE, 0);
+		ent->scale = (scale > 0 && scale != 1) ? scale : 0;
+		alpha = csqc_ent_float (vm, e, CSQC_FLD_ALPHA, 0);
+		ent->alpha = (alpha > 0 && alpha < 1) ? alpha : 0;
+		if ((v = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN))))
+			VectorCopy (v, ent->origin);
+		if ((v = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ANGLES))))
+			VectorCopy (v, ent->angles);
+		R_AddEfrags (ent);
+	}
+	CSQC_Client_EntFree (vm, e);
 }
 
 /* string(entity e, string key) infokey = #80 - serverinfo (client has no per-ent userinfo) */

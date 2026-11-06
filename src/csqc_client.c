@@ -2667,7 +2667,14 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 	if (entnum <= 0 || entnum >= CSQC_MAX_EDICTS || !s_used[entnum])
 		return;
 	if (!s_own[entnum])
-		return;	// network entity - do not touch
+	{
+		// Network (svc 76) entity (review S27): FTE PF_cs_remove frees any non-world
+		// edict. Free it here too, and forget that its number was seen, so the next
+		// server update for that number re-spawns it with isnew = 1.
+		int num = s_slotnum[entnum];
+		if (num > 0 && num < (int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
+			s_csqc.seen[num] = false;
+	}
 	// Drop the reverse slot->N map, otherwise s_numslot[N] stays valid on the freed
 	// slot, which may be reused.
 	if (s_slotnum[entnum] > 0 && s_slotnum[entnum] < CSQC_MAX_NUM
@@ -2865,6 +2872,31 @@ void CSQC_Client_DeltaListen (const char *model, int func, int flags)
 	}
 }
 
+/*
+ Remove of a bridged (#371 player / delta) entity (review S26). Same contract as
+ the svc 76 remove path and FTE CSQC_EntRemove: when the module declares
+ CSQC_Ent_Remove, the callback owns the edict - drop the number<->slot maps and
+ the bridge entries first (so neither a new entity with this number nor the
+ bridge writes into it), hand the slot to the module (s_own) and let it free it
+ with remove(). Without a callback the engine frees it as before.
+*/
+static void CSQC_Client_BridgeRemove (pr1vm_t *vm, int slot, int num)
+{
+	if (s_csqc.func_entremove <= 0)
+	{
+		CSQC_Client_NetFreeSlot (slot, num);
+		return;
+	}
+	CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
+	if (num > 0 && num < CSQC_MAX_NUM && s_numslot[num] == slot)
+		s_numslot[num] = 0;
+	if (slot > 0 && slot < CSQC_MAX_EDICTS && s_slotnum[slot] == num)
+		s_slotnum[slot] = 0;
+	CSQC_Client_ClearSlotBridges (slot);
+	s_own[slot] = true;
+	CSQC_Client_Exec (s_csqc.func_entremove);
+}
+
 static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 {
 	int pnum;
@@ -2892,12 +2924,7 @@ static void CSQC_Client_DeltaPlayers (pr1vm_t *vm)
 			// entity absent / no listener - remove it if it was there
 			if (slot)
 			{
-				if (s_csqc.func_entremove > 0)
-				{
-					CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
-					CSQC_Client_Exec (s_csqc.func_entremove);
-				}
-				CSQC_Client_NetFreeSlot (slot, num);
+				CSQC_Client_BridgeRemove (vm, slot, num);
 				s_player_slot[pnum] = 0;
 			}
 			continue;
@@ -3055,12 +3082,7 @@ static void CSQC_Client_DeltaEntities (pr1vm_t *vm)
 		int slot = s_delta_slot[num];
 		if (slot && !s_delta_seen[num])
 		{
-			if (s_csqc.func_entremove > 0)
-			{
-				CSQC_Client_SetContextSlot (vm, (unsigned)slot, (unsigned)num);
-				CSQC_Client_Exec (s_csqc.func_entremove);
-			}
-			CSQC_Client_NetFreeSlot (slot, num);
+			CSQC_Client_BridgeRemove (vm, slot, num);
 			s_delta_slot[num] = 0;
 		}
 	}
