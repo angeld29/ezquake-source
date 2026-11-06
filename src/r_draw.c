@@ -394,6 +394,7 @@ mpic_t *Draw_CachePicSafe(const char *path, qbool crash, qbool only24bit)
 	mpic_t *fpic;
 	mpic_t *pic_24bit;
 	qbool lmp_found = false;
+	int lmp_len = 0;
 	qpic_t *dat = NULL;
 	vfsfile_t *v = NULL;
 
@@ -425,16 +426,28 @@ mpic_t *Draw_CachePicSafe(const char *path, qbool crash, qbool only24bit)
 	if ((v = FS_OpenVFS(lmp_path, "rb", FS_ANY))) {
 		VFS_CLOSE(v);
 
-		if (!(dat = (qpic_t *)FS_LoadTempFile(lmp_path, NULL))) {
+		if (!(dat = (qpic_t *)FS_LoadTempFile(lmp_path, &lmp_len))) {
 			if(crash) {
 				Sys_Error ("Draw_CachePicSafe: failed to load %s", lmp_path);
 			}
 			return NULL;
 		}
-		lmp_found = true;
 
 		// Make sure the width and height are correct.
-		SwapPic (dat);
+		if (lmp_len >= 8) {
+			SwapPic (dat);
+		}
+
+		// The header is untrusted (e.g. any file named *.lmp): the pixel data must
+		// fit in the file, or R_LoadPicTexture reads past the buffer.
+		if (lmp_len < 8 || dat->width <= 0 || dat->height <= 0 ||
+			(long long)dat->width * dat->height > lmp_len - 8) {
+			if (crash) {
+				Sys_Error ("Draw_CachePicSafe: bad lmp %s", lmp_path);
+			}
+			return NULL;
+		}
+		lmp_found = true;
 	}
 
 	// Try loading the 24-bit picture.
