@@ -6866,14 +6866,14 @@ void CSQC_Client_RunPlayerPhysics (int entnum)
 		}
 		if (s_csqc.in_movevalues >= 0)
 		{
-			pmove.cmd.forwardmove = (short)vm->globals[s_csqc.in_movevalues + 0];
-			pmove.cmd.sidemove = (short)vm->globals[s_csqc.in_movevalues + 1];
-			pmove.cmd.upmove = (short)vm->globals[s_csqc.in_movevalues + 2];
+			pmove.cmd.forwardmove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 0], -32768, 32767);
+			pmove.cmd.sidemove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 1], -32768, 32767);
+			pmove.cmd.upmove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 2], -32768, 32767);
 		}
 		if (s_csqc.in_buttons >= 0)
-			pmove.cmd.buttons = (byte)vm->globals[s_csqc.in_buttons];
+			pmove.cmd.buttons = (byte)CSQC_Client_ClampInput (vm->globals[s_csqc.in_buttons], 0, 255);
 		if (s_csqc.in_impulse >= 0)
-			pmove.cmd.impulse = (byte)vm->globals[s_csqc.in_impulse];
+			pmove.cmd.impulse = (byte)CSQC_Client_ClampInput (vm->globals[s_csqc.in_impulse], 0, 255);
 	}
 	else
 	{
