@@ -3577,9 +3577,9 @@ static void csqc_registercvar (void)
  DP_TE_STANDARDEFFECTBUILTINS, FTE_TE_STANDARDEFFECTBUILTINS.
  Deliberately NOT advertised (no entry in the map below, regardless of whether the
  members are implemented): FRIK_FILE, FTE_QC_INTCONV, _DP_TE_FLAMEJET/
- _DP_TE_PLASMABURN, DP_QC_STRINGBUFFERS, DP_QC_FS_SEARCH(_PACKFILE),
- DP_QC_GETSURFACE, DP_QC_FINDCHAIN(FLOAT)/FINDFLAGS/FINDCHAINFLAGS,
- DP_QC_COPYENTITY, DP_QC_WHICHPACK, DP_QC_URI_ESCAPE, KRIMZON_SV_PARSECLIENTCOMMAND.
+ _DP_TE_PLASMABURN, DP_QC_STRINGBUFFERS (strbuf semantics still differ from
+ FTE), DP_QC_FS_SEARCH(_PACKFILE), DP_QC_GETSURFACE, DP_QC_WHICHPACK,
+ DP_QC_URI_ESCAPE, KRIMZON_SV_PARSECLIENTCOMMAND.
 */
 struct csqc_ext_map_s
 {
@@ -3622,6 +3622,12 @@ static const int csqc_ext_te_smallflash[] = { 416 };
 static const int csqc_ext_te_customflash[] = { 417 };
 static const int csqc_ext_te_quadeffects[] = { 412, 413, 414, 415 };
 static const int csqc_ext_digest_sha1[] = { 639 };
+static const int csqc_ext_copyentity[] = { 400 };
+static const int csqc_ext_findchain[] = { 402 };
+static const int csqc_ext_findchainfloat[] = { 403 };
+static const int csqc_ext_findflags[] = { 449 };
+static const int csqc_ext_findchainflags[] = { 450 };
+static const int csqc_ext_checkcommand[] = { 294 };
 // FTE_STRINGS (fteqw pr_bgcmd.c:8513-8514): all 17 members are real (non-stub)
 // after #118/#119 are implemented, so the name moves out of the exceptions list
 // into the implementation-derived map.
@@ -3634,6 +3640,12 @@ static const int csqc_ext_strings[] = {
 
 static const struct csqc_ext_map_s csqc_ext_map[] =
 {
+	{ "DP_QC_COPYENTITY", csqc_ext_copyentity, CSQC_COUNTOF (csqc_ext_copyentity) },
+	{ "DP_QC_FINDCHAIN", csqc_ext_findchain, CSQC_COUNTOF (csqc_ext_findchain) },
+	{ "DP_QC_FINDCHAINFLOAT", csqc_ext_findchainfloat, CSQC_COUNTOF (csqc_ext_findchainfloat) },
+	{ "DP_QC_FINDFLAGS", csqc_ext_findflags, CSQC_COUNTOF (csqc_ext_findflags) },
+	{ "DP_QC_FINDCHAINFLAGS", csqc_ext_findchainflags, CSQC_COUNTOF (csqc_ext_findchainflags) },
+	{ "FTE_QC_CHECKCOMMAND", csqc_ext_checkcommand, CSQC_COUNTOF (csqc_ext_checkcommand) },
 	{ "DP_QC_SINCOSSQRTPOW", csqc_ext_sincossqrtpow, CSQC_COUNTOF (csqc_ext_sincossqrtpow) },
 	{ "DP_QC_MINMAXBOUND", csqc_ext_minmaxbound, CSQC_COUNTOF (csqc_ext_minmaxbound) },
 	{ "DP_QC_RANDOMVEC", csqc_ext_randomvec, CSQC_COUNTOF (csqc_ext_randomvec) },
@@ -3706,7 +3718,8 @@ static void csqc_checkextension (void)
 	vm->globals[OFS_RETURN] = 0;
 	if (!ext)
 		return;
-	if (!strcmp (ext, "EXT_CSQC"))		// protocol, not builtins
+	// protocol, not builtins; FTE gates EXT_CSQC_SHARED on the same bit (pr_bgcmd.c:8369)
+	if (!strcmp (ext, "EXT_CSQC") || !strcmp (ext, "EXT_CSQC_SHARED"))
 	{
 		vm->globals[OFS_RETURN] = (cls.fteprotocolextensions & FTE_PEXT_CSQC) ? 1 : 0;
 		return;
