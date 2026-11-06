@@ -5344,6 +5344,7 @@ delta (FTE cl.time-cl.lasttime); cltime - client map-uptime; maxclients - server
 static void CSQC_Client_PublishSimGlobals (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
+	int i;
 
 	if (s_csqc.g_frametime >= 0)
 		vm->globals[s_csqc.g_frametime] = cl.paused
@@ -5372,6 +5373,16 @@ static void CSQC_Client_PublishSimGlobals (void)
 	}
 	if (s_csqc.g_intermission >= 0)
 		vm->globals[s_csqc.g_intermission] = cl.intermission ? 1 : 0;
+
+	// Movement globals describe the engine's current prediction.
+	if (s_csqc.p_org >= 0)
+		for (i = 0; i < 3; i++)
+			vm->globals[s_csqc.p_org + i] = cl.simorg[i];
+	if (s_csqc.p_vel >= 0)
+		for (i = 0; i < 3; i++)
+			vm->globals[s_csqc.p_vel + i] = cl.simvel[i];
+	if (s_csqc.p_onground >= 0)
+		vm->globals[s_csqc.p_onground] = cl.onground ? 1 : 0;
 
 	s_prev_cltime = cl.time;
 }
