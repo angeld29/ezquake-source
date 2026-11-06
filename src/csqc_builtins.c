@@ -804,8 +804,10 @@ static void csqc_getproperty (void)
 	prop = vm->globals[OFS_PARM0];
 	r = &vm->globals[OFS_RETURN];
 	r[0] = r[1] = r[2] = 0;
-	if (cls.state != ca_active)
-		return;
+	// No connection-state gate (FTE PF_cs_getproperty has none): every property
+	// reads plain vid/glConfig/r_refdef/cl globals, and CSQC_Init runs before
+	// cls.state reaches ca_active, so a module caching VF_SCREENVSIZE there
+	// would otherwise get 0x0.
 
 	switch ((int)prop)
 	{
