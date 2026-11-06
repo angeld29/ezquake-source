@@ -546,6 +546,22 @@ static sfx_t *S_FindName (char *name)
 	return sfx;
 }
 
+/*
+ Whether name can be precached without exhausting known_sfx (S_FindName
+ Sys_Errors when it is full). Used for sounds an untrusted CSQC module asks for:
+ a known name is always fine, a new one only while MAX_SOUNDS slots stay free for
+ the server's own precache list.
+*/
+qbool S_SfxSlotAvailable (const char *name)
+{
+	int i;
+
+	for (i = 0; i < num_sfx; i++)
+		if (!strcmp (known_sfx[i].name, name))
+			return true;
+	return num_sfx < MAX_SFX - MAX_SOUNDS;
+}
+
 sfx_t *S_PrecacheSound (char *name)
 {
 	sfx_t *sfx;
