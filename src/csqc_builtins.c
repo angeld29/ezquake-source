@@ -4069,6 +4069,25 @@ static void csqc_breakpoint (void)
 }
 
 /*
+ S_PrecacheSound for module-supplied names. S_FindName Sys_Errors (quits the
+ client) once known_sfx (MAX_SFX) is full, so every module sound path goes through
+ the distinct-name cap (CSQC_Client_AllowModuleSound) and, as a backstop, refuses a
+ new name when no room is left for the server's own MAX_SOUNDS (the cap alone does
+ not guarantee that: module + server + engine sounds can still exceed MAX_SFX).
+*/
+static sfx_t *csqc_precache_sfx (char *name)
+{
+	if (!name || !name[0])
+		return NULL;
+	if (!CSQC_Client_AllowModuleSound (name) || !S_SfxSlotAvailable (name))
+	{
+		Con_DPrintf ("CSQC: no room to precache sound %s\n", name);
+		return NULL;
+	}
+	return S_PrecacheSound (name);
+}
+
+/*
  void(entity e, float chan, string samp, float vol, float atten) sound = #8
  Deviation: no positional sound at the entity (no origin field without the arena);
  precache + local playback like #177 (volume vol).
@@ -4084,7 +4103,7 @@ static void csqc_sound (void)
 		vol = vm->globals[OFS_PARM0 + 9];
 	if (n && n[0])
 	{
-		S_PrecacheSound (n);
+		csqc_precache_sfx (n);
 		if (vol > 0)
 			S_LocalSoundWithVol (n, vol);
 	}
@@ -4101,7 +4120,7 @@ static void csqc_precache_sound (void)
 	char *n = CSQCVM_Str (OFS_PARM0);
 	if (vm && n && n[0])
 	{
-		S_PrecacheSound (n);
+		csqc_precache_sfx (n);
 		// FTE parity: queue the missing sound (`sound/<name>`); the shared helper
 		// owns the single-slot guard, the dl_single type and the in-flight marker.
 		// `*` = sexed sound (not downloadable). The distinct-name cap keeps
@@ -4204,7 +4223,7 @@ static void csqc_ambientsound (void)
 		vol = vm->globals[OFS_PARM0 + 6];
 	if (n && n[0])
 	{
-		S_PrecacheSound (n);
+		csqc_precache_sfx (n);
 		if (vol > 0)
 			S_LocalSoundWithVol (n, vol);
 	}
@@ -5737,7 +5756,7 @@ static void csqc_pointsound (void)
 	(void)pitchpct;
 	if (!sample || !sample[0])
 		return;
-	sfx = S_PrecacheSound (sample);
+	sfx = csqc_precache_sfx (sample);
 	if (sfx)
 		S_StartSound (0, 0, sfx, org, vm->globals[OFS_PARM0 + 6], vm->globals[OFS_PARM0 + 9]);
 }

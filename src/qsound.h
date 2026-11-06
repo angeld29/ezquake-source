@@ -97,6 +97,7 @@ void S_StopAllSounds(void);
 void S_Update (vec3_t origin, vec3_t v_forward, vec3_t v_right, vec3_t v_up);
 
 sfx_t *S_PrecacheSound (char *sample);
+qbool S_SfxSlotAvailable (const char *name);
 void S_PaintChannels(int endtime);
 
 void S_LocalSound (char *s);
