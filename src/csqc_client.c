@@ -2667,7 +2667,14 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 	if (entnum <= 0 || entnum >= CSQC_MAX_EDICTS || !s_used[entnum])
 		return;
 	if (!s_own[entnum])
-		return;	// network entity - do not touch
+	{
+		// Network (svc 76) entity (review S27): FTE PF_cs_remove frees any non-world
+		// edict. Free it here too, and forget that its number was seen, so the next
+		// server update for that number re-spawns it with isnew = 1.
+		int num = s_slotnum[entnum];
+		if (num > 0 && num < (int)(sizeof (s_csqc.seen) / sizeof (s_csqc.seen[0])))
+			s_csqc.seen[num] = false;
+	}
 	// Drop the reverse slot->N map, otherwise s_numslot[N] stays valid on the freed
 	// slot, which may be reused.
 	if (s_slotnum[entnum] > 0 && s_slotnum[entnum] < CSQC_MAX_NUM

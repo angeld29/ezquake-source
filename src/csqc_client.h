@@ -58,7 +58,7 @@ char *CSQC_Client_GetString (struct pr1vm_s *vm, int num);
 // network numbers are kept in a number->slot map (svc 76/92). Slot 0 = world.
 int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// first free pool slot (own) / 0
 int CSQC_Client_EntNum (struct pr1vm_s *vm, int raw);		// raw (N*edict_size) -> pool slot; OOB -> world(0)
-void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// free own entity (network untouched)
+void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// free a non-world entity (own or network; FTE PF_cs_remove)
 int CSQC_Client_NetAllocSlot (struct pr1vm_s *vm);		// slot without s_own (network receive; vm zeroes the slot)
 void CSQC_Client_NetFreeSlot (int slot, int number);		// free slot + numslot
 int CSQC_Client_NumToSlot (int number);					// number->slot map / 0
