@@ -5107,8 +5107,11 @@ servercommandframe.
 
 - clientcommandframe = the live pending client frame = cls.netchan.outgoing_sequence
   (FTE cl.movesequence). The equal frame may still change before it is sent.
-- servercommandframe = the last server-acked client frame = cl.parsecount (analog of
-  FTE QW ackedmovesequence).
+- servercommandframe = the client frame acknowledged by the last valid world
+  snapshot = cl.ackedmovesequence (FTE cl.ackedmovesequence: the packet ack,
+  cl.parsecount, latched only when the entity delta is accepted). A bare
+  parsecount can advance on a packet whose snapshot is dropped, so the module
+  rebases on old state and replays an already-predicted shot.
 - Prediction unavailable (0): demo/MVD, not ca_active, before the first accepted
   server frame (cl.validsequence == 0).
 - The window (servercommandframe, clientcommandframe] is the module's contract (the
@@ -5132,7 +5135,7 @@ static float CSQC_Client_ServerCmdFrame (void)
 		return 0;
 	if (!cl.validsequence)
 		return 0;	// no accepted server frame yet (prespawn)
-	return (float)cl.parsecount;
+	return (float)cl.ackedmovesequence;
 }
 
 // Publish the prediction window (clientcommandframe/servercommandframe) to the

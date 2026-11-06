@@ -716,6 +716,7 @@ void CL_ParsePacketEntities (qbool delta)
 
 	cl.oldvalidsequence = cl.validsequence;
 	cl.validsequence = cls.netchan.incoming_sequence;
+	cl.ackedmovesequence = cl.parsecount;
 	cl.delta_sequence = cl.validsequence;
 
 	oldindex = 0;
