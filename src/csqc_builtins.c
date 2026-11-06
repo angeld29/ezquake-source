@@ -5396,10 +5396,10 @@ static void csqc_droptofloor (void)
 		vm->globals[OFS_RETURN] = 0;
 		return;
 	}
-	// FTE PF_droptofloor: trace the entity box (.mins/.maxs) 256 units down; fail
+	// FTE PF_cs_droptofloor (pr_csqc.c): trace the entity box (.mins/.maxs) 512 units down; fail
 	// when nothing is hit or the box is stuck (allsolid).
 	VectorCopy (org, start);
-	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 256;
+	end[0] = org[0]; end[1] = org[1]; end[2] = org[2] - 512;
 	tr = csqc_ent_box_trace (vm, entnum, start, end);
 	if (tr.fraction >= 1 || tr.allsolid)
 	{
