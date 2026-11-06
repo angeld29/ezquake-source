@@ -4069,15 +4069,17 @@ static void csqc_breakpoint (void)
 }
 
 /*
- S_PrecacheSound for module-supplied names: a module can ask for any number of
- distinct sounds, and S_FindName Sys_Errors (quits the client) once known_sfx is
- full. Refuse a new name when no room is left for the server's sounds.
+ S_PrecacheSound for module-supplied names. S_FindName Sys_Errors (quits the
+ client) once known_sfx (MAX_SFX) is full, so every module sound path goes through
+ the distinct-name cap (CSQC_Client_AllowModuleSound) and, as a backstop, refuses a
+ new name when no room is left for the server's own MAX_SOUNDS (the cap alone does
+ not guarantee that: module + server + engine sounds can still exceed MAX_SFX).
 */
 static sfx_t *csqc_precache_sfx (char *name)
 {
 	if (!name || !name[0])
 		return NULL;
-	if (!S_SfxSlotAvailable (name))
+	if (!CSQC_Client_AllowModuleSound (name) || !S_SfxSlotAvailable (name))
 	{
 		Con_DPrintf ("CSQC: no room to precache sound %s\n", name);
 		return NULL;
