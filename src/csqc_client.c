@@ -255,6 +255,10 @@ void PR1VM_ClientSetString (pr1vm_t *vm, int *address, char *s)
 // negative offset -(i + MAX_PRSTR) and resolved by PR1VM_GetString. Unlike the
 // temp ring it survives later string builtins and frames until an explicit
 // strunzone (#119) or a pool reset (module load / disconnect).
+// ponytail: fixed MAX_PRSTR slots; the -(i + MAX_PRSTR) encoding is shared with the
+// server VM (PR1VM_GetString), so a growable table needs a new string encoding.
+static qbool s_strzone_full_warned;	// one warning per pool lifetime
+
 qbool CSQC_Client_ZoneStore (pr1vm_t *vm, int *address, char *buf)
 {
 	csqc_strpool_t *pool;
@@ -281,6 +285,12 @@ qbool CSQC_Client_ZoneStore (pr1vm_t *vm, int *address, char *buf)
 	if (i == MAX_PRSTR)
 	{
 		// FTE: allocation failure -> null string, no fatal (pr_bgcmd.c:4817-4821).
+		// Say so once: otherwise the module silently gets "" from strzone.
+		if (!s_strzone_full_warned)
+		{
+			Con_Printf ("CSQC: strzone: %d zoned strings in use, returning the null string\n", MAX_PRSTR);
+			s_strzone_full_warned = true;
+		}
 		*address = 0;
 		Q_free (buf);
 		return false;
@@ -328,6 +338,7 @@ void CSQC_Client_FreeStringPool (void)
 {
 	int i;
 
+	s_strzone_full_warned = false;
 	for (i = 0; i < MAX_PRSTR; i++)
 	{
 		if (s_csqc.strpool.newstrtbl[i])
