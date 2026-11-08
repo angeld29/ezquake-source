@@ -6985,14 +6985,29 @@ static csqc_buf_t *CSQC_Client_BufAt (int handle)
 	return &s_bufs[handle - 1];
 }
 
+// Total bytes held by all module string buffers. Without a cap a module could
+// fill 64 x 65536 entries of ~2 KB (~8 GB): Q_strdup/Q_realloc then end in
+// Sys_Error and the client exits (review S42). Over the cap a store fails like
+// any other bufstr failure, with one warning per session.
+#define CSQC_MAX_BUF_BYTES (16 * 1024 * 1024)
+static size_t s_buf_bytes;
+static qbool s_buf_full_warned;
+
+static void CSQC_Client_BufDrop (csqc_buf_t *b, int idx)
+{
+	if (b->str[idx])
+	{
+		s_buf_bytes -= strlen (b->str[idx]) + 1;
+		Q_free (b->str[idx]);
+		b->str[idx] = NULL;
+	}
+}
+
 static void CSQC_Client_BufClear (csqc_buf_t *b)
 {
 	int i;
 	for (i = 0; i < b->num; i++)
-	{
-		if (b->str[i])
-			Q_free (b->str[i]);
-	}
+		CSQC_Client_BufDrop (b, i);
 	Q_free (b->str);
 	b->str = NULL;
 	b->num = b->cap = 0;
@@ -7010,7 +7025,7 @@ int CSQC_Client_BufCreate (void)
 			return i + 1;
 		}
 	}
-	return 0;
+	return -1;	// FTE: -1 when no buffer can be created (handles start at 1)
 }
 
 void CSQC_Client_BufDel (int handle)
@@ -7029,52 +7044,87 @@ int CSQC_Client_BufGetSize (int handle)
 	return b ? b->num : 0;
 }
 
-#define CSQC_MAX_BUF_ELEMS 65536
-static int CSQC_Client_BufPush (csqc_buf_t *b, const char *s)
+/*
+ Buffer semantics follow FTE/DP (pr_bgcmd.c PF_bufstr_*): an entry can be a hole
+ (NULL), `num` is the used size (highest index + 1). bufstr_set past the end grows
+ the buffer (the gap becomes holes), bufstr_free leaves a hole instead of shifting
+ the following indices, bufstr_add with order == 0 fills the first hole and with
+ order != 0 appends, and returns the index used.
+*/
+#define CSQC_MAX_BUF_ELEMS 65536	// module-driven growth cap (FTE: 1M sanity limit)
+
+// Make index idx addressable; new entries are holes. false on cap/OOM.
+static qbool CSQC_Client_BufReserve (csqc_buf_t *b, int idx)
 {
 	char **ns;
-	int idx;
-	if (b->num >= CSQC_MAX_BUF_ELEMS)
-		return -1;	// module-driven growth cap
-	if (b->num >= b->cap)
+	int ncap;
+	if (idx < 0 || idx >= CSQC_MAX_BUF_ELEMS)
+		return false;
+	if (idx < b->cap)
+		return true;
+	ncap = b->cap ? b->cap : 8;
+	while (ncap <= idx)
+		ncap *= 2;
+	if (ncap > CSQC_MAX_BUF_ELEMS)
+		ncap = CSQC_MAX_BUF_ELEMS;
+	ns = (char **)Q_realloc (b->str, sizeof (char *) * ncap);
+	if (!ns)
+		return false;
+	memset (ns + b->cap, 0, sizeof (char *) * (ncap - b->cap));
+	b->str = ns;
+	b->cap = ncap;
+	return true;
+}
+
+// Store a copy of s at idx (growing the used size). -1 on failure.
+static int CSQC_Client_BufStore (csqc_buf_t *b, int idx, const char *s)
+{
+	char *c;
+	size_t len, old;
+	if (!s)
+		s = "";
+	len = strlen (s) + 1;
+	old = (idx >= 0 && idx < b->cap && b->str[idx]) ? strlen (b->str[idx]) + 1 : 0;
+	if (s_buf_bytes - old + len > CSQC_MAX_BUF_BYTES)
 	{
-		int ncap = b->cap ? b->cap * 2 : 8;
-		ns = (char **)Q_realloc (b->str, sizeof (char *) * ncap);
-		if (!ns)
-			return -1;
-		b->str = ns;
-		b->cap = ncap;
+		if (!s_buf_full_warned)
+		{
+			Con_Printf ("CSQC: string buffers full (%d bytes), bufstr store refused\n", CSQC_MAX_BUF_BYTES);
+			s_buf_full_warned = true;
+		}
+		return -1;
 	}
-	idx = b->num;
-	b->str[idx] = Q_strdup (s ? s : "");
-	b->num++;
+	if (!CSQC_Client_BufReserve (b, idx))
+		return -1;
+	c = Q_strdup (s);
+	if (!c)
+		return -1;
+	CSQC_Client_BufDrop (b, idx);
+	b->str[idx] = c;
+	s_buf_bytes += len;
+	if (idx >= b->num)
+		b->num = idx + 1;
 	return idx;
 }
 
 int CSQC_Client_BufAdd (int handle, const char *s, int order)
 {
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
-	int idx, i;
+	int idx = 0;
 	if (!b)
 		return -1;
-	idx = CSQC_Client_BufPush (b, s);
-	if (idx < 0)
-		return -1;
-	// order > 0 - insert at the position (not past the end of the list).
-	if (order > 0 && order < idx)
-	{
-		char *tmp = b->str[idx];
-		for (i = idx; i > order; i--)
-			b->str[i] = b->str[i - 1];
-		b->str[order] = tmp;
-	}
-	return idx;
+	if (order)
+		idx = b->num;	// append on end
+	else
+		while (idx < b->num && b->str[idx])
+			idx++;	// first hole, else the end
+	return CSQC_Client_BufStore (b, idx, s);
 }
 
 int CSQC_Client_BufGet (int handle, int idx, char *out, size_t max)
 {
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
-	if (!b || idx < 0 || idx >= b->num || !out || max < 1)
+	if (!b || idx < 0 || idx >= b->num || !out || max < 1 || !b->str[idx])
 		return 0;
 	strlcpy (out, b->str[idx], max);
 	return 1;
@@ -7083,27 +7133,17 @@ int CSQC_Client_BufGet (int handle, int idx, char *out, size_t max)
 int CSQC_Client_BufSet (int handle, int idx, const char *s)
 {
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
-	char *c;
-	if (!b || idx < 0 || idx >= b->num)
+	if (!b)
 		return 0;
-	c = Q_strdup (s ? s : "");
-	if (!c)
-		return 0;
-	Q_free (b->str[idx]);
-	b->str[idx] = c;
-	return 1;
+	return CSQC_Client_BufStore (b, idx, s) >= 0;
 }
 
 int CSQC_Client_BufFree (int handle, int idx)
 {
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
-	int i;
 	if (!b || idx < 0 || idx >= b->num)
 		return 0;
-	Q_free (b->str[idx]);
-	for (i = idx; i < b->num - 1; i++)
-		b->str[i] = b->str[i + 1];
-	b->num--;
+	CSQC_Client_BufDrop (b, idx);	// leave a hole; later indices keep their numbers
 	return 1;
 }
 
@@ -7112,11 +7152,15 @@ int CSQC_Client_BufCopy (int from, int to)
 	csqc_buf_t *f = CSQC_Client_BufAt (from);
 	csqc_buf_t *t = CSQC_Client_BufAt (to);
 	int i;
-	if (!f || !t)
+	if (!f || !t || from == to)	// FTE: copying a buffer onto itself is a no-op
 		return 0;
 	CSQC_Client_BufClear (t);
+	if (f->num && !CSQC_Client_BufReserve (t, f->num - 1))
+		return 0;
 	for (i = 0; i < f->num; i++)
-		CSQC_Client_BufPush (t, f->str[i]);
+		if (f->str[i] && CSQC_Client_BufStore (t, i, f->str[i]) < 0)
+			break;	// over the byte cap: keep what was copied
+	t->num = f->num;	// holes (and anything not copied) stay holes
 	return 1;
 }
 
@@ -7169,7 +7213,9 @@ int CSQC_Client_BufImplode (int handle, const char *glue, char *out, size_t max)
 	out[0] = 0;
 	for (i = 0; i < b->num && o + 1 < max; i++)
 	{
-		if (i && glue)
+		if (!b->str[i])
+			continue;	// holes are skipped, with no glue (FTE)
+		if (o && glue)
 		{
 			size_t gl = strlen (glue);
 			if (o + gl < max - 1)
@@ -7202,6 +7248,8 @@ void CSQC_Client_BufReset (void)
 			s_bufs[i].inuse = false;
 		}
 	}
+	s_buf_bytes = 0;
+	s_buf_full_warned = false;
 }
 
 void CSQC_Client_Disconnect (void)
