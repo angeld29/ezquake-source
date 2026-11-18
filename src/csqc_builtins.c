@@ -5024,14 +5024,13 @@ static trace_t csqc_world_trace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t 
 		return CM_HullTrace (hull, start, end);
 	}
 
-	/* box: pick the hull by width like SV_HullForEntity (point < 3, player <= 32,
-	   else the large hull), then offset by the chosen hull's clip_mins. A Q1 BSP
-	   only has these three box sizes, so larger/smaller boxes are approximated the
-	   same way the server approximates them. */
+	// Approximate the box with the closest Q1 BSP clip hull.
 	width = maxs[0] - mins[0];
-	if (width < 3)
+	if (width < 3 || clip->hulls[1].firstclipnode < 0 ||
+	    clip->hulls[1].firstclipnode > clip->hulls[1].lastclipnode)
 		hull = &clip->hulls[0];
-	else if (width <= 32)
+	else if (width <= 32.1f || clip->hulls[2].firstclipnode < 0 ||
+	         clip->hulls[2].firstclipnode > clip->hulls[2].lastclipnode)
 		hull = &clip->hulls[1];
 	else
 		hull = &clip->hulls[2];
