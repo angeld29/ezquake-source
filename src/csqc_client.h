@@ -12,6 +12,7 @@ types (qbool/vec3_t) and is meant for client translation units.
 #include <stddef.h>
 struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); kept dependency-free here
 struct pr1vm_s;		// PR1 instance (pr1vm.h); opaque pointer only here
+struct entity_s;
 
 // Extended CSQC stats 32..255 live in a dedicated client store (stat index on the
 // wire is always a byte, 0..255; FTE-parity MAX_CL_STATS=256). Standard 0..31 stay
@@ -59,6 +60,8 @@ char *CSQC_Client_GetString (struct pr1vm_s *vm, int num);
 int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// first free pool slot (own) / 0
 int CSQC_Client_EntNum (struct pr1vm_s *vm, int raw);		// raw (N*edict_size) -> pool slot; OOB -> world(0)
 void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// free own entity (network untouched)
+void CSQC_Client_StoreStatic (struct pr1vm_s *vm, int slot, const struct entity_s *ent);
+void CSQC_Client_LinkStatics (void);
 int CSQC_Client_NetAllocSlot (struct pr1vm_s *vm);		// slot without s_own (network receive; vm zeroes the slot)
 void CSQC_Client_NetFreeSlot (int slot, int number);		// free slot + numslot
 int CSQC_Client_NumToSlot (int number);					// number->slot map / 0

@@ -397,6 +397,9 @@ static csqc_cursormode_t s_cursormode;
 // module (spawn); remove is allowed only for owned entities.
 static qbool s_used[CSQC_MAX_EDICTS];
 static qbool s_own[CSQC_MAX_EDICTS];
+// Module statics have no wire state and must stay out of the demo startup list.
+static entity_t s_module_statics[MAX_STATIC_ENTITIES];
+static int s_num_module_statics;
 static int s_numslot[CSQC_MAX_NUM];
 // Reverse map slot->number. Invariant: s_numslot[N] must not outlive the slot's
 // release - otherwise the engine would take a stale slot.
@@ -2695,6 +2698,35 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 	// slot - otherwise a module `remove()` of a handed-off network entity leaves
 	// a stale bridge writing into a reused slot.
 	CSQC_Client_ClearSlotBridges (entnum);
+}
+
+void CSQC_Client_StoreStatic (struct pr1vm_s *vm, int slot, const entity_t *ent)
+{
+	if (slot <= 0 || slot >= CSQC_MAX_EDICTS || !s_used[slot] || !s_own[slot])
+		return;
+
+	if (ent)
+	{
+		if (s_num_module_statics == MAX_STATIC_ENTITIES)
+		{
+			Con_DPrintf ("CSQC: makestatic: module static list is full\n");
+			return;
+		}
+		s_module_statics[s_num_module_statics++] = *ent;
+	}
+	CSQC_Client_EntFree (vm, slot);
+}
+
+void CSQC_Client_LinkStatics (void)
+{
+	int i;
+
+	if (!cl.worldmodel || !s_num_module_statics)
+		return;
+	R_CSQC_BeginCull ();
+	for (i = 0; i < s_num_module_statics; i++)
+		if (R_CSQC_EntityVisible (&s_module_statics[i]))
+			CL_AddEntity (&s_module_statics[i]);
 }
 
 /* internal network path (ParseEntities): a slot without s_own.
@@ -7330,6 +7362,8 @@ void CSQC_Client_BufReset (void)
 void CSQC_Client_Disconnect (void)
 {
 	int i;
+
+	s_num_module_statics = 0;
 
 	// The client VM can be executing when this runs: a builtin may raise an engine
 	// Host_Error (e.g. precache_model on a found non-model file -> Mod_ForName ->

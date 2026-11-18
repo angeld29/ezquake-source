@@ -3225,6 +3225,9 @@ static void CL_LinkEntityList (void)
 	}
 
 	CL_UpdateTEnts();
+#ifndef CLIENTONLY
+	CSQC_Client_LinkStatics();
+#endif
 }
 
 // Builds the visedicts array for cl.time

@@ -4488,7 +4488,7 @@ static void csqc_ret_entity (pr1vm_t *vm, int entnum)
  to ent.renderfx (a subset of CSQCRF_*). The module `.scale` field maps to ent.scale
  (0 = unscaled via R_EntityScale; FTE pr_csqc.c:841-844).
 */
-static void csqc_add_one_entity (int e, qbool run_predraw)
+static qbool csqc_build_entity (int e, qbool run_predraw, entity_t *out)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	entity_t ent;
@@ -4499,7 +4499,7 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	int playernum = -1;	// network player index (colormap 1..MAX_CLIENTS)
 
 	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
-		return;
+		return false;
 
 	// .predraw. Return != PREDRAW_AUTOADD(0) or removal of the edict -> do not add.
 	// The function-valued field is raw int bits (EV_FUNCTION): read as int, not float
@@ -4509,12 +4509,12 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 		qbool removed = false;
 		float pret = CSQC_Client_CallPredraw (e, *(int *)&f[0], &removed);
 		if (removed || pret != 0)
-			return;
+			return false;
 	}
 
 	slot = csqc_ent_slot (vm, e);
 	if (!slot)
-		return;
+		return false;
 	// model: .modelindex with fallback to the .model string. FTE sign-split: both a
 	// positive server index and a negative csqc-only index resolve via the accessor.
 	model = NULL;
@@ -4527,10 +4527,10 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	if (!model)
 	{
 		if ((ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODEL)) < 0)
-			return;
+			return false;
 		mname = CSQC_Client_GetString (vm, (string_t)*(int *)&slot[ofs]);
 		if (!mname || !mname[0])
-			return;
+			return false;
 		// Resolve through the capped tolerant CSQC registry instead of the
 		// uncapped Mod_FindName path: a distinct .model string per frame would
 		// exhaust mod_known (Sys_Error) and a found non-model file would Host_Error.
@@ -4540,7 +4540,7 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 		}
 	}
 	if (!model)
-		return;
+		return false;
 
 	memset (&ent, 0, sizeof (ent));
 	ent.model = model;
@@ -4605,17 +4605,17 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 		if (cl_deadbodyfilter.value == 3 && !cl.teamfortress)
 		{
 			if (ISDEAD(i))
-				return;
+				return false;
 		}
 		if (cl_deadbodyfilter.value == 2)
 		{
 			if (ISDEAD(i))
-				return;
+				return false;
 		}
 		else if (cl_deadbodyfilter.value == 1)
 		{
 			if (i == 49 || i == 60 || i == 69 || i == 84 || i == 93 || i == 102)
-				return;
+				return false;
 		}
 	}
 	if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_SKIN))))		ent.skinnum = (int)f[0];
@@ -4663,13 +4663,19 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 			ent.renderfx |= RF_ADDITIVEBLEND;
 	}
 
-	// PVS/leaf + bbox culling, FTE EdictInFatPVS parity.
-	// R_CSQC_BeginCull marks the leaves/frustum for this frame (once per frame).
-	R_CSQC_BeginCull ();
-	if (!R_CSQC_EntityVisible (&ent))
-		return;
+	*out = ent;
+	return true;
+}
 
-	CL_AddEntity (&ent);
+static void csqc_add_one_entity (int e, qbool run_predraw)
+{
+	entity_t ent;
+
+	if (!csqc_build_entity (e, run_predraw, &ent))
+		return;
+	R_CSQC_BeginCull ();
+	if (R_CSQC_EntityVisible (&ent))
+		CL_AddEntity (&ent);
 }
 
 /* void(entity ent) addentity = #302 */
@@ -5141,9 +5147,17 @@ static void csqc_changeyaw (void)
 {
 }
 
-/* void(entity e) makestatic = #69 - no-op (client does not track static ents) */
+/* void(entity e) makestatic = #69 */
 static void csqc_makestatic (void)
 {
+	pr1vm_t *vm = CSQCVM_Active ();
+	entity_t ent;
+	int e;
+
+	if (!vm)
+		return;
+	e = csqc_ent_of (vm, OFS_PARM0);
+	CSQC_Client_StoreStatic (vm, e, csqc_build_entity (e, false, &ent) ? &ent : NULL);
 }
 
 /* string(entity e, string key) infokey = #80 - serverinfo (client has no per-ent userinfo) */
@@ -7103,7 +7117,7 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	// dedicated list covers single-use no-ops with their own wrapper (#63 and
 	// #119 are implemented now and are intentionally absent).
 	{
-		static const int dedicated[] = { 6, 35, 40, 49, 67, 69, 92, 319, 329, 531, 533, 534, 603, 631, 632 };
+		static const int dedicated[] = { 6, 35, 40, 49, 67, 92, 319, 329, 531, 533, 534, 603, 631, 632 };
 		int i, j;
 		for (i = 0; i < vm->numbuiltins; i++)
 		{
