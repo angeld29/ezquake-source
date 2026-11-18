@@ -3666,7 +3666,6 @@ static const int csqc_ext_findchain[] = { 402 };
 static const int csqc_ext_findchainfloat[] = { 403 };
 static const int csqc_ext_findflags[] = { 449 };
 static const int csqc_ext_findchainflags[] = { 450 };
-static const int csqc_ext_checkcommand[] = { 294 };
 // FTE_STRINGS (fteqw pr_bgcmd.c:8513-8514): all 17 members are real (non-stub)
 // after #118/#119 are implemented, so the name moves out of the exceptions list
 // into the implementation-derived map.
@@ -3684,7 +3683,6 @@ static const struct csqc_ext_map_s csqc_ext_map[] =
 	{ "DP_QC_FINDCHAINFLOAT", csqc_ext_findchainfloat, CSQC_COUNTOF (csqc_ext_findchainfloat) },
 	{ "DP_QC_FINDFLAGS", csqc_ext_findflags, CSQC_COUNTOF (csqc_ext_findflags) },
 	{ "DP_QC_FINDCHAINFLAGS", csqc_ext_findchainflags, CSQC_COUNTOF (csqc_ext_findchainflags) },
-	{ "FTE_QC_CHECKCOMMAND", csqc_ext_checkcommand, CSQC_COUNTOF (csqc_ext_checkcommand) },
 	{ "DP_QC_SINCOSSQRTPOW", csqc_ext_sincossqrtpow, CSQC_COUNTOF (csqc_ext_sincossqrtpow) },
 	{ "DP_QC_MINMAXBOUND", csqc_ext_minmaxbound, CSQC_COUNTOF (csqc_ext_minmaxbound) },
 	{ "DP_QC_RANDOMVEC", csqc_ext_randomvec, CSQC_COUNTOF (csqc_ext_randomvec) },
