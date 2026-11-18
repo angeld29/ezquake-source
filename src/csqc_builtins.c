@@ -3432,7 +3432,7 @@ static void csqc_strreplace (void)
 	replacelen = strlen (replace);
 	if (searchlen)
 	{
-		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		while (*sub && (size_t)(result - buf) + replacelen + 2 < sizeof (buf))
 		{
 			if (!strncmp (sub, search, searchlen))
 			{
@@ -3464,7 +3464,7 @@ static void csqc_strireplace (void)
 	replacelen = strlen (replace);
 	if (searchlen)
 	{
-		while (*sub && result < buf + sizeof (buf) - replacelen - 2)
+		while (*sub && (size_t)(result - buf) + replacelen + 2 < sizeof (buf))
 		{
 			if (!strncasecmp (sub, search, searchlen))
 			{
