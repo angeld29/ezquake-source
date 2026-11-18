@@ -2275,6 +2275,26 @@ static const csqc_ptrail_t s_ptrails[] = {
 };
 #define CSQC_NPTRAILS	((int)(sizeof (s_ptrails) / sizeof (s_ptrails[0])))
 
+// EXT_CSQC_1 names for fixed point effects, without sound or dynamic lights.
+typedef struct {
+	const char *name;
+	void (*emit)(vec3_t);
+	int color, count;
+} csqc_impact_t;
+static const csqc_impact_t s_impacts[] = {
+	{ "te_explosion", R_ParticleExplosion, 0, 0 },
+	{ "te_tarexplosion", R_BlobExplosion, 0, 0 },
+	{ "te_gunshot", NULL, 0, 20 },
+	{ "te_wizspike", NULL, 20, 30 },
+	{ "te_knightspike", NULL, 226, 20 },
+	{ "te_spike", NULL, 0, 10 },
+	{ "te_superspike", NULL, 0, 20 },
+	{ "te_teleport", R_TeleportSplash, 0, 0 },
+	{ "te_lavasplash", R_LavaSplash, 0, 0 },
+};
+#define CSQC_NIMPACTS ((int)(sizeof (s_impacts) / sizeof (s_impacts[0])))
+#define CSQC_IMPACT_HANDLE 1024
+
 // float(string effectname) particleeffectnum = #335
 static void csqc_particleeffectnum (void)
 {
@@ -2296,6 +2316,12 @@ static void csqc_particleeffectnum (void)
 			vm->globals[OFS_RETURN] = -2 - i;
 			return;
 		}
+	for (i = 0; name && i < CSQC_NIMPACTS; i++)
+		if (!strcasecmp (name, s_impacts[i].name))
+		{
+			vm->globals[OFS_RETURN] = -CSQC_IMPACT_HANDLE - i;
+			return;
+		}
 	// FTE PF_cs_particleeffectnum (pr_csqc.c:3762-3775) returns -i for a client-only/
 	// newly-created name (0 only when the client table is full), +i for a server-known
 	// one. ezq has no FTE-style client particle registry (only the fixed mini
@@ -2306,6 +2332,20 @@ static void csqc_particleeffectnum (void)
 static const csqc_peffect_t *csqc_peffect_byhandle (float h)
 {
 	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[(int)h - 1] : NULL;
+}
+
+static qbool csqc_emit_impact (float handle, vec3_t org, vec3_t dir)
+{
+	const csqc_impact_t *effect;
+
+	if (!(handle >= 1 - CSQC_IMPACT_HANDLE - CSQC_NIMPACTS && handle <= -CSQC_IMPACT_HANDLE))
+		return false;
+	effect = &s_impacts[-(int)handle - CSQC_IMPACT_HANDLE];
+	if (effect->emit)
+		effect->emit (org);
+	else
+		R_RunParticleEffect (org, dir, effect->color, effect->count);
+	return true;
 }
 
 // void(float effectnum, entity ent, vector start, vector end) trailparticles = #336
@@ -2321,6 +2361,8 @@ static void csqc_trailparticles (void)
 		return;
 	g = vm->globals;
 	handle = g[OFS_PARM0];
+	if (csqc_emit_impact (handle, &g[OFS_PARM0 + 9], vec3_origin))
+		return;
 	if (handle >= -1 - CSQC_NPTRAILS && handle <= -2)
 	{
 		vec3_t start, end;
@@ -2361,13 +2403,15 @@ static void csqc_pointparticles (void)
 	if (!vm)
 		return;
 	g = vm->globals;
+	dir[0] = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 0;
+	dir[1] = (vm->argc > 2) ? g[OFS_PARM0 + 7] : 0;
+	dir[2] = (vm->argc > 2) ? g[OFS_PARM0 + 8] : 0;
+	if (csqc_emit_impact (g[OFS_PARM0], &g[OFS_PARM0 + 3], dir))
+		return;
 	e = csqc_peffect_byhandle (g[OFS_PARM0]);
 	if (!e)
 		return;
 	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
-	dir[0] = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 0;
-	dir[1] = (vm->argc > 2) ? g[OFS_PARM0 + 7] : 0;
-	dir[2] = (vm->argc > 2) ? g[OFS_PARM0 + 8] : 0;
 	R_RunParticleEffect (&g[OFS_PARM0 + 3], dir, e->color, bound (1, count, 4096));
 }
 
