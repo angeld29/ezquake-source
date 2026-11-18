@@ -2259,8 +2259,8 @@ static const csqc_peffect_t s_peffects[] = {
 #define CSQC_NPEFFECTS	((int)(sizeof (s_peffects) / sizeof (s_peffects[0])))
 
 // Standard Quake trail effects (FTE/DP TR_* names), drawn through the engine's
-// own R_ParticleTrail so classic/QMB particle settings apply. Handles follow the
-// colour effects: CSQC_NPEFFECTS + 1 + index.
+// own R_ParticleTrail so classic/QMB particle settings apply. Reserve -1 for
+// unknown names and use negative handles from -2 for trails.
 typedef struct { const char *name; trail_type_t type; } csqc_ptrail_t;
 static const csqc_ptrail_t s_ptrails[] = {
 	{ "TR_ROCKET",		ROCKET_TRAIL },
@@ -2293,7 +2293,7 @@ static void csqc_particleeffectnum (void)
 	for (i = 0; name && i < CSQC_NPTRAILS; i++)
 		if (!strcasecmp (name, s_ptrails[i].name))
 		{
-			vm->globals[OFS_RETURN] = CSQC_NPEFFECTS + 1 + i;
+			vm->globals[OFS_RETURN] = -2 - i;
 			return;
 		}
 	// FTE PF_cs_particleeffectnum (pr_csqc.c:3762-3775) returns -i for a client-only/
@@ -2315,21 +2315,24 @@ static void csqc_trailparticles (void)
 	float *g;
 	const csqc_peffect_t *e;
 	vec3_t d;
-	float len, step;
+	float len, step, handle;
 	int i, n;
 	if (!vm)
 		return;
 	g = vm->globals;
-	i = (int)g[OFS_PARM0] - (CSQC_NPEFFECTS + 1);
-	if (i >= 0 && i < CSQC_NPTRAILS)
+	handle = g[OFS_PARM0];
+	if (handle >= -1 - CSQC_NPTRAILS && handle <= -2)
 	{
 		vec3_t start, end;
+		i = -(int)handle - 2;
 		VectorCopy (&g[OFS_PARM0 + 6], start);
 		VectorCopy (&g[OFS_PARM0 + 9], end);
 		R_ParticleTrail (start, end, s_ptrails[i].type);
 		return;
 	}
-	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
+	if (!(handle >= 1 && handle <= CSQC_NPEFFECTS))
+		return;
+	e = csqc_peffect_byhandle ((int)handle);
 	if (!e)
 		return;
 	d[0] = g[OFS_PARM0 + 9] - g[OFS_PARM0 + 6];
@@ -2360,7 +2363,9 @@ static void csqc_pointparticles (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
+	if (!(handle >= 1 && handle <= CSQC_NPEFFECTS))
+		return;
+	e = csqc_peffect_byhandle ((int)handle);
 	if (!e)
 		return;
 	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
