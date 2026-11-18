@@ -2212,9 +2212,36 @@ static void csqc_bufstr_free (void)
 }
 
 /*
+ S_PrecacheSound for module-supplied names. S_FindName Sys_Errors (quits the
+ client) once known_sfx (MAX_SFX) is full, so every module sound path goes through
+ the distinct-name cap (CSQC_Client_AllowModuleSound) and, as a backstop, refuses a
+ new name when no room is left for the server's own MAX_SOUNDS (the cap alone does
+ not guarantee that: module + server + engine sounds can still exceed MAX_SFX).
+*/
+static sfx_t *csqc_precache_sfx (char *name)
+{
+	if (!name || !name[0])
+		return NULL;
+	if (!CSQC_Client_AllowModuleSound (name))
+	{
+		Con_DPrintf ("CSQC: no room to precache sound %s\n", name);
+		return NULL;
+	}
+	return S_PrecacheSound (name);
+}
+
+static void csqc_local_sound (char *name, float volume)
+{
+	sfx_t *sfx = csqc_precache_sfx (name);
+
+	if (sfx && volume > 0)
+		S_StartSound (cl.playernum + 1, -1, sfx, vec3_origin, bound (0, volume, 1), 1);
+}
+
+/*
  void(string soundname, optional float channel, optional float volume) localsound = #177
  FTE PF_cl_localsound = S_LocalSound2(name, chan, vol): local sound.
- ezquake: S_LocalSoundWithVol (precache by name, channel local -1).
+ ezQuake: guarded precache by name, channel local -1.
  Deviation: channel is ignored; vol 0..1 (default 1).
 */
 static void csqc_localsound (void)
@@ -2229,7 +2256,7 @@ static void csqc_localsound (void)
 	name = CSQC_Client_GetString (vm, *(int *)&g[OFS_PARM0]);
 	vol = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 1;
 	if (name && name[0])
-		S_LocalSoundWithVol (name, vol);
+		csqc_local_sound (name, vol);
 }
 
 /*
@@ -4178,7 +4205,7 @@ static void csqc_sound (void)
 		vol = vm->globals[OFS_PARM3];
 	if (vm->argc > 4)
 		atten = vm->globals[OFS_PARM4];
-	if (vol <= 0 || !(sfx = S_PrecacheSound (n)))
+	if (vol <= 0 || !(sfx = csqc_precache_sfx (n)))
 		return;
 	chan = (int)vm->globals[OFS_PARM1];
 	e = csqc_ent_of (vm, OFS_PARM0);
@@ -4217,7 +4244,7 @@ static void csqc_precache_sound (void)
 	char *n = CSQCVM_Str (OFS_PARM0);
 	if (vm && n && n[0])
 	{
-		S_PrecacheSound (n);
+		csqc_precache_sfx (n);
 		// FTE parity: queue the missing sound (`sound/<name>`); the shared helper
 		// owns the single-slot guard, the dl_single type and the in-flight marker.
 		// `*` = sexed sound (not downloadable). The distinct-name cap keeps
@@ -4320,9 +4347,7 @@ static void csqc_ambientsound (void)
 		vol = vm->globals[OFS_PARM0 + 6];
 	if (n && n[0])
 	{
-		S_PrecacheSound (n);
-		if (vol > 0)
-			S_LocalSoundWithVol (n, vol);
+		csqc_local_sound (n, vol);
 	}
 }
 
@@ -5909,7 +5934,7 @@ static void csqc_pointsound (void)
 	(void)pitchpct;
 	if (!sample || !sample[0])
 		return;
-	sfx = S_PrecacheSound (sample);
+	sfx = csqc_precache_sfx (sample);
 	if (sfx)
 		S_StartSound (0, 0, sfx, org, vm->globals[OFS_PARM0 + 6], vm->globals[OFS_PARM0 + 9]);
 }
