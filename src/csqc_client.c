@@ -126,6 +126,7 @@ typedef struct csqc_client_state_s
 	// Simulated FTE-level globals (or -1): frametime/cltime/maxclients/
 	// player_localnum/intermission.
 	int			g_frametime, g_cltime, g_maxclients, g_player_localnum, g_intermission;
+	int			g_servertime, g_serverprevtime, g_serverdeltatime;
 	// csprogs download (no valid local file): download csprogs.dat from the
 	// server into csprogsvers/<crc>.dat; load once a valid file
 	// appears (see CSQC_Client_Update).
@@ -4570,6 +4571,7 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
+	s_csqc.g_servertime = s_csqc.g_serverprevtime = s_csqc.g_serverdeltatime = -1;
 	CSQC_Client_OffsetCacheReset ();	// hot-path offsets, before resolve
 	s_last_seq = 0;
 	s_ccframe = 0;
@@ -4735,6 +4737,9 @@ static qbool CSQC_Client_Load (const char *path)
 	s_csqc.g_maxclients = PR1VM_FindGlobal (vm, "maxclients");
 	s_csqc.g_player_localnum = PR1VM_FindGlobal (vm, "player_localnum");
 	s_csqc.g_intermission = PR1VM_FindGlobal (vm, "intermission");
+	s_csqc.g_servertime = PR1VM_FindGlobal (vm, "servertime");
+	s_csqc.g_serverprevtime = PR1VM_FindGlobal (vm, "serverprevtime");
+	s_csqc.g_serverdeltatime = PR1VM_FindGlobal (vm, "serverdeltatime");
 
 	// FTE CSQC_ParseGamePacket fallback: a module may implement only
 	// CSQC_Parse_TempEntity.
@@ -5374,6 +5379,13 @@ static void CSQC_Client_PublishSimGlobals (void)
 			vm->globals[s_csqc.p_vel + i] = cl.simvel[i];
 	if (s_csqc.p_onground >= 0)
 		vm->globals[s_csqc.p_onground] = cl.onground ? 1 : 0;
+
+	if (s_csqc.g_servertime >= 0)
+		vm->globals[s_csqc.g_servertime] = (float)cl.snapshot_time;
+	if (s_csqc.g_serverprevtime >= 0)
+		vm->globals[s_csqc.g_serverprevtime] = (float)cl.previous_snapshot_time;
+	if (s_csqc.g_serverdeltatime >= 0)
+		vm->globals[s_csqc.g_serverdeltatime] = (float)(cl.snapshot_time - cl.previous_snapshot_time);
 
 	s_prev_cltime = cl.time;
 }
@@ -7341,6 +7353,7 @@ void CSQC_Client_Disconnect (void)
 	s_csqc.g_view_angles = -1;
 	s_csqc.g_frametime = s_csqc.g_cltime = s_csqc.g_maxclients = -1;
 	s_csqc.g_player_localnum = s_csqc.g_intermission = -1;
+	s_csqc.g_servertime = s_csqc.g_serverprevtime = s_csqc.g_serverdeltatime = -1;
 	CSQC_Client_OffsetCacheReset ();
 	s_last_seq = 0;
 	s_ccframe = 0;

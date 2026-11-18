@@ -1122,6 +1122,13 @@ void FlushEntityPacket (void) {
 }
 
 // An svc_packetentities has just been parsed, deal with the rest of the data stream.
+static void CL_LatchSnapshotTime (double time)
+{
+	cl.previous_snapshot_time = cl.snapshot_time_valid ? cl.snapshot_time : time;
+	cl.snapshot_time = time;
+	cl.snapshot_time_valid = true;
+}
+
 void CL_ParsePacketEntities (qbool delta) 
 {
 	int oldpacket, newpacket, oldindex, newindex, word, newnum, oldnum;
@@ -1333,7 +1340,11 @@ void CL_ParsePacketEntities (qbool delta)
 
 	newp->num_entities = newindex;
 	if (cl.validsequence)
+	{
 		cl.ackedmovesequence = cl.parsecount;
+		// Accurate timings supply STAT_TIME before entities. Older peers only resync periodically.
+		CL_LatchSnapshotTime (cl.servertime_works ? cl.servertime : cl.time);
+	}
 	if (copy) {
 		// do this incase it's FTE demo...
 		memcpy(&cl.frames[1], &cl.frames[0], sizeof(cl.frames[1]));
@@ -2498,6 +2509,7 @@ void CL_RD_PublishFrame(void)
 	frame->invalid = false;
 	cl.ackedmovesequence = cl.parsecount;
 	cl.servertime = CL_RD_Time(false);
+	CL_LatchSnapshotTime (cl.servertime);
 	cl.servertime_works = true;
 	if (cls.mvdplayback && (!cl.rd->player_lerp_valid
 		|| cl.rd->player_lerp_frame != cl.parsecount
