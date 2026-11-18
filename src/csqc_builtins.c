@@ -259,7 +259,9 @@ static void csqc_cvar (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *name = CSQCVM_Str (OFS_PARM0);
 	// #45 read-guard: a denied (rcon/password) name yields 0, like FTE CVAR_NOUNSAFEEXPAND.
-	vm->globals[OFS_RETURN] = (vm && name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
+	if (!vm)
+		return;
+	vm->globals[OFS_RETURN] = (name && name[0] && !CSQC_CvarReadDenied (name)) ? Cvar_Value (name) : 0;
 }
 
 /*
