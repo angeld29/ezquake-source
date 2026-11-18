@@ -7190,10 +7190,6 @@ static int CSQC_Client_BufSortCmp (const void *pa, const void *pb)
 	const char *b = *(const char *const *)pb;
 	int cmp;
 
-	if (!a)
-		a = "";
-	if (!b)
-		b = "";
 	// FTE PF_buf_sort: prefixlen <= 0 compares whole strings, otherwise the first
 	// prefixlen bytes (strncmp).
 	cmp = (s_bufsort_prefixlen > 0)
@@ -7205,9 +7201,16 @@ static int CSQC_Client_BufSortCmp (const void *pa, const void *pb)
 int CSQC_Client_BufSort (int handle, int prefixlen, int backward)
 {
 	csqc_buf_t *b = CSQC_Client_BufAt (handle);
+	int i, used = 0;
 
 	if (!b)
 		return 0;
+	for (i = 0; i < b->num; i++)
+		if (b->str[i])
+			b->str[used++] = b->str[i];
+	if (used < b->num)
+		memset (b->str + used, 0, (size_t)(b->num - used) * sizeof (b->str[0]));
+	b->num = used;
 	if (b->num > 1)
 	{
 		s_bufsort_prefixlen = prefixlen;
