@@ -2427,7 +2427,7 @@ static void csqc_te_bloodshower (void)
 	vel[1] = 0;
 	vel[2] = -g[OFS_PARM0 + 6];	// FTE parity (pr_csqc.c:5069-5077): explosionspeed (PARM2), not a fixed -100
 	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], vel,
-		bound (1, (int)g[OFS_PARM0 + 7], 4096), 73);
+		bound (1, (int)g[OFS_PARM0 + 9], 4096), 73);
 }
 // #407 te_explosionrgb
 static void csqc_te_explosionrgb (void)
