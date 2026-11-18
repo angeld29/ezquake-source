@@ -1332,6 +1332,8 @@ void CL_ParsePacketEntities (qbool delta)
 	}
 
 	newp->num_entities = newindex;
+	if (cl.validsequence)
+		cl.ackedmovesequence = cl.parsecount;
 	if (copy) {
 		// do this incase it's FTE demo...
 		memcpy(&cl.frames[1], &cl.frames[0], sizeof(cl.frames[1]));
@@ -2494,6 +2496,7 @@ void CL_RD_PublishFrame(void)
 	cl.delta_sequence = cl.validsequence;
 	cl.frames[cl.validsequence & UPDATE_MASK].invalid = false;
 	frame->invalid = false;
+	cl.ackedmovesequence = cl.parsecount;
 	cl.servertime = CL_RD_Time(false);
 	cl.servertime_works = true;
 	if (cls.mvdplayback && (!cl.rd->player_lerp_valid
