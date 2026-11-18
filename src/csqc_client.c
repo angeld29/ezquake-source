@@ -6995,6 +6995,7 @@ static csqc_buf_t *CSQC_Client_BufAt (int handle)
 // fill 64 x 65536 entries of ~2 KB (~8 GB): Q_strdup/Q_realloc then end in
 // Sys_Error and the client exits (review S42). Over the cap a store fails like
 // any other bufstr failure, with one warning per session.
+// Total bytes of string data (including terminators) across all module buffers.
 #define CSQC_MAX_BUF_BYTES (16 * 1024 * 1024)
 static size_t s_buf_bytes;
 static qbool s_buf_full_warned;
@@ -7157,16 +7158,28 @@ int CSQC_Client_BufCopy (int from, int to)
 {
 	csqc_buf_t *f = CSQC_Client_BufAt (from);
 	csqc_buf_t *t = CSQC_Client_BufAt (to);
+	size_t total = s_buf_bytes;
 	int i;
 	if (!f || !t || from == to)	// FTE: copying a buffer onto itself is a no-op
 		return 0;
-	CSQC_Client_BufClear (t);
+
+	for (i = 0; i < t->num; i++)
+		if (t->str[i])
+			total -= strlen (t->str[i]) + 1;
+	for (i = 0; i < f->num; i++)
+		if (f->str[i])
+			total += strlen (f->str[i]) + 1;
+	if (total > CSQC_MAX_BUF_BYTES)
+		return 0;
 	if (f->num && !CSQC_Client_BufReserve (t, f->num - 1))
 		return 0;
+
+	for (i = 0; i < t->num; i++)
+		CSQC_Client_BufDrop (t, i);
 	for (i = 0; i < f->num; i++)
 		if (f->str[i] && CSQC_Client_BufStore (t, i, f->str[i]) < 0)
-			break;	// over the byte cap: keep what was copied
-	t->num = f->num;	// holes (and anything not copied) stay holes
+			return 0;
+	t->num = f->num;
 	return 1;
 }
 
