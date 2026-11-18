@@ -475,7 +475,7 @@ qbool CSQC_Client_AllowModuleSound (const char *name)
 {
 	int i;
 
-	if (!name || !name[0])
+	if (!name || !name[0] || strlen (name) >= MAX_QPATH || !S_SfxSlotAvailable (name))
 		return false;
 	for (i = 0; i < s_module_sound_count; i++)
 		if (!strcmp (s_module_sound_names[i], name))
@@ -5855,7 +5855,7 @@ void CSQC_Client_ParsePrecacheMsg (void)
 		if (pidx >= 1 && pidx < MAX_SOUNDS && CSQC_Client_AllowModuleSound (name))
 		{
 			strlcpy (cl.sound_name[pidx], name, sizeof (cl.sound_name[pidx]));
-			cl.sound_precache[pidx] = S_PrecacheSound (name);
+			cl.sound_precache[pidx] = S_PrecacheSound ((char *)name);
 		}
 	}
 }
