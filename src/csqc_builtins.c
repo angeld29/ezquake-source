@@ -4502,9 +4502,15 @@ static void csqc_addentity (void)
 static void csqc_spawn (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
+	int slot;
 	if (!vm)
 		return;
-	csqc_ret_entity (vm, CSQC_Client_EntAlloc (vm));
+	slot = CSQC_Client_EntAlloc (vm);
+	// FTE ED_Alloc errors when the pool is full. Returning world would make the
+	// module write its new entity's fields into edict 0 (S82).
+	if (!slot)
+		PR_RunError ("spawn: no free edicts");
+	csqc_ret_entity (vm, slot);
 }
 
 /* void(entity e) remove = #15 */
