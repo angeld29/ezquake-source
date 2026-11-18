@@ -5603,7 +5603,7 @@ static void csqc_strftime (void)
 		if (strftime (out, sizeof (out), buf, tm))
 			CSQCVM_SetRetStr (out);
 		else
-			CSQCVM_SetRetStr ("");
+			CSQCVM_SetRetStr (CSQCVM_VarString (1));
 	}
 }
 
