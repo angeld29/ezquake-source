@@ -1964,14 +1964,9 @@ static void csqc_isdemo (void)
  fallback to serverinfo. Deviation: protocol is a simplified string (no QW/ZQ/FTE
  parsing), dlstate is only the percent (FTE is a multi-field string).
 */
-static void csqc_serverkey (void)
+static const char *csqc_serverkey_value (const char *key, char *buf, size_t size)
 {
-	pr1vm_t *vm = CSQCVM_Active ();
-	char *key = CSQCVM_Str (OFS_PARM0);
-	char buf[64];
-	const char *v = NULL;
-	if (!vm)
-		return;
+	const char *v;
 	if (!key)
 		key = "";
 	if (!strcmp (key, "ip"))
@@ -1982,7 +1977,7 @@ static void csqc_serverkey (void)
 			v = NET_AdrToString (cls.netchan.remote_address);
 	}
 	else if (!strcmp (key, "maxplayers"))			// maxplayers key
-		snprintf (buf, sizeof (buf), "%d", cl.sv_maxclients), v = buf;
+		snprintf (buf, size, "%d", cl.sv_maxclients), v = buf;
 	else if (!strcmp (key, "protocol"))
 		v = cls.demoplayback ? "QuakeWorld demo" : "QuakeWorld";
 	else if (!strcmp (key, "dlstate"))			// dlstate key (simplified)
@@ -1990,11 +1985,19 @@ static void csqc_serverkey (void)
 		if (!cls.download)
 			v = "";
 		else
-			snprintf (buf, sizeof (buf), "%d", (int)cls.downloadpercent), v = buf;
+			snprintf (buf, size, "%d", (int)cls.downloadpercent), v = buf;
 	}
 	else
 		v = Info_ValueForKey (cl.serverinfo, key);
-	CSQCVM_SetRetStr ((char *)(v ? v : ""));
+	return v ? v : "";
+}
+
+static void csqc_serverkey (void)
+{
+	char buf[64];
+
+	if (CSQCVM_Active ())
+		CSQCVM_SetRetStr ((char *)csqc_serverkey_value (CSQCVM_Str (OFS_PARM0), buf, sizeof (buf)));
 }
 
 /*
@@ -2005,11 +2008,11 @@ static void csqc_serverkey (void)
 static void csqc_serverkeyfloat (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
-	char *key = CSQCVM_Str (OFS_PARM0);
+	char buf[64];
 	const char *value;
 	if (!vm)
 		return;
-	value = Info_ValueForKey (cl.serverinfo, key ? key : "");
+	value = csqc_serverkey_value (CSQCVM_Str (OFS_PARM0), buf, sizeof (buf));
 	vm->globals[OFS_RETURN] = *value ? (float)strtod (value, NULL) :
 		(vm->argc >= 2 ? vm->globals[OFS_PARM1] : 0);
 }
@@ -2635,7 +2638,8 @@ static void csqc_getplayerkeyvalue (void)
 /*
  float(float playernum, string keyname, optional float assumevalue) getplayerkeyfloat = #0:getplayerkeyfloat
  FTE's numeric counterpart to #348 getplayerkeyvalue: the same keys, parsed as a
- number, or assumevalue when the key is missing or empty.
+ number, or assumevalue when the key is missing or empty. This also inherits
+ ezQuake's missing-value behavior for negative player slots.
 */
 static void csqc_getplayerkeyfloat (void)
 {
