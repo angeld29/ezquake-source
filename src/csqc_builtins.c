@@ -2258,6 +2258,43 @@ static const csqc_peffect_t s_peffects[] = {
 };
 #define CSQC_NPEFFECTS	((int)(sizeof (s_peffects) / sizeof (s_peffects[0])))
 
+// Standard Quake trail effects (FTE/DP TR_* names), drawn through the engine's
+// own R_ParticleTrail so classic/QMB particle settings apply. Reserve -1 for
+// unknown names and use negative handles from -2 for trails.
+typedef struct { const char *name; trail_type_t type; } csqc_ptrail_t;
+static const csqc_ptrail_t s_ptrails[] = {
+	{ "TR_ROCKET",		ROCKET_TRAIL },
+	{ "TR_GRENADE",		GRENADE_TRAIL },
+	{ "TR_ALTROCKET",	ALT_ROCKET_TRAIL },
+	{ "TR_BLOOD",		BLOOD_TRAIL },
+	{ "TR_SLIGHTBLOOD",	BIG_BLOOD_TRAIL },	// same slot order as r_rockettrail 4/5
+	{ "TR_WIZSPIKE",	TRACER1_TRAIL },
+	{ "TR_KNIGHTSPIKE",	TRACER2_TRAIL },
+	{ "TR_VORESPIKE",	VOOR_TRAIL },
+	{ "TE_RAILTRAIL",	RAIL_TRAIL },
+};
+#define CSQC_NPTRAILS	((int)(sizeof (s_ptrails) / sizeof (s_ptrails[0])))
+
+// EXT_CSQC_1 names for fixed point effects, without sound or dynamic lights.
+typedef struct {
+	const char *name;
+	void (*emit)(vec3_t);
+	int color, count;
+} csqc_impact_t;
+static const csqc_impact_t s_impacts[] = {
+	{ "te_explosion", R_ParticleExplosion, 0, 0 },
+	{ "te_tarexplosion", R_BlobExplosion, 0, 0 },
+	{ "te_gunshot", NULL, 0, 20 },
+	{ "te_wizspike", NULL, 20, 30 },
+	{ "te_knightspike", NULL, 226, 20 },
+	{ "te_spike", NULL, 0, 10 },
+	{ "te_superspike", NULL, 0, 20 },
+	{ "te_teleport", R_TeleportSplash, 0, 0 },
+	{ "te_lavasplash", R_LavaSplash, 0, 0 },
+};
+#define CSQC_NIMPACTS ((int)(sizeof (s_impacts) / sizeof (s_impacts[0])))
+#define CSQC_IMPACT_HANDLE 1024
+
 // float(string effectname) particleeffectnum = #335
 static void csqc_particleeffectnum (void)
 {
@@ -2273,6 +2310,18 @@ static void csqc_particleeffectnum (void)
 			vm->globals[OFS_RETURN] = i + 1;
 			return;
 		}
+	for (i = 0; name && i < CSQC_NPTRAILS; i++)
+		if (!strcasecmp (name, s_ptrails[i].name))
+		{
+			vm->globals[OFS_RETURN] = -2 - i;
+			return;
+		}
+	for (i = 0; name && i < CSQC_NIMPACTS; i++)
+		if (!strcasecmp (name, s_impacts[i].name))
+		{
+			vm->globals[OFS_RETURN] = -CSQC_IMPACT_HANDLE - i;
+			return;
+		}
 	// FTE PF_cs_particleeffectnum (pr_csqc.c:3762-3775) returns -i for a client-only/
 	// newly-created name (0 only when the client table is full), +i for a server-known
 	// one. ezq has no FTE-style client particle registry (only the fixed mini
@@ -2280,9 +2329,23 @@ static void csqc_particleeffectnum (void)
 	vm->globals[OFS_RETURN] = -1;
 }
 
-static const csqc_peffect_t *csqc_peffect_byhandle (int h)
+static const csqc_peffect_t *csqc_peffect_byhandle (float h)
 {
-	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[h - 1] : NULL;
+	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[(int)h - 1] : NULL;
+}
+
+static qbool csqc_emit_impact (float handle, vec3_t org, vec3_t dir)
+{
+	const csqc_impact_t *effect;
+
+	if (!(handle >= 1 - CSQC_IMPACT_HANDLE - CSQC_NIMPACTS && handle <= -CSQC_IMPACT_HANDLE))
+		return false;
+	effect = &s_impacts[-(int)handle - CSQC_IMPACT_HANDLE];
+	if (effect->emit)
+		effect->emit (org);
+	else
+		R_RunParticleEffect (org, dir, effect->color, effect->count);
+	return true;
 }
 
 // void(float effectnum, entity ent, vector start, vector end) trailparticles = #336
@@ -2292,12 +2355,24 @@ static void csqc_trailparticles (void)
 	float *g;
 	const csqc_peffect_t *e;
 	vec3_t d;
-	float len, step;
+	float len, step, handle;
 	int i, n;
 	if (!vm)
 		return;
 	g = vm->globals;
-	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
+	handle = g[OFS_PARM0];
+	if (csqc_emit_impact (handle, &g[OFS_PARM0 + 9], vec3_origin))
+		return;
+	if (handle >= -1 - CSQC_NPTRAILS && handle <= -2)
+	{
+		vec3_t start, end;
+		i = -(int)handle - 2;
+		VectorCopy (&g[OFS_PARM0 + 6], start);
+		VectorCopy (&g[OFS_PARM0 + 9], end);
+		R_ParticleTrail (start, end, s_ptrails[i].type);
+		return;
+	}
+	e = csqc_peffect_byhandle (g[OFS_PARM0]);
 	if (!e)
 		return;
 	d[0] = g[OFS_PARM0 + 9] - g[OFS_PARM0 + 6];
@@ -2328,13 +2403,15 @@ static void csqc_pointparticles (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	e = csqc_peffect_byhandle ((int)g[OFS_PARM0]);
-	if (!e)
-		return;
-	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
 	dir[0] = (vm->argc > 2) ? g[OFS_PARM0 + 6] : 0;
 	dir[1] = (vm->argc > 2) ? g[OFS_PARM0 + 7] : 0;
 	dir[2] = (vm->argc > 2) ? g[OFS_PARM0 + 8] : 0;
+	if (csqc_emit_impact (g[OFS_PARM0], &g[OFS_PARM0 + 3], dir))
+		return;
+	e = csqc_peffect_byhandle (g[OFS_PARM0]);
+	if (!e)
+		return;
+	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
 	R_RunParticleEffect (&g[OFS_PARM0 + 3], dir, e->color, bound (1, count, 4096));
 }
 
@@ -4070,24 +4147,55 @@ static void csqc_breakpoint (void)
 
 /*
  void(entity e, float chan, string samp, float vol, float atten) sound = #8
- Deviation: no positional sound at the entity (no origin field without the arena);
- precache + local playback like #177 (volume vol).
+ Played on the entity's channel through S_StartSound, so a new sound replaces
+ the previous one on that channel like engine sounds do. A networked entity uses
+ its .entnum. A csqc-only entity played with ATTN_NONE (e.g. a predicted view
+ model) uses the local player at the view origin, so its channels match the
+ engine's own weapon sounds. Any other csqc-only entity is positional like FTE
+ PF_cs_sound: its .origin, with its own (negative) sound entity -slot, so it
+ falls off with distance and replaces only its own channel.
 */
 static void csqc_sound (void)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
 	char *n = CSQCVM_Str (OFS_PARM2);
-	float vol = 1;
-	if (!vm)
+	int e, chan, num = 0;
+	float vol = 1, atten = 1, *f;	// 1 = ATTN_NORM
+	sfx_t *sfx;
+	vec3_t org;
+
+	if (!vm || !n || !n[0])
 		return;
 	if (vm->argc > 3)
-		vol = vm->globals[OFS_PARM0 + 9];
-	if (n && n[0])
+		vol = vm->globals[OFS_PARM3];
+	if (vm->argc > 4)
+		atten = vm->globals[OFS_PARM4];
+	if (vol <= 0 || !(sfx = S_PrecacheSound (n)))
+		return;
+	chan = (int)vm->globals[OFS_PARM1];
+	e = csqc_ent_of (vm, OFS_PARM0);
+	if (e > 0 && (f = csqc_ent_field (vm, e, "entnum")))
+		num = (int)f[0];
+	if (num > 0)
 	{
-		S_PrecacheSound (n);
-		if (vol > 0)
-			S_LocalSoundWithVol (n, vol);
+		f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN));
+		if (f)
+			VectorCopy (f, org);
+		else
+			VectorCopy (r_refdef.vieworg, org);
 	}
+	else if (e > 0 && atten > 0
+		&& (f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_ORIGIN))))
+	{
+		num = -e;	// FTE: S_StartSound(-entity->entnum, ...); never a network number
+		VectorCopy (f, org);
+	}
+	else
+	{
+		num = cl.playernum + 1;
+		VectorCopy (r_refdef.vieworg, org);
+	}
+	S_StartSound (num, chan, sfx, org, bound (0, vol, 1), atten);
 }
 
 /*
@@ -4391,6 +4499,17 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 			ent.framelerp = -1;
 		}
 	}
+	else if ((f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_LERPFRAC))) && f[0] > 0)
+	{
+		// FTE .frame2/.lerpfrac: lerpfrac is the weight of frame2, ezq framelerp
+		// the progress from oldframe to frame.
+		float *f2 = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_FRAME2));
+		if (f2)
+		{
+			ent.oldframe = (int)f2[0];
+			ent.framelerp = 1 - bound (0, f[0], 1);
+		}
+	}
 	// cl_deadbodyFilter for CSQC-owned players. The engine player filter
 	// (CL_LinkPlayers) is skipped for owned players, so apply the same semantics
 	// here. TF exception for mode 3 (!cl.teamfortress) mirrors the engine.
@@ -4426,7 +4545,32 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	{
 		int rflags = (int)f[0];
 		if (rflags & 1)		// CSQCRF_VIEWMODEL
+		{
+			// FTE draws it relative to the view (x forward, y left, z up). Place it
+			// from the engine's own gun pose, which already carries bob,
+			// r_viewmodeloffset and the fov fudge (V_AddViewWeapon).
+			centity_t *gun = CL_WeaponModelForView ();
+			vec3_t fwd, right, up, o, base;
+
+			VectorCopy (ent.origin, o);
+			AngleVectors (r_refdef.viewangles, fwd, right, up);
+			if (gun && gun->current.modelindex)
+			{
+				VectorCopy (gun->current.origin, base);
+				VectorAdd (ent.angles, gun->current.angles, ent.angles);
+			}
+			else
+			{
+				VectorCopy (r_refdef.vieworg, base);
+				ent.angles[PITCH] -= r_refdef.viewangles[PITCH];
+				ent.angles[YAW] += r_refdef.viewangles[YAW];
+				ent.angles[ROLL] += r_refdef.viewangles[ROLL];
+			}
+			VectorMA (base, o[0], fwd, ent.origin);
+			VectorMA (ent.origin, -o[1], right, ent.origin);
+			VectorMA (ent.origin, o[2], up, ent.origin);
 			ent.renderfx |= RF_WEAPONMODEL;
+		}
 		if (rflags & 32)	// CSQCRF_NOSHADOW
 			ent.renderfx |= RF_NOSHADOW;
 		if (rflags & 8)		// CSQCRF_ADDITIVE
