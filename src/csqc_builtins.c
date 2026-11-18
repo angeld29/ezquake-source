@@ -1964,14 +1964,9 @@ static void csqc_isdemo (void)
  fallback to serverinfo. Deviation: protocol is a simplified string (no QW/ZQ/FTE
  parsing), dlstate is only the percent (FTE is a multi-field string).
 */
-static void csqc_serverkey (void)
+static const char *csqc_serverkey_value (char *key, char *buf, size_t size)
 {
-	pr1vm_t *vm = CSQCVM_Active ();
-	char *key = CSQCVM_Str (OFS_PARM0);
-	char buf[64];
-	const char *v = NULL;
-	if (!vm)
-		return;
+	const char *v;
 	if (!key)
 		key = "";
 	if (!strcmp (key, "ip"))
@@ -1982,7 +1977,7 @@ static void csqc_serverkey (void)
 			v = NET_AdrToString (cls.netchan.remote_address);
 	}
 	else if (!strcmp (key, "maxplayers"))			// maxplayers key
-		snprintf (buf, sizeof (buf), "%d", cl.sv_maxclients), v = buf;
+		snprintf (buf, size, "%d", cl.sv_maxclients), v = buf;
 	else if (!strcmp (key, "protocol"))
 		v = cls.demoplayback ? "QuakeWorld demo" : "QuakeWorld";
 	else if (!strcmp (key, "dlstate"))			// dlstate key (simplified)
@@ -1990,11 +1985,36 @@ static void csqc_serverkey (void)
 		if (!cls.download)
 			v = "";
 		else
-			snprintf (buf, sizeof (buf), "%d", (int)cls.downloadpercent), v = buf;
+			snprintf (buf, size, "%d", (int)cls.downloadpercent), v = buf;
 	}
 	else
 		v = Info_ValueForKey (cl.serverinfo, key);
-	CSQCVM_SetRetStr ((char *)(v ? v : ""));
+	return v ? v : "";
+}
+
+static void csqc_serverkey (void)
+{
+	char buf[64];
+
+	if (CSQCVM_Active ())
+		CSQCVM_SetRetStr ((char *)csqc_serverkey_value (CSQCVM_Str (OFS_PARM0), buf, sizeof (buf)));
+}
+
+/*
+ float(string key, optional float assumevalue) serverkeyfloat = #0:serverkeyfloat
+ FTE's numeric counterpart to #354 serverkey. Keep the optional fallback so a
+ module cannot mistake a missing serverinfo key for a real zero value.
+*/
+static void csqc_serverkeyfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	char buf[64];
+	const char *value;
+	if (!vm)
+		return;
+	value = csqc_serverkey_value (CSQCVM_Str (OFS_PARM0), buf, sizeof (buf));
+	vm->globals[OFS_RETURN] = *value ? (float)strtod (value, NULL) :
+		(vm->argc >= 2 ? vm->globals[OFS_PARM1] : 0);
 }
 
 /*
@@ -2613,6 +2633,25 @@ static void csqc_getplayerkeyvalue (void)
 	else
 		v = Info_ValueForKey (pi->userinfo, key);	// team/topcolor/bottomcolor/...
 	CSQCVM_SetRetStr (v ? v : "");
+}
+
+/*
+ float(float playernum, string keyname, optional float assumevalue) getplayerkeyfloat = #0:getplayerkeyfloat
+ FTE's numeric counterpart to #348 getplayerkeyvalue: the same keys, parsed as a
+ number, or assumevalue when the key is missing or empty. This also inherits
+ ezQuake's missing-value behavior for negative player slots.
+*/
+static void csqc_getplayerkeyfloat (void)
+{
+	pr1vm_t *vm = CSQCVM_Active ();
+	float assume;
+	const char *v;
+	if (!vm)
+		return;
+	assume = vm->argc >= 3 ? vm->globals[OFS_PARM2] : 0;
+	csqc_getplayerkeyvalue ();
+	v = CSQCVM_Str (OFS_RETURN);
+	vm->globals[OFS_RETURN] = (v && *v) ? (float)strtod (v, NULL) : assume;
 }
 
 /*
@@ -3786,6 +3825,8 @@ static const struct
 {
 	{ "checkbuiltin", CSQC_BUILTIN_CHECKBUILTIN },
 	{ "argc", CSQC_BUILTIN_ARGC },
+	{ "serverkeyfloat", CSQC_BUILTIN_SERVERKEYFLOAT },
+	{ "getplayerkeyfloat", CSQC_BUILTIN_GETPLAYERKEYFLOAT },
 	{ NULL, 0 }
 };
 
@@ -6782,6 +6823,8 @@ void CSQCVM_RegisterBuiltins (pr1vm_t *vm)
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_CHECKBUILTIN, (builtin_t)csqc_checkbuiltin); // #0 checkbuiltin
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_NAMED_UNKNOWN, (builtin_t)csqc_named_unknown); // #0 unknown name: call aborts
 	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_ARGC, (builtin_t)csqc_argc); // #0 float() argc
+	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_SERVERKEYFLOAT, (builtin_t)csqc_serverkeyfloat); // #0 float(string key, optional float assumevalue) serverkeyfloat
+	PR1VM_RegisterBuiltin (vm, CSQC_BUILTIN_GETPLAYERKEYFLOAT, (builtin_t)csqc_getplayerkeyfloat); // #0 float(float playernum, string keyname, optional float assumevalue) getplayerkeyfloat
 	PR1VM_MarkBuiltinStub (vm, CSQC_BUILTIN_NAMED_UNKNOWN);	// unresolved name -> checkbuiltin must be 0 (FTE parity)
 
 	// Mark no-op stubs so checkbuiltin/checkextension are honest.
