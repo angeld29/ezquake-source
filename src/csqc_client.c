@@ -5857,7 +5857,7 @@ void CSQC_Client_ParsePrecacheMsg (void)
 		if (pidx >= 1 && pidx < MAX_SOUNDS && CSQC_Client_AllowModuleSound (name))
 		{
 			strlcpy (cl.sound_name[pidx], name, sizeof (cl.sound_name[pidx]));
-			cl.sound_precache[pidx] = S_PrecacheSound (name);
+			cl.sound_precache[pidx] = S_PrecacheSound ((char *) name);
 		}
 	}
 }
