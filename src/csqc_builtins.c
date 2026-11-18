@@ -4371,7 +4371,6 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	model_t *model;
 	int ofs;
 	int playernum = -1;	// network player index (colormap 1..MAX_CLIENTS)
-	qbool viewmodel = false;	// CSQCRF_VIEWMODEL: view-relative, never culled
 
 	if (!vm || e <= 0 || !CSQC_Client_EntUsed (e))
 		return;
@@ -4531,7 +4530,6 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 			VectorMA (ent.origin, -o[1], right, ent.origin);
 			VectorMA (ent.origin, o[2], up, ent.origin);
 			ent.renderfx |= RF_WEAPONMODEL;
-			viewmodel = true;
 		}
 		if (rflags & 32)	// CSQCRF_NOSHADOW
 			ent.renderfx |= RF_NOSHADOW;
@@ -4541,9 +4539,8 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 
 	// PVS/leaf + bbox culling, FTE EdictInFatPVS parity.
 	// R_CSQC_BeginCull marks the leaves/frustum for this frame (once per frame).
-	// A view model is always visible (FTE pvscache.num_leafs = -1).
 	R_CSQC_BeginCull ();
-	if (!viewmodel && !R_CSQC_EntityVisible (&ent))
+	if (!R_CSQC_EntityVisible (&ent))
 		return;
 
 	CL_AddEntity (&ent);
