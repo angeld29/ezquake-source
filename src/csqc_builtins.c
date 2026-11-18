@@ -2844,10 +2844,16 @@ static void csqc_bitshift (void)
 		return;
 	mask = (int)vm->globals[OFS_PARM0];
 	shift = (int)vm->globals[OFS_PARM1];
-	if (shift < 0)
+	// Shifts of 32 or more, and a left shift of a negative int, are UB in C; shift
+	// as unsigned and give 0 past the width (an arithmetic right shift keeps the sign).
+	if (shift <= -32)
+		mask = (mask < 0) ? -1 : 0;
+	else if (shift < 0)
 		mask >>= -shift;
+	else if (shift >= 32)
+		mask = 0;
 	else
-		mask <<= shift;
+		mask = (int)((unsigned int)mask << shift);
 	vm->globals[OFS_RETURN] = mask;
 }
 
