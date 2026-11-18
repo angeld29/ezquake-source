@@ -2303,9 +2303,9 @@ static void csqc_particleeffectnum (void)
 	vm->globals[OFS_RETURN] = -1;
 }
 
-static const csqc_peffect_t *csqc_peffect_byhandle (int h)
+static const csqc_peffect_t *csqc_peffect_byhandle (float h)
 {
-	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[h - 1] : NULL;
+	return (h >= 1 && h <= CSQC_NPEFFECTS) ? &s_peffects[(int)h - 1] : NULL;
 }
 
 // void(float effectnum, entity ent, vector start, vector end) trailparticles = #336
@@ -2330,9 +2330,7 @@ static void csqc_trailparticles (void)
 		R_ParticleTrail (start, end, s_ptrails[i].type);
 		return;
 	}
-	if (!(handle >= 1 && handle <= CSQC_NPEFFECTS))
-		return;
-	e = csqc_peffect_byhandle ((int)handle);
+	e = csqc_peffect_byhandle (g[OFS_PARM0]);
 	if (!e)
 		return;
 	d[0] = g[OFS_PARM0 + 9] - g[OFS_PARM0 + 6];
@@ -2363,9 +2361,7 @@ static void csqc_pointparticles (void)
 	if (!vm)
 		return;
 	g = vm->globals;
-	if (!(handle >= 1 && handle <= CSQC_NPEFFECTS))
-		return;
-	e = csqc_peffect_byhandle ((int)handle);
+	e = csqc_peffect_byhandle (g[OFS_PARM0]);
 	if (!e)
 		return;
 	count = (vm->argc > 3) ? (int)g[OFS_PARM0 + 9] : e->count;
