@@ -3208,7 +3208,7 @@ static void csqc_strncmp (void)
 		aofs = alen;
 	if (bofs < 0 || (bofs && bofs > blen))
 		bofs = blen;
-	vm->globals[OFS_RETURN] = strncmp (a + aofs, b + bofs, len);
+	vm->globals[OFS_RETURN] = strncmp (a + aofs, b, len);
 }
 
 /*
