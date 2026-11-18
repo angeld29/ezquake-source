@@ -1875,7 +1875,7 @@ struct model_s *CSQC_Client_ModelForIndex (int idx)
 {
 	if (idx > 0 && idx < MAX_MODELS)
 		return cl.model_precache[idx];
-	if (idx < 0 && -idx <= s_nmodels)
+	if (idx < 0 && idx >= -s_nmodels)
 		return s_models[-idx - 1];
 	return NULL;
 }
@@ -1885,7 +1885,7 @@ const char *CSQC_Client_ModelNameForIndex (int idx)
 {
 	if (idx > 0 && idx < MAX_MODELS && cl.model_name[idx][0])
 		return cl.model_name[idx];
-	if (idx < 0 && -idx <= s_nmodels)
+	if (idx < 0 && idx >= -s_nmodels)
 		return s_modelnames[-idx - 1];
 	return NULL;
 }

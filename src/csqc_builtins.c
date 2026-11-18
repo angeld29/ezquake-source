@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
+#include <limits.h>
 #include <string.h>
 #ifndef _WIN32
 #include <strings.h>
@@ -4148,6 +4149,11 @@ static void csqc_getmodelindex (void)
 		? CSQC_Client_ModelIndexKnown (n) : CSQC_Client_ModelIndex (n));
 }
 
+static int csqc_model_index (float value)
+{
+	return (value >= INT_MIN && (double)value <= INT_MAX) ? (int)value : 0;
+}
+
 /*
  string(float mdlindex) modelnameforindex = #334.
  FTE parity (PF_cs_ModelnameForIndex): reverse resolution across the sign-split index
@@ -4161,7 +4167,7 @@ static void csqc_modelnameforindex (void)
 
 	if (!vm)
 		return;
-	idx = (int)vm->globals[OFS_PARM0];
+	idx = csqc_model_index (vm->globals[OFS_PARM0]);
 	name = CSQC_Client_ModelNameForIndex (idx);
 	CSQCVM_SetRetStr ((char *)(name ? name : ""));
 }
@@ -4326,7 +4332,7 @@ static void csqc_add_one_entity (int e, qbool run_predraw)
 	model = NULL;
 	if ((ofs = CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELINDEX)) >= 0)
 	{
-		int mi = (int)slot[ofs];
+		int mi = csqc_model_index (slot[ofs]);
 		if (mi != 0)
 			model = CSQC_Client_ModelForIndex (mi);
 	}
@@ -4562,7 +4568,7 @@ static void csqc_setmodelindex (void)
 	if (!vm)
 		return;
 	e = csqc_ent_of (vm, OFS_PARM0);
-	idx = (int)vm->globals[OFS_PARM0 + 3];
+	idx = csqc_model_index (vm->globals[OFS_PARM0 + 3]);
 	f = csqc_ent_ofs (vm, e, CSQC_Client_FieldOfs (vm, CSQC_FLD_MODELINDEX));
 	if (f)
 		f[0] = (float)idx;
