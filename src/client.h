@@ -660,6 +660,7 @@ typedef struct {
 									///< packetentity_t we got.  If this is 0, we can't
 									///< render a frame yet
 	int			oldvalidsequence;
+	int			ackedmovesequence;	// Command acknowledged by the last accepted snapshot.
 	int			delta_sequence;		///< sequence number of the packet we can request
 									///< delta from
 
@@ -689,6 +690,8 @@ typedef struct {
 									// is rendering at.  always <= realtime
 
 	double		servertime;
+	double		snapshot_time, previous_snapshot_time;
+	qbool		snapshot_time_valid;
 	qbool		servertime_works;	///< Does the server actually send STAT_TIME/svc_time?
 	double		gametime;			///< match duration
 	double		gamestarttime;		///< this gets saved on match start
