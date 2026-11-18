@@ -4969,7 +4969,7 @@ static float CSQC_Client_ServerCmdFrame (void)
 		return 0;
 	if (!cl.validsequence)
 		return 0;	// no accepted server frame yet (prespawn)
-	return (float)cl.parsecount;
+	return (float)cl.ackedmovesequence;
 }
 
 // Publish the prediction window (clientcommandframe/servercommandframe) to the
