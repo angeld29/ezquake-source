@@ -1384,8 +1384,9 @@ static void csqc_drawrotpic_dp (void)
  Mini QC formatter with width/flags/precision - a subset of FTE PF_sprintf_internal.
  Parses %[flags][width][.precision][length]conv; flags - 0 + ' ' #; width/precision
  are literal only (no '*'/'%$'). Length modifiers pick the argument domain: h is
- float, l/L is a raw int32, q/j/z/t are consumed (a 32-bit slot cannot widen to
- int64). Conversions d i u x X c s f g e + v ('x y z'). %i defaults to a raw-int
+ float, l/L is a raw int32, and q/j/z/t are consumed without changing the slot
+ type. Integer conversions from float saturate to int64; raw integer slots
+ remain 32-bit. Conversions d i u x X c s f g e + v ('x y z'). %i defaults to a raw-int
  read; every other conversion defaults to float, matching FTE. The VM stores
  functions, fields and entities as raw ints in float slots; entity values are byte
  offsets here, so print an edict number through num_for_edict (#512) instead of
