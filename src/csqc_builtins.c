@@ -5010,6 +5010,7 @@ static trace_t csqc_world_trace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t 
 	hull_t *hull;
 	trace_t tr;
 	vec3_t offset, sl, el;
+	float width;
 	qbool box = (mins != NULL && maxs != NULL);
 
 	clip = cl.clipmodels[1];	// world clip model (BSP hulls)
@@ -5023,8 +5024,16 @@ static trace_t csqc_world_trace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t 
 		return CM_HullTrace (hull, start, end);
 	}
 
-	/* box: hull[1] (player-clip) with an offset by the passed mins/maxs */
-	hull = &clip->hulls[1];
+	// Approximate the box with the closest Q1 BSP clip hull.
+	width = maxs[0] - mins[0];
+	if (width < 3 || clip->hulls[1].firstclipnode < 0 ||
+	    clip->hulls[1].firstclipnode > clip->hulls[1].lastclipnode)
+		hull = &clip->hulls[0];
+	else if (width <= 32.1f || clip->hulls[2].firstclipnode < 0 ||
+	         clip->hulls[2].firstclipnode > clip->hulls[2].lastclipnode)
+		hull = &clip->hulls[1];
+	else
+		hull = &clip->hulls[2];
 	VectorSubtract (hull->clip_mins, mins, offset);
 	VectorSubtract (start, offset, sl);
 	VectorSubtract (end, offset, el);
