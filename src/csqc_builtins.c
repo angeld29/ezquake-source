@@ -17,6 +17,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 #ifndef _WIN32
 #include <strings.h>
 #endif
@@ -1380,8 +1382,9 @@ static void csqc_drawrotpic_dp (void)
  Mini QC formatter with width/flags/precision - a subset of FTE PF_sprintf_internal.
  Parses %[flags][width][.precision][length]conv; flags - 0 + ' ' #; width/precision
  are literal only (no '*'/'%$'). Length modifiers pick the argument domain: h is
- float, l/L is a raw int32, q/j/z/t are consumed (a 32-bit slot cannot widen to
- int64). Conversions d i u x X c s f g e + v ('x y z'). %i defaults to a raw-int
+ float, l/L is a raw int32, and q/j/z/t are consumed without changing the slot
+ type. Integer conversions from float saturate to int64; raw integer slots
+ remain 32-bit. Conversions d i u x X c s f g e + v ('x y z'). %i defaults to a raw-int
  read; every other conversion defaults to float, matching FTE. The VM stores
  functions, fields and entities as raw ints in float slots; entity values are byte
  offsets here, so print an edict number through num_for_edict (#512) instead of
@@ -1408,6 +1411,18 @@ static char *csqc_sprintf_put_int (char *f, int v)
 	while (n > 0)
 		*f++ = tmp[--n];
 	return f;
+}
+
+// Float -> int64 without UB: NaN -> 0, out-of-range values saturate.
+static int64_t csqc_sprintf_ftoi64 (float v)
+{
+	if (v != v)
+		return 0;
+	if (v >= 9.2233720368547758e18f)
+		return INT64_MAX;
+	if (v <= -9.2233720368547758e18f)
+		return INT64_MIN;
+	return (int64_t)v;
 }
 
 static void csqc_sprintf (void)
@@ -1575,31 +1590,53 @@ static void csqc_sprintf (void)
 			{
 			case 'd':
 			case 'i':
-				*f++ = 'd';
-				*f = 0;
+				// FTE formats float-domain integers as int64; (int) would be UB out of range.
 				if (isfloat)
-					snprintf (tmp, sizeof (tmp), formatbuf, (int)fv);
+				{
+					strcpy (f, PRId64);
+					snprintf (tmp, sizeof (tmp), formatbuf, csqc_sprintf_ftoi64 (fv));
+				}
 				else
+				{
+					*f++ = 'd';
+					*f = 0;
 					snprintf (tmp, sizeof (tmp), formatbuf, iv);
+				}
 				pn++;
 				break;
 			case 'u':
-				*f++ = 'u';
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, PRIu64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = 'u';
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'x':
 			case 'X':
-				*f++ = conv;
-				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (unsigned)(int)fv : (unsigned)iv);
+				if (isfloat)
+				{
+					strcpy (f, conv == 'x' ? PRIx64 : PRIX64);
+					snprintf (tmp, sizeof (tmp), formatbuf, (uint64_t)csqc_sprintf_ftoi64 (fv));
+				}
+				else
+				{
+					*f++ = conv;
+					*f = 0;
+					snprintf (tmp, sizeof (tmp), formatbuf, (unsigned)iv);
+				}
 				pn++;
 				break;
 			case 'c':
 				*f++ = 'c';
 				*f = 0;
-				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)fv : iv);
+				snprintf (tmp, sizeof (tmp), formatbuf, isfloat ? (int)csqc_sprintf_ftoi64 (fv) : iv);
 				pn++;
 				break;
 			case 'f':
