@@ -6444,12 +6444,13 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 	// input_* globals -> cmd (every declared field is written back).
 	if (s_csqc.in_timelength >= 0)
 	{
-		int msec = (int)(vm->globals[s_csqc.in_timelength] * 1000.0f);
-		if (msec < 1)
-			msec = 1;
-		else if (msec > 255)
-			msec = 255;
-		cmd->msec = (byte)msec;
+		// Clamp as float before the int cast: NaN or a huge module value is UB as int.
+		float ms = vm->globals[s_csqc.in_timelength] * 1000.0f;
+		if (!(ms >= 1.0f))
+			ms = 1.0f;
+		else if (ms > 255.0f)
+			ms = 255.0f;
+		cmd->msec = (byte)(int)ms;
 	}
 	if (s_csqc.in_angles >= 0)
 	{
@@ -6870,14 +6871,14 @@ void CSQC_Client_RunPlayerPhysics (int entnum)
 		}
 		if (s_csqc.in_movevalues >= 0)
 		{
-			pmove.cmd.forwardmove = (short)vm->globals[s_csqc.in_movevalues + 0];
-			pmove.cmd.sidemove = (short)vm->globals[s_csqc.in_movevalues + 1];
-			pmove.cmd.upmove = (short)vm->globals[s_csqc.in_movevalues + 2];
+			pmove.cmd.forwardmove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 0], -32768, 32767);
+			pmove.cmd.sidemove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 1], -32768, 32767);
+			pmove.cmd.upmove = (short)CSQC_Client_ClampInput (vm->globals[s_csqc.in_movevalues + 2], -32768, 32767);
 		}
 		if (s_csqc.in_buttons >= 0)
-			pmove.cmd.buttons = (byte)vm->globals[s_csqc.in_buttons];
+			pmove.cmd.buttons = (byte)CSQC_Client_ClampInput (vm->globals[s_csqc.in_buttons], 0, 255);
 		if (s_csqc.in_impulse >= 0)
-			pmove.cmd.impulse = (byte)vm->globals[s_csqc.in_impulse];
+			pmove.cmd.impulse = (byte)CSQC_Client_ClampInput (vm->globals[s_csqc.in_impulse], 0, 255);
 	}
 	else
 	{
