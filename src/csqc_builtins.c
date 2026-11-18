@@ -6000,7 +6000,7 @@ static void csqc_bsp_nop_vec (void)
 }
 
 /*
- Introspection/console. Implemented: #294 checkcommand (cmd->1, cvar->3, no alias->0),
+ Introspection/console. Implemented: #294 checkcommand (cmd->1, alias->2, cvar->3),
  #295 argescape (own quoting), #607 isfunction. No-op: #391/#392/#393/#394 (FTE
  multi-console has no ezq analog), #605 callfunction (reentrant exec from a builtin
  is unsupported).
@@ -6015,6 +6015,8 @@ static void csqc_checkcommand (void)
 		return;
 	if (name && name[0] && Cmd_Exists (name))
 		vm->globals[OFS_RETURN] = 1;
+	else if (name && name[0] && Cmd_FindAlias (name))
+		vm->globals[OFS_RETURN] = 2;	// FTE PF_checkcommand: command 1, alias 2, cvar 3
 	else if (name && name[0] && Cvar_Find (name))
 		vm->globals[OFS_RETURN] = 3;
 	else
