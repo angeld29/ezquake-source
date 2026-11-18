@@ -1964,7 +1964,7 @@ static void csqc_isdemo (void)
  fallback to serverinfo. Deviation: protocol is a simplified string (no QW/ZQ/FTE
  parsing), dlstate is only the percent (FTE is a multi-field string).
 */
-static const char *csqc_serverkey_value (const char *key, char *buf, size_t size)
+static const char *csqc_serverkey_value (char *key, char *buf, size_t size)
 {
 	const char *v;
 	if (!key)
