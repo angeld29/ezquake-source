@@ -4990,8 +4990,9 @@ servercommandframe.
   after sending: Netchan_Transmit increments outgoing_sequence, but clientcommandframe
   stays the built cmd's number. This is what #345(clientcommandframe) asks for - the
   live pending frame; the next one does not exist yet.
-- servercommandframe = the last server-acked client frame = cl.parsecount (analog of
-  FTE QW ackedmovesequence).
+- servercommandframe = cl.ackedmovesequence: the client frame acknowledged by the
+  last accepted snapshot (FTE QW ackedmovesequence). It is latched from cl.parsecount
+  only when a legacy or RD snapshot is accepted, so it can lag cl.parsecount.
 - Prediction unavailable (0): demo/MVD, not ca_active, before the first accepted
   server frame (cl.validsequence == 0).
 - The window (servercommandframe, clientcommandframe] is the module's contract (the
@@ -5935,7 +5936,7 @@ void CSQC_Client_ParsePrecacheMsg (void)
 	{
 		// FTE CL_ParsePrecache calls S_PrecacheSound: without it cl.sound_precache[]
 		// stays NULL and a later svc_sound with this index is silent. Cap the
-		// distinct module names: MAX_SFX is 512 and S_FindName Sys_Errors.
+		// distinct module names: S_FindName Sys_Errors when known_sfx (MAX_SFX) is full.
 		if (pidx >= 1 && pidx < MAX_SOUNDS && CSQC_Client_AllowModuleSound (name))
 		{
 			strlcpy (cl.sound_name[pidx], name, sizeof (cl.sound_name[pidx]));
