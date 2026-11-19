@@ -460,15 +460,16 @@ mpic_t *Draw_CachePicSafe(const char *path, qbool crash, qbool only24bit)
 		}
 
 		// The header is untrusted (e.g. any file named *.lmp): the pixel data must
-		// fit in the file, or R_LoadPicTexture reads past the buffer.
+		// fit in the file, or R_LoadPicTexture reads past the buffer. A bad lmp is
+		// ignored rather than fatal, so a valid 24-bit picture can still be used.
 		if (lmp_len < 8 || dat->width <= 0 || dat->height <= 0 ||
 			(long long)dat->width * dat->height > lmp_len - 8) {
-			if (crash) {
-				Sys_Error ("Draw_CachePicSafe: bad lmp %s", lmp_path);
-			}
-			return NULL;
+			Com_DPrintf ("Draw_CachePicSafe: ignoring bad lmp %s\n", lmp_path);
+			dat = NULL;
 		}
-		lmp_found = true;
+		else {
+			lmp_found = true;
+		}
 	}
 
 	// Try loading the 24-bit picture.
