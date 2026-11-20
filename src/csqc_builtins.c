@@ -2554,7 +2554,7 @@ static void csqc_te_bloodshower (void)
 	vel[1] = 0;
 	vel[2] = -g[OFS_PARM0 + 6];	// FTE parity (pr_csqc.c:5069-5077): explosionspeed (PARM2), not a fixed -100
 	csqc_te_bbox_effect (&g[OFS_PARM0], &g[OFS_PARM0 + 3], vel,
-		bound (1, (int)g[OFS_PARM0 + 9], 4096), 73);
+		bound (1, (int)g[OFS_PARM3], 4096), 73);
 }
 // #407 te_explosionrgb
 static void csqc_te_explosionrgb (void)
@@ -3768,8 +3768,7 @@ static void csqc_registercvar (void)
  DP_TE_STANDARDEFFECTBUILTINS, FTE_TE_STANDARDEFFECTBUILTINS.
  Deliberately NOT advertised (no entry in the map below, regardless of whether the
  members are implemented): FRIK_FILE, FTE_QC_INTCONV, _DP_TE_FLAMEJET/
- _DP_TE_PLASMABURN, DP_QC_STRINGBUFFERS (strbuf semantics still differ from
- FTE), DP_QC_FS_SEARCH(_PACKFILE), DP_QC_GETSURFACE, DP_QC_WHICHPACK,
+ _DP_TE_PLASMABURN, DP_QC_FS_SEARCH(_PACKFILE), DP_QC_GETSURFACE, DP_QC_WHICHPACK,
  DP_QC_URI_ESCAPE, KRIMZON_SV_PARSECLIENTCOMMAND.
 */
 struct csqc_ext_map_s
@@ -3813,6 +3812,8 @@ static const int csqc_ext_te_smallflash[] = { 416 };
 static const int csqc_ext_te_customflash[] = { 417 };
 static const int csqc_ext_te_quadeffects[] = { 412, 413, 414, 415 };
 static const int csqc_ext_digest_sha1[] = { 639 };
+// DP_QC_STRINGBUFFERS (fteqw pr_bgcmd.c:8304): #460-#469, FTE semantics since S33.
+static const int csqc_ext_stringbuffers[] = { 460, 461, 462, 463, 464, 465, 466, 467, 468, 469 };
 static const int csqc_ext_copyentity[] = { 400 };
 static const int csqc_ext_findchain[] = { 402 };
 static const int csqc_ext_findchainfloat[] = { 403 };
@@ -3845,6 +3846,7 @@ static const struct csqc_ext_map_s csqc_ext_map[] =
 	{ "DP_QC_EDICT_NUM", csqc_ext_edict_num, CSQC_COUNTOF (csqc_ext_edict_num) },
 	{ "DP_QC_ETOS", csqc_ext_etos, CSQC_COUNTOF (csqc_ext_etos) },
 	{ "DP_QC_FINDFLOAT", csqc_ext_findfloat, CSQC_COUNTOF (csqc_ext_findfloat) },
+	{ "DP_QC_STRINGBUFFERS", csqc_ext_stringbuffers, CSQC_COUNTOF (csqc_ext_stringbuffers) },
 	{ "DP_QC_STRFTIME", csqc_ext_strftime, CSQC_COUNTOF (csqc_ext_strftime) },
 	{ "DP_QC_STRREPLACE", csqc_ext_strreplace, CSQC_COUNTOF (csqc_ext_strreplace) },
 	{ "DP_QC_TOKENIZEBYSEPARATOR", csqc_ext_tokenizebyseparator, CSQC_COUNTOF (csqc_ext_tokenizebyseparator) },
@@ -4299,7 +4301,11 @@ static void csqc_sound (void)
 		atten = vm->globals[OFS_PARM4];
 	if (vol <= 0 || !(sfx = csqc_precache_sfx (n)))
 		return;
-	chan = (int)vm->globals[OFS_PARM1];
+	{
+		// Module float -> int: NaN/huge casts are UB; clamp first (as CSQC_Client_ClampInput).
+		float fc = vm->globals[OFS_PARM1];
+		chan = (fc != fc) ? 0 : (int)bound (-32768.0f, fc, 32767.0f);
+	}
 	e = csqc_ent_of (vm, OFS_PARM0);
 	if (e > 0 && (f = csqc_ent_field (vm, e, "entnum")))
 		num = (int)f[0];

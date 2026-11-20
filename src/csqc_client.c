@@ -2700,6 +2700,9 @@ void CSQC_Client_EntFree (struct pr1vm_s *v, int entnum)
 	CSQC_Client_ClearSlotBridges (entnum);
 }
 
+// Network entities (!s_own) are left untouched on purpose: their slot belongs to
+// the snapshot bridge and is refilled every frame, so copying and freeing it here
+// would fight the network update (FTE copies and removes them).
 void CSQC_Client_StoreStatic (struct pr1vm_s *vm, int slot, const entity_t *ent)
 {
 	if (slot <= 0 || slot >= CSQC_MAX_EDICTS || !s_used[slot] || !s_own[slot])
@@ -2707,12 +2710,12 @@ void CSQC_Client_StoreStatic (struct pr1vm_s *vm, int slot, const entity_t *ent)
 
 	if (ent)
 	{
+		// Full list: drop the copy but still remove the entity (FTE always removes
+		// in PF_cs_makestatic), so the module never keeps a live "static" edict.
 		if (s_num_module_statics == MAX_STATIC_ENTITIES)
-		{
 			Con_DPrintf ("CSQC: makestatic: module static list is full\n");
-			return;
-		}
-		s_module_statics[s_num_module_statics++] = *ent;
+		else
+			s_module_statics[s_num_module_statics++] = *ent;
 	}
 	CSQC_Client_EntFree (vm, slot);
 }
@@ -5382,6 +5385,22 @@ delta (FTE cl.time-cl.lasttime); cltime - client map-uptime; maxclients - server
 (QW key).
 =================
 */
+// servertime/serverprevtime/serverdeltatime. FTE writes them when the snapshot
+// is parsed (pr_csqc.c:9576-9581), before any module callback; here they are
+// published before CSQC_Input_Frame as well as before the render pass, so the
+// input callback does not see the previous frame's values.
+static void CSQC_Client_PublishServerTimes (void)
+{
+	pr1vm_t *vm = &s_csqc.vm;
+
+	if (s_csqc.g_servertime >= 0)
+		vm->globals[s_csqc.g_servertime] = (float)cl.snapshot_time;
+	if (s_csqc.g_serverprevtime >= 0)
+		vm->globals[s_csqc.g_serverprevtime] = (float)cl.previous_snapshot_time;
+	if (s_csqc.g_serverdeltatime >= 0)
+		vm->globals[s_csqc.g_serverdeltatime] = (float)(cl.snapshot_time - cl.previous_snapshot_time);
+}
+
 static void CSQC_Client_PublishSimGlobals (void)
 {
 	pr1vm_t *vm = &s_csqc.vm;
@@ -5425,12 +5444,7 @@ static void CSQC_Client_PublishSimGlobals (void)
 	if (s_csqc.p_onground >= 0)
 		vm->globals[s_csqc.p_onground] = cl.onground ? 1 : 0;
 
-	if (s_csqc.g_servertime >= 0)
-		vm->globals[s_csqc.g_servertime] = (float)cl.snapshot_time;
-	if (s_csqc.g_serverprevtime >= 0)
-		vm->globals[s_csqc.g_serverprevtime] = (float)cl.previous_snapshot_time;
-	if (s_csqc.g_serverdeltatime >= 0)
-		vm->globals[s_csqc.g_serverdeltatime] = (float)(cl.snapshot_time - cl.previous_snapshot_time);
+	CSQC_Client_PublishServerTimes ();
 
 	s_prev_cltime = cl.time;
 }
@@ -6493,6 +6507,7 @@ void CSQC_Client_InputFrame (usercmd_t *cmd)
 	CSQC_Client_PatchFrames ();
 
 	CSQC_Client_SetTime ();
+	CSQC_Client_PublishServerTimes ();
 
 	// input_sequence = seq of the current cmd (FTE cs_set_input_state); same
 	// numbering as clientcommandframe.

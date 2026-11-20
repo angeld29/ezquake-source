@@ -831,9 +831,11 @@ void PR1VM_ExecuteProgram (pr1vm_t *vm, func_t fnum)
 		// Operands are unsigned global indices (FTE dstatement16_t; fteqcc emits 16-bit
 		// progs up to 65530 globals). The validator already reads them unsigned; a signed
 		// read here turned an accepted operand >= 0x8000 into a negative index. Branch
-		// deltas (OP_GOTO a, OP_IF/OP_IFNOT b) stay signed below.
-		a = (eval_t *)&vm->globals[(unsigned short)st->a];
-		b = (eval_t *)&vm->globals[(unsigned short)st->b];
+		// deltas (OP_GOTO a, OP_IF/OP_IFNOT b) stay signed below and are not turned
+		// into pointers: a negative delta read unsigned would point past the end of
+		// globals (UB even without a dereference).
+		a = st->op == OP_GOTO ? NULL : (eval_t *)&vm->globals[(unsigned short)st->a];
+		b = (st->op == OP_IF || st->op == OP_IFNOT) ? NULL : (eval_t *)&vm->globals[(unsigned short)st->b];
 		c = (eval_t *)&vm->globals[(unsigned short)st->c];
 
 		if (--runaway == 0)
