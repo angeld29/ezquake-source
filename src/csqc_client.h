@@ -12,6 +12,7 @@ types (qbool/vec3_t) and is meant for client translation units.
 #include <stddef.h>
 struct usercmd_s;	// ezquake usercmd_t (common.h -> protocol.h); kept dependency-free here
 struct pr1vm_s;		// PR1 instance (pr1vm.h); opaque pointer only here
+struct entity_s;
 
 // Extended CSQC stats 32..255 live in a dedicated client store (stat index on the
 // wire is always a byte, 0..255; FTE-parity MAX_CL_STATS=256). Standard 0..31 stay
@@ -59,6 +60,8 @@ char *CSQC_Client_GetString (struct pr1vm_s *vm, int num);
 int CSQC_Client_EntAlloc (struct pr1vm_s *vm);			// first free pool slot (own) / 0
 int CSQC_Client_EntNum (struct pr1vm_s *vm, int raw);		// raw (N*edict_size) -> pool slot; OOB -> world(0)
 void CSQC_Client_EntFree (struct pr1vm_s *vm, int slot);	// free own entity (network untouched)
+void CSQC_Client_StoreStatic (struct pr1vm_s *vm, int slot, const struct entity_s *ent);
+void CSQC_Client_LinkStatics (void);
 int CSQC_Client_NetAllocSlot (struct pr1vm_s *vm);		// slot without s_own (network receive; vm zeroes the slot)
 void CSQC_Client_NetFreeSlot (int slot, int number);		// free slot + numslot
 int CSQC_Client_NumToSlot (int number);					// number->slot map / 0
@@ -110,6 +113,8 @@ typedef enum
 	CSQC_FLD_FLAGS,
 	CSQC_FLD_OWNER,
 	CSQC_FLD_DRAWMASK,
+	CSQC_FLD_FRAME2,
+	CSQC_FLD_LERPFRAC,
 	CSQC_FLD_COUNT
 } csqc_field_id_t;
 
@@ -170,6 +175,7 @@ int CSQC_Client_Active (void);			// module loaded and not in error
 void CSQC_Client_ConnectCheck (void);	// after full serverinfo: load + CSQC_Init
 void CSQC_Client_Disconnect (void);		// CSQC_Shutdown + unload + command removal
 void CSQC_Client_Update (void);			// every 2D frame: WorldLoaded-once + UpdateView
+void CSQC_Client_PollDownload (void);		// every client frame: deferred csprogs load + module download queue
 
 // Renderscene takeover: when a CSQC module is active it owns the 3D scene as in
 // FTE -- CSQC_UpdateView runs in the 3D phase, #300/#301 build cl_visents, and
@@ -353,6 +359,10 @@ void CSQCVM_RegisterBuiltins (struct pr1vm_s *vm);
 #define CSQC_BUILTIN_CHECKBUILTIN	1023
 // `argc` (FTE exposes it only as a `#0` name, not as a numbered slot).
 #define CSQC_BUILTIN_ARGC			1021
+// `serverkeyfloat` is also exposed by FTE only as a `#0` name.
+#define CSQC_BUILTIN_SERVERKEYFLOAT	1020
+// `getplayerkeyfloat` likewise (FTE: #0 name only).
+#define CSQC_BUILTIN_GETPLAYERKEYFLOAT	1019
 // Aborting stub for an unknown `#0` name: calling it fails the module like FTE's
 // slot 0 (PF_Fixme); checkbuiltin still reports 0.
 #define CSQC_BUILTIN_NAMED_UNKNOWN	1022

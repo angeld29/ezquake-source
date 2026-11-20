@@ -192,6 +192,12 @@ episode_t    episodes[] = {
 		const char *cfg;
 		const char *map = bm_map_desc[bm_map_var];
 		extern cvar_t menu_botmatch_gamedir, menu_botmatch_mod_old;
+		const char *gamedir = menu_botmatch_gamedir.string;
+
+		if (strpbrk(gamedir, "\";\r\n$") || strlen(gamedir) >= MAX_QPATH) {
+			Con_Printf("Invalid bot match game directory\n");
+			return;
+		}
 
 		switch (bm_type_var) {
 			case bmt_arena:		cfg = "arena"; break;
@@ -203,8 +209,8 @@ episode_t    episodes[] = {
 		}
 
 		Cbuf_AddText("disconnect;sv_progsname qwprogs;");
-		if (menu_botmatch_gamedir.string[0]) {
-			Cbuf_AddText(va("gamedir \"%s\";", menu_botmatch_gamedir.string));
+		if (gamedir[0]) {
+			Cbuf_AddText(va("gamedir \"%s\";", gamedir));
 		}
 		if (menu_botmatch_mod_old.integer) {
 			Cbuf_AddText("cl_sv_packetsync 0\n");
