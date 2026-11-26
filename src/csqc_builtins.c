@@ -80,6 +80,18 @@ static char *CSQCVM_Str (int ofs)
 	return CSQC_Client_GetString (vm, *(int *)&vm->globals[ofs]);
 }
 
+// Module float -> int for counts, offsets and key codes. (int) of a float out of
+// range or NaN is UB, and INT_MIN breaks the negation/offset arithmetic that
+// follows; clamp to a range that no buffer or key table reaches anyway.
+static int csqc_float_to_int (float f)
+{
+	if (!(f > -1000000000.0f))
+		return (f != f) ? 0 : -1000000000;
+	if (f > 1000000000.0f)
+		return 1000000000;
+	return (int)f;
+}
+
 static void CSQCVM_SetRetStr (char *s)
 {
 	pr1vm_t *vm = CSQCVM_Active ();
@@ -1928,7 +1940,7 @@ static void csqc_keynumtostring (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0])));
+	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum (csqc_float_to_int (vm->globals[OFS_PARM0]))));
 }
 
 /*
@@ -3065,7 +3077,7 @@ static void csqc_strpad (void)
 
 	if (!vm)
 		return;
-	pad = (int)vm->globals[OFS_PARM0];
+	pad = csqc_float_to_int (vm->globals[OFS_PARM0]);
 	buf[0] = 0;
 	d = buf;
 	for (i = 1; i < vm->argc; i++)
@@ -3908,8 +3920,8 @@ static void csqc_substring (void)
 		return;
 	if (!s)
 		s = "";
-	start = (int)vm->globals[OFS_PARM1];
-	len = (int)vm->globals[OFS_PARM2];
+	start = csqc_float_to_int (vm->globals[OFS_PARM1]);
+	len = csqc_float_to_int (vm->globals[OFS_PARM2]);
 	l = strlen (s);
 	if (start < 0)
 		start = l + start;
@@ -5585,7 +5597,7 @@ static void csqc_getkeybind (void)
 	char *b;
 	if (!vm)
 		return;
-	keynum = CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0]);
+	keynum = CSQC_Client_QCToKeynum (csqc_float_to_int (vm->globals[OFS_PARM0]));
 	if (keynum < 0 || keynum >= UNKNOWN + 256)
 		b = NULL;
 	else
@@ -5606,7 +5618,7 @@ static void csqc_setkeybind (void)
 	char *binding;
 	if (!vm)
 		return;
-	keynum = CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0]);
+	keynum = CSQC_Client_QCToKeynum (csqc_float_to_int (vm->globals[OFS_PARM0]));
 	binding = CSQCVM_Str (OFS_PARM1);
 	if (keynum >= 0 && keynum < UNKNOWN + 256)
 	{
@@ -5621,7 +5633,7 @@ static void csqc_keynumtostring_menu (void)
 	pr1vm_t *vm = CSQCVM_Active ();
 	if (!vm)
 		return;
-	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum ((int)vm->globals[OFS_PARM0])));
+	CSQCVM_SetRetStr (Key_KeynumToString (CSQC_Client_QCToKeynum (csqc_float_to_int (vm->globals[OFS_PARM0]))));
 }
 
 /* float(string key) stringtokeynum_menu = #614 - like #341 (QC domain) */
