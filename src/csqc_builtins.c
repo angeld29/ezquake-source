@@ -1655,17 +1655,17 @@ finished:
 /* Entity wire like MSG_WriteEntity. An invalid number (incl. negative) degenerates
    to world(0) - the module must not crash the client; the Host_EndGame on
    entnum>MAX_EDICTS is not ported here. */
-static void csqc_sendevent_write_entity (int entnum)
+static void csqc_sendevent_write_entity (sizebuf_t *m, int entnum)
 {
 	if (entnum < 0)
 		entnum = 0;
 	if (entnum >= 0x8000)
 	{
-		MSG_WriteShort (&cls.netchan.message, (entnum >> 8) | 0x8000);
-		MSG_WriteByte (&cls.netchan.message, entnum & 0xff);
+		MSG_WriteShort (m, (entnum >> 8) | 0x8000);
+		MSG_WriteByte (m, entnum & 0xff);
 	}
 	else
-		MSG_WriteShort (&cls.netchan.message, entnum);
+		MSG_WriteShort (m, entnum);
 }
 
 static void csqc_sendevent (void)
@@ -1674,6 +1674,11 @@ static void csqc_sendevent (void)
 	const char *evname, *argtypes;
 	char c;
 	int i;
+	// The event is built here first: module strings can be longer than what is
+	// left in cls.netchan.message, and writing them there directly ended in
+	// Sys_Error ("SZ_GetSpace: ... is > full buffer size") and closed the client.
+	static byte evdata[MAX_MSGLEN * 4];
+	sizebuf_t evbuf, *m = &evbuf;
 
 	if (!vm)
 		return;
@@ -1693,7 +1698,8 @@ static void csqc_sendevent (void)
 	if (!evname || !argtypes)
 		return;
 
-	MSG_WriteByte (&cls.netchan.message, clcfte_qcrequest);
+	SZ_InitEx (&evbuf, evdata, sizeof (evdata), true);
+	MSG_WriteByte (m, clcfte_qcrequest);
 
 	for (i = 0; i < 6; i++)
 	{
@@ -1702,25 +1708,25 @@ static void csqc_sendevent (void)
 		if (c == 's')
 		{
 			char *s = CSQC_Client_GetString (vm, *(int *)&vm->globals[base]);
-			MSG_WriteByte (&cls.netchan.message, CSQC_EV_STRING);
-			MSG_WriteString (&cls.netchan.message, s ? s : "");
+			MSG_WriteByte (m, CSQC_EV_STRING);
+			MSG_WriteString (m, s ? s : "");
 		}
 		else if (c == 'f')
 		{
-			MSG_WriteByte (&cls.netchan.message, CSQC_EV_FLOAT);
-			MSG_WriteFloat (&cls.netchan.message, vm->globals[base]);
+			MSG_WriteByte (m, CSQC_EV_FLOAT);
+			MSG_WriteFloat (m, vm->globals[base]);
 		}
 		else if (c == 'v')
 		{
-			MSG_WriteByte (&cls.netchan.message, CSQC_EV_VECTOR);
-			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 0]);
-			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 1]);
-			MSG_WriteFloat (&cls.netchan.message, vm->globals[base + 2]);
+			MSG_WriteByte (m, CSQC_EV_VECTOR);
+			MSG_WriteFloat (m, vm->globals[base + 0]);
+			MSG_WriteFloat (m, vm->globals[base + 1]);
+			MSG_WriteFloat (m, vm->globals[base + 2]);
 		}
 		else if (c == 'i')
 		{
-			MSG_WriteByte (&cls.netchan.message, CSQC_EV_INTEGER);
-			MSG_WriteLong (&cls.netchan.message, *(int *)&vm->globals[base]);
+			MSG_WriteByte (m, CSQC_EV_INTEGER);
+			MSG_WriteLong (m, *(int *)&vm->globals[base]);
 		}
 		else if (c == 'e')
 		{
@@ -1729,15 +1735,22 @@ static void csqc_sendevent (void)
 			int slot = csqc_ent_of (vm, base);
 			float *f = (slot > 0 && CSQC_Client_EntUsed (slot))
 				? csqc_ent_field (vm, slot, "entnum") : NULL;
-			MSG_WriteByte (&cls.netchan.message, CSQC_EV_ENTITY);
-			csqc_sendevent_write_entity (f ? (int)(*f) : 0);
+			MSG_WriteByte (m, CSQC_EV_ENTITY);
+			csqc_sendevent_write_entity (m, f ? (int)(*f) : 0);
 		}
 		else
 			break;
 	}
 
-	MSG_WriteByte (&cls.netchan.message, CSQC_EV_VOID);
-	MSG_WriteString (&cls.netchan.message, evname);
+	MSG_WriteByte (m, CSQC_EV_VOID);
+	MSG_WriteString (m, evname);
+
+	if (evbuf.overflowed || evbuf.cursize > cls.netchan.message.maxsize - cls.netchan.message.cursize)
+	{
+		Con_DPrintf ("CSQC: sendevent \"%s\" dropped: %d bytes do not fit in the outgoing message\n", evname, evbuf.cursize);
+		return;
+	}
+	SZ_Write (&cls.netchan.message, evbuf.data, evbuf.cursize);
 }
 
 /*
